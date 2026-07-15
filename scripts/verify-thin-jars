@@ -16,6 +16,14 @@ declare -A runtime_classes=(
   ["5.0"]="com.csforge.sstable.worker.cassandra50.Cassandra50Runtime"
 )
 
+smoke_root="$(mktemp -d)"
+trap 'rm -rf "$smoke_root"' EXIT
+smoke_source="$smoke_root/source"
+mkdir -p "$smoke_source"
+printf 'TOC.txt\nData.db\nStatistics.db\n' > "$smoke_source/mc-1-big-TOC.txt"
+printf 'data\n' > "$smoke_source/mc-1-big-Data.db"
+printf 'statistics\n' > "$smoke_source/mc-1-big-Statistics.db"
+
 for release_line in "${release_lines[@]}"; do
   artifact_dir="$root_dir/workers/cassandra-$release_line/target"
   artifacts=("$artifact_dir"/sstable-tools-cassandra-"$release_line"-*.jar)
@@ -31,6 +39,7 @@ for release_line in "${release_lines[@]}"; do
   unexpected_entry=""
   bootstrap_found=false
   worker_main_found=false
+  relocated_gson_found=false
 
   while IFS= read -r entry; do
     case "$entry" in
@@ -44,8 +53,12 @@ for release_line in "${release_lines[@]}"; do
       com/csforge/sstable/worker/api/WorkerMain.class)
         worker_main_found=true
         ;;
+      com/csforge/sstable/internal/gson/Gson.class)
+        relocated_gson_found=true
+        ;;
       META-INF/*|com/|com/csforge/|com/csforge/sstable/|\
       com/csforge/sstable/bootstrap/*|com/csforge/sstable/workspace/*|\
+      com/csforge/sstable/internal/|com/csforge/sstable/internal/gson/*|\
       com/csforge/sstable/worker/*|sstable-tools-adapter.properties)
         ;;
       *)
@@ -61,6 +74,12 @@ for release_line in "${release_lines[@]}"; do
     exit 1
   fi
 
+  if [[ -n "$unexpected_entry" ]]; then
+    printf '%s contains an unapproved packaged dependency/resource: %s\n' \
+      "$artifact" "$unexpected_entry" >&2
+    exit 1
+  fi
+
   if [[ "$bootstrap_found" != true ]]; then
     printf '%s does not contain the shared bootstrap entry point\n' "$artifact" >&2
     exit 1
@@ -71,9 +90,8 @@ for release_line in "${release_lines[@]}"; do
     exit 1
   fi
 
-  if [[ -n "$unexpected_entry" ]]; then
-    printf '%s contains an unapproved packaged dependency/resource: %s\n' \
-      "$artifact" "$unexpected_entry" >&2
+  if [[ "$relocated_gson_found" != true ]]; then
+    printf '%s does not contain relocated Gson\n' "$artifact" >&2
     exit 1
   fi
 
@@ -103,6 +121,18 @@ for release_line in "${release_lines[@]}"; do
   if [[ "$version_output" != *"Cassandra $release_line adapter"* ]]; then
     printf '%s reports unexpected adapter metadata: %s\n' \
       "$artifact" "$version_output" >&2
+    exit 1
+  fi
+
+  smoke_workspace="$smoke_root/workspace-$release_line"
+  create_output="$(java -jar "$artifact" workspace create "$smoke_workspace" \
+    --sstables "$smoke_source")"
+  status_output="$(java -jar "$artifact" workspace status "$smoke_workspace")"
+
+  if [[ "$create_output" != *"workspace.state=VALIDATED"* \
+      || "$status_output" != *"source.integrity=verified"* ]]; then
+    printf '%s cannot create and reopen a workspace from the packaged artifact\n' \
+      "$artifact" >&2
     exit 1
   fi
 

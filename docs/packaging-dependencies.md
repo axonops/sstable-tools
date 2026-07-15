@@ -10,13 +10,16 @@ Each `sstable-tools-cassandra-<line>.jar` contains only:
 - the project-owned `bootstrap` classes;
 - the project-owned `workspace-core` classes;
 - the project-owned `worker-api` classes;
-- exactly one project-owned release adapter; and
+- exactly one project-owned release adapter;
+- Gson, relocated from `com.google.gson` to
+  `com.csforge.sstable.internal.gson`, for strict manifest JSON parsing; and
 - the adapter metadata and executable manifest.
 
-There are currently no packaged third-party libraries and therefore no package
-relocations. When a future tool-owned dependency is required, its coordinates,
-reason, relocated namespace, and license must be added here before it is allowed
-by packaging verification.
+Gson `2.14.0` is the only packaged third-party library. It is used because Java
+8 does not provide a standard JSON parser, is released under Apache License 2.0,
+and supports Java 8. No other third-party libraries are packaged. When another
+tool-owned dependency is required, its coordinates, reason, relocated namespace,
+and license must be added here before it is allowed by packaging verification.
 
 ## Provided runtime
 
@@ -41,8 +44,10 @@ The compile pins are:
 - contains `org/apache/cassandra/**`;
 - contains any namespace or resource outside the project-owned allowlist;
 - omits the bootstrap or worker entry point;
+- omits the relocated Gson runtime;
 - uses the wrong release adapter class-file version; or
-- cannot run bootstrap help and version commands without Cassandra.
+- cannot run bootstrap help, version, workspace create, and workspace status
+  without Cassandra.
 
 The CI workflow runs the same verification and generates Maven runtime
 dependency trees for every reactor module. The four thin JARs and dependency

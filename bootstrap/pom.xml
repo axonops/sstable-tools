@@ -16,6 +16,10 @@
   <dependencies>
     <dependency>
       <groupId>com.csforge</groupId>
+      <artifactId>sstable-tools-workspace-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.csforge</groupId>
       <artifactId>sstable-tools-worker-api</artifactId>
       <scope>test</scope>
     </dependency>

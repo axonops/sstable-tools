@@ -1,6 +1,6 @@
 # SSTable Tools
 
-[![Build Status](https://travis-ci.org/tolbertam/sstable-tools.svg?branch=master)](https://travis-ci.org/tolbertam/sstable-tools) [![Github Releases (by Release)](https://img.shields.io/github/downloads/tolbertam/sstable-tools/v3.11.0-alpha11/total.svg)](https://github.com/tolbertam/sstable-tools/releases/tag/v3.11.0-alpha11)
+[![CI](https://github.com/axonops/sstable-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/axonops/sstable-tools/actions/workflows/ci.yml) [![Github Releases (by Release)](https://img.shields.io/github/downloads/tolbertam/sstable-tools/v3.11.0-alpha11/total.svg)](https://github.com/tolbertam/sstable-tools/releases/tag/v3.11.0-alpha11)
 
 A toolkit for parsing, creating and doing other fun stuff with Cassandra 3.x SSTables. This project is under development and not yet stable. Mainly a proof of concept playground for wish items.
 
@@ -141,7 +141,9 @@ scripts/verify-thin-jars
 The existing executable reader is written to
 `legacy-reader-3.11/target/sstable-tools-<version>.jar`. Version-specific
 workspace artifacts are written below `workers/cassandra-<line>/target/`.
-Workspace commands in those thin JARs are under development.
+The shared workspace manifest commands are available in those thin JARs; the
+Cassandra worker stages that import, start cqlsh, mutate, and export remain under
+development.
 
 The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
 provided/packaged boundary and the build checks that enforce it. GitHub Actions
@@ -192,6 +194,9 @@ fixtures are in CI:
 * [CQL mutation workspaces for SSTables](docs/cql-mutation-workspace-design.md) -
   Proposed design for safe `INSERT` and `UPDATE` support with Apache cqlsh
   across Cassandra 3.11, 4.0, 4.1, and 5.0 formats.
+* [Workspace manifest and lifecycle contract](docs/workspace-manifest.md) -
+  Implemented source inventory, atomic manifest, locking, path confinement,
+  lifecycle, recovery, and command behavior.
 
 ## cqlsh
 cql shell similiar and modeled after the C* cqlsh tool. Enables issuing cql queries against raw sstables and

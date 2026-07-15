@@ -1,5 +1,6 @@
 package com.csforge.sstable.bootstrap;
 
+import com.csforge.sstable.workspace.WorkspaceException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
@@ -35,6 +36,10 @@ public final class BootstrapMain {
                         adapter.getProperty("adapter.cassandra-version", "unbound"));
                 return 0;
             }
+            if (isWorkspaceAction(arguments.action())) {
+                new WorkspaceCommandRunner().run(arguments, out);
+                return 0;
+            }
 
             AdapterMetadata adapter = AdapterMetadata.loadRequired(
                     BootstrapMain.class.getClassLoader());
@@ -59,7 +64,16 @@ public final class BootstrapMain {
         } catch (BootstrapException e) {
             err.println("error: " + e.getMessage());
             return e.exitCode();
+        } catch (WorkspaceException e) {
+            err.println("error: " + e.getMessage());
+            return BootstrapException.WORKSPACE_EXIT_CODE;
         }
+    }
+
+    private static boolean isWorkspaceAction(BootstrapArguments.Action action) {
+        return action == BootstrapArguments.Action.WORKSPACE_CREATE
+                || action == BootstrapArguments.Action.WORKSPACE_STATUS
+                || action == BootstrapArguments.Action.WORKSPACE_RECOVER;
     }
 
     private static String implementationVersion() {
@@ -97,6 +111,7 @@ public final class BootstrapMain {
         out.println("  --cassandra-home <path>  Cassandra installation to use");
         out.println("  --cassandra-conf <path>  Cassandra configuration directory to use");
         out.println("  --java-home <path>       Compatible Java installation to use");
+        out.println("  --sstables <path>        Stable SSTable directory (repeatable for create)");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();
@@ -104,7 +119,12 @@ public final class BootstrapMain {
         out.println("  runtime inspect          Print resolved runtime paths, versions, and hashes");
         out.println("  runtime preflight        Run the release worker linkage self-test");
         out.println();
+        out.println("Workspace commands:");
+        out.println("  workspace create <path>  Inventory sources and create a validated workspace");
+        out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
+        out.println("  workspace recover <path> Recover a failed workspace to its last stable state");
+        out.println();
         out.println("Workspace commands planned for later implementation:");
-        out.println("  workspace create|start|status|cqlsh|export|stop|destroy|recover");
+        out.println("  workspace start|cqlsh|export|stop|destroy");
     }
 }

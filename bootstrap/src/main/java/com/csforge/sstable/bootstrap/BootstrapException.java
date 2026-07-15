@@ -6,6 +6,7 @@ public final class BootstrapException extends Exception {
     public static final int DISCOVERY_EXIT_CODE = 3;
     public static final int COMPATIBILITY_EXIT_CODE = 4;
     public static final int CHILD_EXIT_CODE = 5;
+    public static final int WORKSPACE_EXIT_CODE = 6;
 
     private final int exitCode;
 

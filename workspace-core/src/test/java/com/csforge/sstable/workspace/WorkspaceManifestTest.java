@@ -1,0 +1,127 @@
+package com.csforge.sstable.workspace;
+
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.UUID;
+import org.junit.Assert;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+public class WorkspaceManifestTest {
+    @Rule
+    public final TemporaryFolder temporary = new TemporaryFolder();
+
+    @Test
+    public void strictCodecRoundTripsManifest() throws Exception {
+        Path root = temporary.newFolder("roundtrip").toPath();
+        WorkspaceManifest manifest = WorkspaceManifest.create(
+                UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"),
+                Instant.parse("2026-07-15T10:00:00Z"),
+                WorkspaceTestFixtures.inventory(root));
+        WorkspaceManifestCodec codec = new WorkspaceManifestCodec();
+
+        WorkspaceManifest decoded = codec.decode(codec.encode(manifest));
+
+        Assert.assertEquals(manifest, decoded);
+    }
+
+    @Test
+    public void rejectsMalformedAndUnknownManifestFields() throws Exception {
+        WorkspaceManifestCodec codec = new WorkspaceManifestCodec();
+        assertDecodeFailure(codec, "{not json", "Malformed workspace manifest JSON");
+        assertDecodeFailure(codec, "{}", "Missing manifest field");
+
+        Path root = temporary.newFolder("unknown").toPath();
+        String valid = new String(codec.encode(WorkspaceManifest.create(
+                WorkspaceTestFixtures.inventory(root))), "UTF-8");
+        String unknown = valid.replaceFirst("\\{", "{\n  \"unexpected\": true,");
+        assertDecodeFailure(codec, unknown, "Unknown manifest field");
+    }
+
+    @Test
+    public void rejectsSourcePathTraversalInManifest() throws Exception {
+        Path root = temporary.newFolder("path-attack").toPath();
+        WorkspaceManifestCodec codec = new WorkspaceManifestCodec();
+        WorkspaceManifest manifest = WorkspaceManifest.create(
+                WorkspaceTestFixtures.inventory(root));
+        String valid = new String(codec.encode(manifest), "UTF-8");
+        String componentPath = manifest.sourceInventory().sets().get(0)
+                .components().get(0).path().toString();
+        String attacked = valid.replace(componentPath.replace("\\", "\\\\"),
+                "/tmp/../etc/passwd");
+
+        assertDecodeFailure(codec, attacked, "absolute and normalized");
+    }
+
+    @Test
+    public void validatesTransitionsAndFailureRecovery() throws Exception {
+        Path root = temporary.newFolder("transitions").toPath();
+        Instant start = Instant.parse("2026-07-15T10:00:00Z");
+        WorkspaceManifest manifest = WorkspaceManifest.create(UUID.randomUUID(), start,
+                WorkspaceTestFixtures.inventory(root));
+
+        WorkspaceManifest validated = manifest.transitionTo(WorkspaceState.VALIDATED,
+                start.plusSeconds(1));
+        WorkspaceManifest failed = validated.fail("interrupted import", start.plusSeconds(2));
+        WorkspaceManifest recovered = failed.recover(start.plusSeconds(3));
+
+        Assert.assertEquals(WorkspaceState.FAILED_RECOVERABLE, failed.state());
+        Assert.assertEquals(WorkspaceState.VALIDATED, failed.lastStableState());
+        Assert.assertEquals(RecoveryAction.RECOVER_LAST_STABLE_STATE,
+                failed.recoveryAction());
+        Assert.assertEquals(WorkspaceState.VALIDATED, recovered.state());
+        Assert.assertNull(recovered.failureMessage());
+
+        try {
+            manifest.transitionTo(WorkspaceState.RUNNING, start.plusSeconds(1));
+            Assert.fail("Expected invalid transition");
+        } catch (WorkspaceException e) {
+            Assert.assertTrue(e.getMessage().contains("NEW -> RUNNING"));
+        }
+
+        for (WorkspaceState state : WorkspaceState.values()) {
+            Assert.assertNotNull(state.recoveryAction());
+            Assert.assertFalse(state.recoveryAction().description().isEmpty());
+        }
+    }
+
+    @Test
+    public void rejectsIncompleteDecodedInventoryAndUnsafeOwnedPaths() throws Exception {
+        Path root = temporary.newFolder("manifest-invariants").toPath();
+        WorkspaceManifestCodec codec = new WorkspaceManifestCodec();
+        String valid = new String(codec.encode(WorkspaceManifest.create(
+                WorkspaceTestFixtures.inventory(root))), "UTF-8");
+
+        assertDecodeFailure(codec, valid.replace("Statistics.db", "Summary.db"),
+                "Incomplete component inventory");
+
+        String hash = "0123456789abcdef0123456789abcdef"
+                + "0123456789abcdef0123456789abcdef";
+        Assert.assertEquals("exports/part..name.db",
+                new ManifestFile("exports/part..name.db", 1, hash).relativePath());
+        assertManifestFileFailure("../outside.db", hash);
+        assertManifestFileFailure("C:\\outside.db", hash);
+        assertManifestFileFailure("\\\\server\\share.db", hash);
+    }
+
+    private static void assertManifestFileFailure(String path, String hash) throws Exception {
+        try {
+            new ManifestFile(path, 1, hash);
+            Assert.fail("Expected unsafe manifest path failure for " + path);
+        } catch (WorkspaceException e) {
+            Assert.assertTrue(e.getMessage().contains("Unsafe manifest relative path"));
+        }
+    }
+
+    private static void assertDecodeFailure(WorkspaceManifestCodec codec,
+                                            String json,
+                                            String expected) throws Exception {
+        try {
+            codec.decode(json);
+            Assert.fail("Expected decode failure containing: " + expected);
+        } catch (WorkspaceException e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains(expected));
+        }
+    }
+}
