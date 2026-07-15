@@ -143,6 +143,11 @@ The existing executable reader is written to
 workspace artifacts are written below `workers/cassandra-<line>/target/`.
 Workspace commands in those thin JARs are under development.
 
+The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
+provided/packaged boundary and the build checks that enforce it. GitHub Actions
+runs the complete reactor on Java 17 and tests each adapter on its declared Java
+runtime.
+
 ### Runtime discovery and preflight
 
 Each thin JAR can inspect a Cassandra installation without loading Cassandra
