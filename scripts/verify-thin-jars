@@ -30,6 +30,7 @@ for release_line in "${release_lines[@]}"; do
   cassandra_entry=""
   unexpected_entry=""
   bootstrap_found=false
+  worker_main_found=false
 
   while IFS= read -r entry; do
     case "$entry" in
@@ -39,6 +40,9 @@ for release_line in "${release_lines[@]}"; do
         ;;
       com/csforge/sstable/bootstrap/BootstrapMain.class)
         bootstrap_found=true
+        ;;
+      com/csforge/sstable/worker/api/WorkerMain.class)
+        worker_main_found=true
         ;;
       META-INF/*|com/|com/csforge/|com/csforge/sstable/|\
       com/csforge/sstable/bootstrap/*|com/csforge/sstable/workspace/*|\
@@ -59,6 +63,11 @@ for release_line in "${release_lines[@]}"; do
 
   if [[ "$bootstrap_found" != true ]]; then
     printf '%s does not contain the shared bootstrap entry point\n' "$artifact" >&2
+    exit 1
+  fi
+
+  if [[ "$worker_main_found" != true ]]; then
+    printf '%s does not contain the worker child entry point\n' "$artifact" >&2
     exit 1
   fi
 
@@ -86,6 +95,11 @@ for release_line in "${release_lines[@]}"; do
     exit 1
   fi
 
+  if [[ "$help_output" != *"runtime preflight"* ]]; then
+    printf '%s does not advertise runtime preflight\n' "$artifact" >&2
+    exit 1
+  fi
+
   if [[ "$version_output" != *"Cassandra $release_line adapter"* ]]; then
     printf '%s reports unexpected adapter metadata: %s\n' \
       "$artifact" "$version_output" >&2
@@ -94,3 +108,17 @@ for release_line in "${release_lines[@]}"; do
 
   printf 'verified %s (%s bytes)\n' "$artifact" "$(stat -c %s "$artifact")"
 done
+
+bootstrap_artifacts=("$root_dir"/bootstrap/target/sstable-tools-bootstrap-*.jar)
+if [[ ${#bootstrap_artifacts[@]} -ne 1 || ! -f "${bootstrap_artifacts[0]}" ]]; then
+  printf 'Expected one bootstrap artifact under %s\n' \
+    "$root_dir/bootstrap/target" >&2
+  exit 1
+fi
+
+if rg -q 'com\.csforge\.sstable\.bootstrap\..*org\.apache\.cassandra' \
+    < <(jdeps -verbose:class "${bootstrap_artifacts[0]}" 2>/dev/null); then
+  printf '%s contains a bootstrap dependency on Cassandra classes\n' \
+    "${bootstrap_artifacts[0]}" >&2
+  exit 1
+fi

@@ -3,12 +3,13 @@ package com.csforge.sstable.bootstrap;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
+import java.net.URISyntaxException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Properties;
 
 /** Cassandra-free entry point shared by every release-specific artifact. */
 public final class BootstrapMain {
-    private static final String ADAPTER_RESOURCE = "sstable-tools-adapter.properties";
-
     private BootstrapMain() {
     }
 
@@ -20,22 +21,45 @@ public final class BootstrapMain {
     }
 
     public static int run(String[] args, PrintStream out, PrintStream err) {
-        if (args.length == 0 || "--help".equals(args[0]) || "-h".equals(args[0])) {
-            printHelp(out);
-            return 0;
-        }
+        try {
+            BootstrapArguments arguments = BootstrapArguments.parse(args);
+            if (arguments.action() == BootstrapArguments.Action.HELP) {
+                printHelp(out);
+                return 0;
+            }
+            if (arguments.action() == BootstrapArguments.Action.VERSION) {
+                Properties adapter = loadAdapterProperties();
+                out.printf("sstable-tools %s (Cassandra %s adapter, compiled against %s)%n",
+                        implementationVersion(),
+                        adapter.getProperty("adapter.release-line", "unbound"),
+                        adapter.getProperty("adapter.cassandra-version", "unbound"));
+                return 0;
+            }
 
-        if ("--version".equals(args[0])) {
-            Properties adapter = loadAdapterMetadata();
-            out.printf("sstable-tools %s (Cassandra %s adapter, compiled against %s)%n",
-                    implementationVersion(),
-                    adapter.getProperty("adapter.release-line", "unbound"),
-                    adapter.getProperty("adapter.cassandra-version", "unbound"));
-            return 0;
-        }
+            AdapterMetadata adapter = AdapterMetadata.loadRequired(
+                    BootstrapMain.class.getClassLoader());
+            RuntimeDiscovery discovery = new RuntimeDiscovery(
+                    toolPath(), System.getenv(), System.getProperties());
+            CassandraInstallation installation = discovery.discover(
+                    arguments.runtimeOptions(), adapter);
 
-        err.println("Workspace commands are not implemented yet. See --help.");
-        return 2;
+            if (arguments.action() == BootstrapArguments.Action.RUNTIME_INSPECT) {
+                RuntimeIdentity identity = RuntimeIdentity.capture(installation);
+                for (String line : identity.asPropertyLines(adapter)) {
+                    out.println(line);
+                }
+                return 0;
+            }
+
+            int childExitCode = new ChildProcessLauncher().runPreflight(installation);
+            if (childExitCode != 0) {
+                err.println("error: Cassandra worker preflight exited with code " + childExitCode);
+            }
+            return childExitCode;
+        } catch (BootstrapException e) {
+            err.println("error: " + e.getMessage());
+            return e.exitCode();
+        }
     }
 
     private static String implementationVersion() {
@@ -43,17 +67,27 @@ public final class BootstrapMain {
         return version == null ? "development" : version;
     }
 
-    private static Properties loadAdapterMetadata() {
+    private static Properties loadAdapterProperties() {
         Properties properties = new Properties();
         try (InputStream input = BootstrapMain.class.getClassLoader()
-                .getResourceAsStream(ADAPTER_RESOURCE)) {
+                .getResourceAsStream(AdapterMetadata.RESOURCE_NAME)) {
             if (input != null) {
                 properties.load(input);
             }
         } catch (IOException e) {
-            throw new IllegalStateException("Cannot read " + ADAPTER_RESOURCE, e);
+            throw new IllegalStateException("Cannot read " + AdapterMetadata.RESOURCE_NAME, e);
         }
         return properties;
+    }
+
+    private static Path toolPath() throws BootstrapException {
+        try {
+            return Paths.get(BootstrapMain.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+        } catch (URISyntaxException | RuntimeException e) {
+            throw new BootstrapException(BootstrapException.DISCOVERY_EXIT_CODE,
+                    "Cannot determine the tool artifact location", e);
+        }
     }
 
     private static void printHelp(PrintStream out) {
@@ -61,11 +95,16 @@ public final class BootstrapMain {
         out.println();
         out.println("Options:");
         out.println("  --cassandra-home <path>  Cassandra installation to use");
+        out.println("  --cassandra-conf <path>  Cassandra configuration directory to use");
         out.println("  --java-home <path>       Compatible Java installation to use");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();
-        out.println("Commands planned for the workspace runtime:");
+        out.println("Runtime commands:");
+        out.println("  runtime inspect          Print resolved runtime paths, versions, and hashes");
+        out.println("  runtime preflight        Run the release worker linkage self-test");
+        out.println();
+        out.println("Workspace commands planned for later implementation:");
         out.println("  workspace create|start|status|cqlsh|export|stop|destroy|recover");
     }
 }

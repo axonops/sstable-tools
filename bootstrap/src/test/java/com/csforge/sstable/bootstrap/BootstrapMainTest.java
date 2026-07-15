@@ -17,5 +17,19 @@ public class BootstrapMainTest {
 
         Assert.assertEquals(0, exitCode);
         Assert.assertTrue(output.toString("UTF-8").contains("--cassandra-home"));
+        Assert.assertTrue(output.toString("UTF-8").contains("runtime preflight"));
+    }
+
+    @Test
+    public void invalidCommandReturnsUsageErrorWithoutLoadingCassandra() throws Exception {
+        ByteArrayOutputStream error = new ByteArrayOutputStream();
+
+        int exitCode = BootstrapMain.run(
+                new String[]{"workspace", "start"},
+                System.out,
+                new PrintStream(error, true, "UTF-8"));
+
+        Assert.assertEquals(BootstrapException.USAGE_EXIT_CODE, exitCode);
+        Assert.assertTrue(error.toString("UTF-8").contains("runtime inspect"));
     }
 }

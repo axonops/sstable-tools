@@ -13,6 +13,14 @@
   <artifactId>sstable-tools-worker-api</artifactId>
   <name>SSTable Tools Worker API</name>
 
+  <dependencies>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
   <build>
     <plugins>
       <plugin>

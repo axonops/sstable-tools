@@ -143,6 +143,45 @@ The existing executable reader is written to
 workspace artifacts are written below `workers/cassandra-<line>/target/`.
 Workspace commands in those thin JARs are under development.
 
+### Runtime discovery and preflight
+
+Each thin JAR can inspect a Cassandra installation without loading Cassandra
+classes into the bootstrap process. For a tarball installation:
+
+```shell
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  --cassandra-home /opt/apache-cassandra-3.11.19 \
+  --java-home /usr/lib/jvm/java-8-openjdk \
+  runtime inspect
+```
+
+For Debian/RPM-style layouts, pass the separate configuration directory when
+it cannot be discovered unambiguously:
+
+```shell
+java -jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-*.jar \
+  --cassandra-home /usr/share/cassandra \
+  --cassandra-conf /etc/cassandra \
+  --java-home /usr/lib/jvm/java-11-openjdk \
+  runtime preflight
+```
+
+`CASSANDRA_HOME`, `CASSANDRA_CONF`, and `JAVA_HOME` are used when the matching
+command-line option is absent. `runtime inspect` prints canonical runtime paths,
+versions, the deterministic child classpath, and SHA-256 identities.
+`runtime preflight` starts a separate worker JVM with that classpath and checks
+the Cassandra APIs required by the adapter.
+
+Compatibility is deliberately conservative until broader installed-package
+fixtures are in CI:
+
+| Artifact | Tested Cassandra patch | Supported Java runtime |
+|---|---:|---:|
+| `cassandra-3.11` | 3.11.19 | 8 |
+| `cassandra-4.0` | 4.0.17 | 8-11 |
+| `cassandra-4.1` | 4.1.3 | 11 |
+| `cassandra-5.0` | 5.0.4 | 17 |
+
 ## Design documents
 
 * [CQL mutation workspaces for SSTables](docs/cql-mutation-workspace-design.md) -
