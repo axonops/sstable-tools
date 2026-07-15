@@ -47,30 +47,39 @@ public final class RuntimeIdentity {
 
     public List<String> asPropertyLines(AdapterMetadata adapter) {
         List<String> lines = new ArrayList<>();
-        lines.add("adapter.release-line=" + adapter.releaseLine());
-        lines.add("adapter.tested-range=" + adapter.minimumVersion() + ".." + adapter.maximumVersion());
-        lines.add("tool.path=" + installation.toolPath());
-        lines.add("tool.sha256=" + toolSha256);
-        lines.add("cassandra.home=" + installation.home());
-        lines.add("cassandra.conf=" + installation.conf());
-        lines.add("cassandra.conf.sha256=" + configurationSha256);
-        lines.add("cassandra.version=" + installation.version());
-        lines.add("cassandra.server-jar=" + installation.serverJar());
-        lines.add("java.home=" + installation.java().home());
-        lines.add("java.executable=" + installation.java().executable());
-        lines.add("java.version=" + installation.java().version());
-        lines.add("java.major=" + installation.java().majorVersion());
-        lines.add("classpath.count=" + installation.classpath().size());
+        for (Map.Entry<String, String> entry : asMap(adapter).entrySet()) {
+            lines.add(entry.getKey() + "=" + entry.getValue());
+        }
+        return Collections.unmodifiableList(lines);
+    }
+
+    public Map<String, String> asMap(AdapterMetadata adapter) {
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("adapter.release-line", adapter.releaseLine());
+        values.put("adapter.tested-range",
+                adapter.minimumVersion() + ".." + adapter.maximumVersion());
+        values.put("tool.path", installation.toolPath().toString());
+        values.put("tool.sha256", toolSha256);
+        values.put("cassandra.home", installation.home().toString());
+        values.put("cassandra.conf", installation.conf().toString());
+        values.put("cassandra.conf.sha256", configurationSha256);
+        values.put("cassandra.version", installation.version().toString());
+        values.put("cassandra.server-jar", installation.serverJar().toString());
+        values.put("java.home", installation.java().home().toString());
+        values.put("java.executable", installation.java().executable().toString());
+        values.put("java.version", installation.java().version());
+        values.put("java.major", Integer.toString(installation.java().majorVersion()));
+        values.put("classpath.count", Integer.toString(installation.classpath().size()));
         for (int index = 0; index < installation.classpath().size(); index++) {
-            lines.add("classpath." + index + "=" + installation.classpath().get(index));
+            values.put("classpath." + index, installation.classpath().get(index).toString());
         }
         int index = 0;
         for (Map.Entry<Path, String> entry : jarSha256.entrySet()) {
-            lines.add("cassandra.jar." + index + ".path=" + entry.getKey());
-            lines.add("cassandra.jar." + index + ".sha256=" + entry.getValue());
+            values.put("cassandra.jar." + index + ".path", entry.getKey().toString());
+            values.put("cassandra.jar." + index + ".sha256", entry.getValue());
             index++;
         }
-        return Collections.unmodifiableList(lines);
+        return Collections.unmodifiableMap(values);
     }
 
     private static String sha256(Path path) throws BootstrapException {

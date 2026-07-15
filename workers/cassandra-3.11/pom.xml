@@ -91,4 +91,33 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>cassandra-3.11-sandbox-it</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <executions>
+              <execution>
+                <goals>
+                  <goal>integration-test</goal>
+                  <goal>verify</goal>
+                </goals>
+              </execution>
+            </executions>
+            <configuration>
+              <systemPropertyVariables>
+                <sandbox.it.cassandra.home>${cassandra311.home}</sandbox.it.cassandra.home>
+                <sandbox.it.java.home>${cassandra311.java.home}</sandbox.it.java.home>
+                <sandbox.it.jar>${project.build.directory}/${project.build.finalName}.jar</sandbox.it.jar>
+              </systemPropertyVariables>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

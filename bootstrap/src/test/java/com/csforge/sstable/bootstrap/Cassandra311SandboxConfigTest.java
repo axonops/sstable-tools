@@ -1,0 +1,58 @@
+package com.csforge.sstable.bootstrap;
+
+import com.csforge.sstable.workspace.SourceInventory;
+import com.csforge.sstable.workspace.WorkspaceLock;
+import com.csforge.sstable.workspace.WorkspaceManifest;
+import com.csforge.sstable.workspace.WorkspaceRepository;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.UUID;
+import org.junit.Assert;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+public class Cassandra311SandboxConfigTest {
+    private static final String TOKEN =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    @Rule
+    public final TemporaryFolder temporary = new TemporaryFolder();
+
+    @Test
+    public void writesOnlyLoopbackAndWorkspaceOwnedConfiguration() throws Exception {
+        Path source = temporary.newFolder("source").toPath();
+        Files.write(source.resolve("mc-1-big-TOC.txt"), Arrays.asList(
+                "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
+        Files.write(source.resolve("mc-1-big-Data.db"), new byte[]{1});
+        Files.write(source.resolve("mc-1-big-Statistics.db"), new byte[]{2});
+        Path root = temporary.newFolder("workspace").toPath();
+        WorkspaceRepository repository = WorkspaceRepository.createAt(root);
+        WorkspaceManifest manifest = WorkspaceManifest.create(SourceInventory.capture(
+                Collections.singletonList(source)));
+
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
+                    19042, TOKEN);
+        }
+
+        String yaml = new String(Files.readAllBytes(
+                root.resolve(Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("listen_address: 127.0.0.1"));
+        Assert.assertTrue(yaml.contains("start_rpc: false"));
+        Assert.assertTrue(yaml.contains("start_native_transport: true"));
+        Assert.assertTrue(yaml.contains("internode_authenticator: "
+                + "org.apache.cassandra.auth.AllowAllInternodeAuthenticator"));
+        Assert.assertTrue(yaml.contains("native_transport_port: 19042"));
+        Assert.assertTrue(yaml.contains(root.toRealPath().resolve("data").toString()));
+        Assert.assertTrue(yaml.contains(root.toRealPath().resolve("commitlog").toString()));
+        Assert.assertFalse(yaml.contains("/var/lib/cassandra"));
+        Assert.assertEquals(TOKEN + "\n", new String(Files.readAllBytes(
+                root.resolve(Cassandra311SandboxConfig.CONTROL_TOKEN_PATH)),
+                StandardCharsets.US_ASCII));
+    }
+}

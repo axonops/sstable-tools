@@ -27,9 +27,10 @@ public final class WorkspaceRepository {
     private static final String MANIFEST_FILE = "manifest.json";
     private static final String LOCK_FILE = ".workspace.lock";
     private static final long MAX_MANIFEST_BYTES = 16L * 1024L * 1024L;
+    private static final long MAX_OWNED_FILE_BYTES = 16L * 1024L * 1024L;
     private static final List<String> LAYOUT_DIRECTORIES = Arrays.asList(
-            "schema", "runtime", "data", "commitlog", "logs", "staging",
-            "exports", "state");
+            "schema", "runtime", "data", "commitlog", "hints", "saved_caches",
+            "logs", "staging", "exports", "state");
 
     private final Path root;
     private final Path manifestPath;
@@ -178,6 +179,46 @@ public final class WorkspaceRepository {
         return WorkspacePaths.resolveInside(root, relativePath);
     }
 
+    public void writeOwnedFile(WorkspaceLock lock, String relativePath, byte[] content)
+            throws WorkspaceException {
+        requireLock(lock);
+        if (content == null || content.length == 0 || content.length > MAX_OWNED_FILE_BYTES) {
+            throw new WorkspaceException("Workspace-owned file has invalid size: "
+                    + (content == null ? -1 : content.length));
+        }
+        Path destination = resolveInside(relativePath);
+        Path parent = destination.getParent();
+        if (parent == null || !parent.startsWith(root)) {
+            throw new WorkspaceException("Workspace-owned file has no safe parent: "
+                    + relativePath);
+        }
+        try {
+            Files.createDirectories(parent);
+            restrictDirectory(parent);
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot create workspace-owned file directory "
+                    + parent, e);
+        }
+        writeAtomicFile(parent, destination, content);
+    }
+
+    public void deleteOwnedFile(WorkspaceLock lock, String relativePath)
+            throws WorkspaceException {
+        requireLock(lock);
+        Path path = resolveInside(relativePath);
+        try {
+            if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new WorkspaceException("Refusing to delete workspace directory as a file: "
+                        + path);
+            }
+            if (Files.deleteIfExists(path)) {
+                fsyncDirectory(path.getParent());
+            }
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot delete workspace-owned file " + path, e);
+        }
+    }
+
     public Path root() {
         return root;
     }
@@ -202,8 +243,14 @@ public final class WorkspaceRepository {
 
     private void persist(WorkspaceManifest manifest) throws WorkspaceException {
         byte[] encoded = codec.encode(manifest);
-        String temporaryName = ".manifest.json." + UUID.randomUUID() + ".tmp";
-        Path temporary = resolveInside(temporaryName);
+        writeAtomicFile(root, manifestPath, encoded);
+    }
+
+    private void writeAtomicFile(Path parent, Path destination, byte[] encoded)
+            throws WorkspaceException {
+        String temporaryName = "." + destination.getFileName() + "." + UUID.randomUUID()
+                + ".tmp";
+        Path temporary = WorkspacePaths.resolveInside(parent, temporaryName);
         try {
             try (FileChannel channel = FileChannel.open(temporary,
                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
@@ -212,15 +259,16 @@ public final class WorkspaceRepository {
                 channel.force(true);
             }
             try {
-                Files.move(temporary, manifestPath, StandardCopyOption.ATOMIC_MOVE,
+                Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE,
                         StandardCopyOption.REPLACE_EXISTING);
             } catch (AtomicMoveNotSupportedException e) {
-                throw new WorkspaceException("Workspace filesystem does not support atomic manifest replacement: "
-                        + root, e);
+                throw new WorkspaceException("Workspace filesystem does not support atomic "
+                        + "replacement in " + parent, e);
             }
-            fsyncDirectory(root);
+            fsyncDirectory(parent);
         } catch (IOException e) {
-            throw new WorkspaceException("Cannot persist workspace manifest " + manifestPath, e);
+            throw new WorkspaceException("Cannot persist workspace-owned file " + destination,
+                    e);
         } finally {
             try {
                 Files.deleteIfExists(temporary);
@@ -245,7 +293,9 @@ public final class WorkspaceRepository {
             return next.lastStableState() == current.state();
         }
         if (current.state() == WorkspaceState.FAILED_RECOVERABLE) {
-            return next.state() == current.lastStableState();
+            return next.state() == current.lastStableState()
+                    || (next.state() == WorkspaceState.STOPPED
+                    && current.lastStableState().canTransitionTo(WorkspaceState.STOPPED));
         }
         return current.state().canTransitionTo(next.state());
     }

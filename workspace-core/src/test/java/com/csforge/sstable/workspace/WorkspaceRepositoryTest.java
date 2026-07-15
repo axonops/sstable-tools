@@ -117,6 +117,32 @@ public class WorkspaceRepositoryTest {
         assertPathFailure(repository, "escape/file", "crosses a symlink");
     }
 
+    @Test
+    public void writesWorkspaceOwnedFilesAtomicallyUnderTheRequiredLock() throws Exception {
+        Path root = temporary.newFolder("owned-file").toPath();
+        WorkspaceRepository repository = WorkspaceRepository.createAt(root);
+        WorkspaceManifest manifest = WorkspaceManifest.create(
+                WorkspaceTestFixtures.inventory(root));
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            repository.writeOwnedFile(lock, "runtime/cassandra.yaml",
+                    "cluster_name: test\n".getBytes(StandardCharsets.UTF_8));
+        }
+
+        Assert.assertEquals("cluster_name: test\n",
+                new String(Files.readAllBytes(root.resolve("runtime/cassandra.yaml")),
+                        StandardCharsets.UTF_8));
+        Assert.assertTrue(Files.isDirectory(root.resolve("hints")));
+        Assert.assertTrue(Files.isDirectory(root.resolve("saved_caches")));
+
+        try {
+            repository.writeOwnedFile(null, "runtime/unsafe", new byte[]{1});
+            Assert.fail("Expected lock requirement");
+        } catch (WorkspaceException e) {
+            Assert.assertTrue(e.getMessage().contains("exclusive workspace lock"));
+        }
+    }
+
     private static void assertPathFailure(WorkspaceRepository repository,
                                           String path,
                                           String expected) throws Exception {

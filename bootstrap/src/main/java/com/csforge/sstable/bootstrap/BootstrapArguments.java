@@ -14,7 +14,9 @@ final class BootstrapArguments {
         RUNTIME_INSPECT,
         RUNTIME_PREFLIGHT,
         WORKSPACE_CREATE,
+        WORKSPACE_START,
         WORKSPACE_STATUS,
+        WORKSPACE_STOP,
         WORKSPACE_RECOVER
     }
 
@@ -86,8 +88,16 @@ final class BootstrapArguments {
             action = Action.WORKSPACE_CREATE;
             workspacePath = commandPath(command.get(2));
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
+                && "start".equals(command.get(1))) {
+            action = Action.WORKSPACE_START;
+            workspacePath = commandPath(command.get(2));
+        } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "status".equals(command.get(1))) {
             action = Action.WORKSPACE_STATUS;
+            workspacePath = commandPath(command.get(2));
+        } else if (command.size() == 3 && "workspace".equals(command.get(0))
+                && "stop".equals(command.get(1))) {
+            action = Action.WORKSPACE_STOP;
             workspacePath = commandPath(command.get(2));
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "recover".equals(command.get(1))) {
@@ -99,8 +109,10 @@ final class BootstrapArguments {
         }
 
         boolean workspaceAction = action == Action.WORKSPACE_CREATE
-                || action == Action.WORKSPACE_STATUS || action == Action.WORKSPACE_RECOVER;
-        if (workspaceAction && (cassandraHome != null || cassandraConf != null
+                || action == Action.WORKSPACE_START || action == Action.WORKSPACE_STATUS
+                || action == Action.WORKSPACE_STOP || action == Action.WORKSPACE_RECOVER;
+        if (workspaceAction && action != Action.WORKSPACE_START
+                && (cassandraHome != null || cassandraConf != null
                 || javaHome != null)) {
             throw usage("Cassandra runtime options are not accepted by this workspace command");
         }

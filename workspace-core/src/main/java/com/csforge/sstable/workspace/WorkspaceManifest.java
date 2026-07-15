@@ -125,14 +125,48 @@ public final class WorkspaceManifest {
     }
 
     public WorkspaceManifest recover() throws WorkspaceException {
-        return recover(Instant.now());
+        return recoverTo(lastStableState, Instant.now());
+    }
+
+    public WorkspaceManifest recoverTo(WorkspaceState target) throws WorkspaceException {
+        return recoverTo(target, Instant.now());
     }
 
     WorkspaceManifest recover(Instant now) throws WorkspaceException {
+        return recoverTo(lastStableState, now);
+    }
+
+    WorkspaceManifest recoverTo(WorkspaceState target, Instant now)
+            throws WorkspaceException {
         if (state != WorkspaceState.FAILED_RECOVERABLE) {
             throw new WorkspaceException("Only FAILED_RECOVERABLE can be recovered");
         }
-        return copy(lastStableState, null, null, now);
+        if (target != lastStableState
+                && (target != WorkspaceState.STOPPED
+                || !lastStableState.canTransitionTo(WorkspaceState.STOPPED))) {
+            throw new WorkspaceException("Cannot recover failed " + lastStableState
+                    + " workspace to " + target);
+        }
+        return copy(target, null, null, now);
+    }
+
+    public WorkspaceManifest withRuntimeIdentity(Map<String, String> runtime,
+                                                 Map<String, String> output)
+            throws WorkspaceException {
+        if (runtime == null || runtime.isEmpty() || output == null || output.isEmpty()) {
+            throw new WorkspaceException("Runtime and output identities must not be empty");
+        }
+        SortedMap<String, String> nextRuntime = immutableMap(runtime, "runtime identity");
+        SortedMap<String, String> nextOutput = immutableMap(output, "output identity");
+        if (!runtimeIdentity.isEmpty() && !runtimeIdentity.equals(nextRuntime)) {
+            throw new WorkspaceException("Workspace runtime identity cannot change");
+        }
+        if (!outputIdentity.isEmpty() && !outputIdentity.equals(nextOutput)) {
+            throw new WorkspaceException("Workspace output identity cannot change");
+        }
+        return new WorkspaceManifest(formatVersion, workspaceId, state, lastStableState,
+                failureMessage, createdAt, Instant.now(), sourceInventory, schemaIdentity,
+                nextRuntime, nextOutput, baselineInventory, exports);
     }
 
     private WorkspaceManifest copy(WorkspaceState nextState,

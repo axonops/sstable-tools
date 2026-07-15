@@ -153,7 +153,7 @@ The legal forward transitions are:
 ```text
 NEW -> VALIDATED -> IMPORTED -> RUNNING -> FLUSHED -> EXPORTED -> STOPPED
 
-any non-failed state -> FAILED_RECOVERABLE -> reconciled prior stable state
+any non-failed state -> FAILED_RECOVERABLE -> reconciled safe state
 ```
 
 Additional operational transitions allow `IMPORTED`, `FLUSHED`, `EXPORTED`, or
@@ -173,8 +173,12 @@ The failed manifest retains its exact prior state in `lastStableState`.
 | `FAILED_RECOVERABLE` | Inspect the failure, then recover to `lastStableState` |
 
 Recovery of `NEW` or `VALIDATED` only changes persisted state because those
-states have no worker process. Later worker implementations must first reconcile
-process health and expected files before recovering any worker-owned state. A
+states have no worker process. The Cassandra 3.11 controller reconciles a
+failed `RUNNING`, `FLUSHED`, or `EXPORTED` state against its authenticated
+control endpoint and recorded PID. A responsive worker restores its prior
+state. An unreachable worker recovers as `STOPPED` only when Linux `/proc`
+proves the exact workspace worker command is gone; missing or ambiguous process
+identity fails closed. Other worker-owned recovery remains unimplemented. A
 worker exit code alone is never sufficient evidence that a transition
 completed.
 

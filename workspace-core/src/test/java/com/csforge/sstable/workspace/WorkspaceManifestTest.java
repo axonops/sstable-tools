@@ -87,6 +87,28 @@ public class WorkspaceManifestTest {
     }
 
     @Test
+    public void failedRunningWorkspaceCanRecoverAsStoppedAfterReconciliation()
+            throws Exception {
+        Path root = temporary.newFolder("worker-recovery").toPath();
+        WorkspaceManifest manifest = WorkspaceManifest.create(
+                        WorkspaceTestFixtures.inventory(root))
+                .transitionTo(WorkspaceState.VALIDATED)
+                .transitionTo(WorkspaceState.IMPORTED)
+                .transitionTo(WorkspaceState.RUNNING)
+                .fail("worker terminated");
+
+        WorkspaceManifest recovered = manifest.recoverTo(WorkspaceState.STOPPED);
+
+        Assert.assertEquals(WorkspaceState.STOPPED, recovered.state());
+        try {
+            manifest.recoverTo(WorkspaceState.VALIDATED);
+            Assert.fail("Expected unsafe recovery target to be rejected");
+        } catch (WorkspaceException e) {
+            Assert.assertTrue(e.getMessage().contains("Cannot recover"));
+        }
+    }
+
+    @Test
     public void rejectsIncompleteDecodedInventoryAndUnsafeOwnedPaths() throws Exception {
         Path root = temporary.newFolder("manifest-invariants").toPath();
         WorkspaceManifestCodec codec = new WorkspaceManifestCodec();

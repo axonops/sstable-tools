@@ -21,7 +21,6 @@
     <dependency>
       <groupId>com.csforge</groupId>
       <artifactId>sstable-tools-worker-api</artifactId>
-      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>junit</groupId>

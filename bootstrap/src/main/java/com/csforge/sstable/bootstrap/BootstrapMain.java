@@ -36,7 +36,7 @@ public final class BootstrapMain {
                         adapter.getProperty("adapter.cassandra-version", "unbound"));
                 return 0;
             }
-            if (isWorkspaceAction(arguments.action())) {
+            if (isCassandraFreeWorkspaceAction(arguments.action())) {
                 new WorkspaceCommandRunner().run(arguments, out);
                 return 0;
             }
@@ -47,6 +47,11 @@ public final class BootstrapMain {
                     toolPath(), System.getenv(), System.getProperties());
             CassandraInstallation installation = discovery.discover(
                     arguments.runtimeOptions(), adapter);
+
+            if (arguments.action() == BootstrapArguments.Action.WORKSPACE_START) {
+                new WorkspaceCommandRunner().start(arguments, adapter, installation, out);
+                return 0;
+            }
 
             if (arguments.action() == BootstrapArguments.Action.RUNTIME_INSPECT) {
                 RuntimeIdentity identity = RuntimeIdentity.capture(installation);
@@ -70,9 +75,10 @@ public final class BootstrapMain {
         }
     }
 
-    private static boolean isWorkspaceAction(BootstrapArguments.Action action) {
+    private static boolean isCassandraFreeWorkspaceAction(BootstrapArguments.Action action) {
         return action == BootstrapArguments.Action.WORKSPACE_CREATE
                 || action == BootstrapArguments.Action.WORKSPACE_STATUS
+                || action == BootstrapArguments.Action.WORKSPACE_STOP
                 || action == BootstrapArguments.Action.WORKSPACE_RECOVER;
     }
 
@@ -121,10 +127,12 @@ public final class BootstrapMain {
         out.println();
         out.println("Workspace commands:");
         out.println("  workspace create <path>  Inventory sources and create a validated workspace");
+        out.println("  workspace start <path>   Start an imported workspace sandbox (3.11 prototype)");
         out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
+        out.println("  workspace stop <path>    Drain and stop a running workspace sandbox");
         out.println("  workspace recover <path> Recover a failed workspace to its last stable state");
         out.println();
         out.println("Workspace commands planned for later implementation:");
-        out.println("  workspace start|cqlsh|export|stop|destroy");
+        out.println("  workspace cqlsh|export|destroy");
     }
 }

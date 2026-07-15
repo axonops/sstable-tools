@@ -141,9 +141,11 @@ scripts/verify-thin-jars
 The existing executable reader is written to
 `legacy-reader-3.11/target/sstable-tools-<version>.jar`. Version-specific
 workspace artifacts are written below `workers/cassandra-<line>/target/`.
-The shared workspace manifest commands are available in those thin JARs; the
-Cassandra worker stages that import, start cqlsh, mutate, and export remain under
-development.
+The shared workspace manifest commands are available in those thin JARs. The
+Cassandra 3.11 artifact also contains the isolated-daemon start, status, stop,
+and crash-recovery prototype. SSTable import, guarded mutation, flush, and
+export remain under development, so this is not yet an operator-ready write
+workflow.
 
 The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
 provided/packaged boundary and the build checks that enforce it. GitHub Actions
@@ -179,6 +181,21 @@ versions, the deterministic child classpath, and SHA-256 identities.
 `runtime preflight` starts a separate worker JVM with that classpath and checks
 the Cassandra APIs required by the adapter.
 
+The real Cassandra 3.11 sandbox test is opt-in and requires an unpacked final
+3.11.19 distribution plus JDK 8:
+
+```shell
+mvn clean verify -pl workers/cassandra-3.11 -am \
+  -Pcassandra-3.11-sandbox-it \
+  -Dcassandra311.home=/opt/apache-cassandra-3.11.19 \
+  -Dcassandra311.java.home=/usr/lib/jvm/java-8-openjdk
+```
+
+It starts the thin JAR worker, connects with the distribution's `cqlsh`, runs
+`INSERT` and `UPDATE`, forces termination, reconciles the recorded PID, restarts,
+verifies workspace commit-log replay, and drains cleanly. GitHub Actions runs
+the same profile against a SHA-512-pinned 3.11.19 archive.
+
 Compatibility is deliberately conservative until broader installed-package
 fixtures are in CI:
 
@@ -197,6 +214,9 @@ fixtures are in CI:
 * [Workspace manifest and lifecycle contract](docs/workspace-manifest.md) -
   Implemented source inventory, atomic manifest, locking, path confinement,
   lifecycle, recovery, and command behavior.
+* [Cassandra 3.11 sandbox findings](docs/cassandra-3.11-sandbox-findings.md) -
+  Implemented vertical prototype, isolation controls, test evidence, and
+  remaining go-live blockers.
 
 ## cqlsh
 cql shell similiar and modeled after the C* cqlsh tool. Enables issuing cql queries against raw sstables and
