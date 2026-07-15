@@ -91,17 +91,23 @@ then replays the private workspace commit log.
 
 The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 
-1. reserve normal Cassandra storage and native ports to prove non-conflict;
-2. start the thin JAR against the SHA-512-pinned 3.11.19 final tarball using
-   JDK 8;
-3. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
+1. start a complete production-like Cassandra daemon on loopback storage port
+   7000 and native port 9042, with gossip and internode messaging enabled and
+   every mutable path redirected to a private fixture root;
+2. verify that production fixture is queryable and has no peers, then start the
+   thin JAR against the same SHA-512-pinned 3.11.19 final tarball using JDK 8;
+3. verify the worker's native and control endpoints are loopback-only,
+   dynamically allocated, and distinct from the production ports;
+4. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
    PyPy 2.7 runtime, disable Python bytecode writes into the Cassandra
    installation, and verify Cassandra 3.11.19/native v4;
-4. execute `CREATE TABLE`, `INSERT`, and `UPDATE` through native transport;
-5. send `SIGKILL` before flush, detect failure, reconcile the PID, and restart;
-6. verify the updated value is restored by commit-log replay;
-7. drain to `STOPPED`; and
-8. verify source component hashes and all installation file metadata are
+5. execute `CREATE TABLE`, `INSERT`, and `UPDATE` through native transport;
+6. send `SIGKILL` before flush, verify the production daemon remains queryable
+   with no peers, detect worker failure, reconcile the PID, and restart;
+7. verify the updated value is restored by commit-log replay;
+8. drain the worker to `STOPPED` and verify the production daemon is still
+   queryable before stopping the fixture; and
+9. verify source component hashes and all installation file metadata are
    unchanged.
 
 Unit tests cover strict endpoint parsing/publication, authenticated control,
@@ -118,12 +124,9 @@ PID handling, symlink/path confinement, and source inventories.
   documented read, `INSERT`, and `UPDATE` subset.
 - Implement flush, baseline/delta inventories, export, and post-export source
   verification.
-- Run a coexistence fixture with a complete second Cassandra 3.11 process, not
-  only occupied production ports, and inspect its process/files before and
-  after worker crash tests.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 
-Issue #5 remains open until the full coexistence fixture and remaining
-prototype acceptance checks are complete. Issues #6 through #10 own the later
-import, guard, flush/export, and other release-adapter work.
+The Cassandra 3.11 vertical prototype now covers issue #5's acceptance scope.
+Issues #6 through #10 own the later import, guard, flush/export, and other
+release-adapter work.

@@ -191,11 +191,15 @@ mvn clean verify -pl workers/cassandra-3.11 -am \
   -Dcassandra311.java.home=/usr/lib/jvm/java-8-openjdk
 ```
 
-It starts the thin JAR worker, connects with the distribution's `cqlsh`, runs
-`INSERT` and `UPDATE`, forces termination, reconciles the recorded PID, restarts,
-verifies workspace commit-log replay, and drains cleanly. GitHub Actions runs
-the same profile against a SHA-512-pinned 3.11.19 archive and supplies a
-SHA-256-pinned PyPy 2.7 runtime required by that release's `cqlsh` launcher.
+It first starts a complete production-like daemon on normal ports 7000 and
+9042, then starts the thin JAR worker from the same installed distribution on
+private loopback endpoints. The test connects with the distribution's `cqlsh`,
+runs `INSERT` and `UPDATE`, forces worker termination, verifies the production
+daemon remains isolated and queryable, reconciles the recorded worker PID,
+restarts, verifies workspace commit-log replay, and drains cleanly. GitHub
+Actions runs the same profile against a SHA-512-pinned 3.11.19 archive and
+supplies a SHA-256-pinned PyPy 2.7 runtime required by that release's `cqlsh`
+launcher.
 
 Compatibility is deliberately conservative until broader installed-package
 fixtures are in CI:

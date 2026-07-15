@@ -9,10 +9,6 @@ import com.csforge.sstable.workspace.WorkspaceState;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.BindException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,10 +38,14 @@ public class Cassandra311SandboxIT {
         Path toolJar = requiredFile("sandbox.it.jar");
         Path source = createSstableSource();
         Path workspace = temporary.newFolder("workspace").toPath();
+        Path productionRoot = temporary.newFolder("production").toPath();
         initializeImportedWorkspace(source, workspace);
         Map<String, String> installationBefore = fileMetadata(cassandraHome);
-        ServerSocket storagePort = reserveProductionPort(7000);
-        ServerSocket nativePort = reserveProductionPort(9042);
+        Cassandra311ProductionFixture production = Cassandra311ProductionFixture.start(
+                cassandraHome, javaHome, productionRoot);
+        Path cqlsh = cassandraHome.resolve("bin/cqlsh");
+        assertProductionVersion(cqlsh);
+        assertProductionIsolated(cqlsh, "before worker startup");
 
         CommandResult start = null;
         boolean workerRunning = false;
@@ -59,7 +59,6 @@ public class Cassandra311SandboxIT {
             String[] nativeEndpoint = property(start.output, "worker.native").split(":", 2);
             Assert.assertEquals(start.output, 2, nativeEndpoint.length);
 
-            Path cqlsh = cassandraHome.resolve("bin/cqlsh");
             CommandResult version = runCqlsh(Arrays.asList(
                     cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
                     "SHOW VERSION"));
@@ -85,11 +84,14 @@ public class Cassandra311SandboxIT {
 
             WorkerEndpoint firstEndpoint = WorkerEndpoint.read(
                     workspace.resolve("state/worker.properties"));
+            assertWorkerEndpoint(firstEndpoint, nativeEndpoint);
             CommandResult kill = run(Arrays.asList("/bin/kill", "-KILL",
                     Long.toString(firstEndpoint.pid())));
             Assert.assertEquals(kill.output, 0, kill.exitCode);
             waitForProcessExit(firstEndpoint.pid());
             workerRunning = false;
+            production.assertRunning("Worker SIGKILL affected production Cassandra");
+            assertProductionIsolated(cqlsh, "after worker SIGKILL");
 
             CommandResult failedStatus = run(command(controllerJava(), toolJar,
                     "workspace", "status", workspace.toString()));
@@ -110,20 +112,34 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(start.output + workerError(workspace), 0, start.exitCode);
             workerRunning = true;
             nativeEndpoint = property(start.output, "worker.native").split(":", 2);
+            WorkerEndpoint restartedEndpoint = WorkerEndpoint.read(
+                    workspace.resolve("state/worker.properties"));
+            assertWorkerEndpoint(restartedEndpoint, nativeEndpoint);
             CommandResult replayed = runCqlsh(Arrays.asList(
                     cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
                     "SELECT value FROM sandbox_it.items WHERE id = 1;"));
             Assert.assertEquals(replayed.output, 0, replayed.exitCode);
             Assert.assertTrue(replayed.output, replayed.output.contains("after"));
+
+            CommandResult stop = run(command(controllerJava(), toolJar,
+                    "workspace", "stop", workspace.toString()));
+            Assert.assertEquals(stop.output, 0, stop.exitCode);
+            Assert.assertTrue(stop.output, stop.output.contains("workspace.state=STOPPED"));
+            workerRunning = false;
+            production.assertRunning("Graceful worker stop affected production Cassandra");
+            assertProductionIsolated(cqlsh, "after graceful worker stop");
         } finally {
-            if (workerRunning && start != null && start.exitCode == 0) {
-                CommandResult stop = run(command(controllerJava(), toolJar,
-                        "workspace", "stop", workspace.toString()));
-                Assert.assertEquals(stop.output, 0, stop.exitCode);
-                Assert.assertTrue(stop.output, stop.output.contains("workspace.state=STOPPED"));
+            try {
+                if (workerRunning && start != null && start.exitCode == 0) {
+                    CommandResult stop = run(command(controllerJava(), toolJar,
+                            "workspace", "stop", workspace.toString()));
+                    Assert.assertEquals(stop.output, 0, stop.exitCode);
+                    Assert.assertTrue(stop.output,
+                            stop.output.contains("workspace.state=STOPPED"));
+                }
+            } finally {
+                production.stop();
             }
-            close(storagePort);
-            close(nativePort);
         }
 
         WorkerEndpoint endpoint = WorkerEndpoint.read(
@@ -132,6 +148,43 @@ public class Cassandra311SandboxIT {
         SourceInventory.capture(Collections.singletonList(source)).verifyUnchanged();
         Assert.assertEquals("Cassandra installation was modified", installationBefore,
                 fileMetadata(cassandraHome));
+    }
+
+    private static void assertProductionVersion(Path cqlsh) throws Exception {
+        CommandResult version = runCqlsh(Arrays.asList(cqlsh.toString(), "127.0.0.1",
+                Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT), "-e",
+                "SHOW VERSION"));
+        Assert.assertEquals(version.output, 0, version.exitCode);
+        Assert.assertTrue(version.output, version.output.contains("Cassandra 3.11.19"));
+        Assert.assertTrue(version.output, version.output.contains("Native protocol v4"));
+    }
+
+    private static void assertProductionIsolated(Path cqlsh, String phase) throws Exception {
+        CommandResult query = runCqlsh(Arrays.asList(cqlsh.toString(), "127.0.0.1",
+                Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT), "-e",
+                "SELECT cluster_name FROM system.local; SELECT peer FROM system.peers;"));
+        Assert.assertEquals(phase + ":\n" + query.output, 0, query.exitCode);
+        Assert.assertTrue(phase + ":\n" + query.output,
+                query.output.contains(Cassandra311ProductionFixture.CLUSTER_NAME));
+        Assert.assertTrue(phase + ":\n" + query.output,
+                query.output.contains("(0 rows)"));
+    }
+
+    private static void assertWorkerEndpoint(WorkerEndpoint endpoint,
+                                             String[] reportedNativeEndpoint) {
+        Assert.assertEquals("127.0.0.1", endpoint.nativeAddress());
+        Assert.assertEquals("127.0.0.1", endpoint.controlAddress());
+        Assert.assertEquals(reportedNativeEndpoint[0], endpoint.nativeAddress());
+        Assert.assertEquals(Integer.parseInt(reportedNativeEndpoint[1]), endpoint.nativePort());
+        Assert.assertNotEquals(Cassandra311ProductionFixture.STORAGE_PORT,
+                endpoint.nativePort());
+        Assert.assertNotEquals(Cassandra311ProductionFixture.NATIVE_PORT,
+                endpoint.nativePort());
+        Assert.assertNotEquals(Cassandra311ProductionFixture.STORAGE_PORT,
+                endpoint.controlPort());
+        Assert.assertNotEquals(Cassandra311ProductionFixture.NATIVE_PORT,
+                endpoint.controlPort());
+        Assert.assertNotEquals(endpoint.nativePort(), endpoint.controlPort());
     }
 
     private Path createSstableSource() throws IOException {
@@ -261,18 +314,6 @@ public class Cassandra311SandboxIT {
         }
     }
 
-    private static ServerSocket reserveProductionPort(int port) throws Exception {
-        ServerSocket socket = new ServerSocket();
-        try {
-            socket.setReuseAddress(false);
-            socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port));
-            return socket;
-        } catch (BindException alreadyInUse) {
-            socket.close();
-            return null;
-        }
-    }
-
     private static void waitForProcessExit(long pid) throws Exception {
         Path process = Paths.get("/proc", Long.toString(pid));
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
@@ -296,12 +337,6 @@ public class Cassandra311SandboxIT {
             });
         }
         return files;
-    }
-
-    private static void close(ServerSocket socket) throws IOException {
-        if (socket != null) {
-            socket.close();
-        }
     }
 
     private static final class CommandResult {
