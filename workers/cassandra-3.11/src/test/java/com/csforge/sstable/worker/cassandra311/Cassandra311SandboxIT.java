@@ -60,14 +60,14 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(start.output, 2, nativeEndpoint.length);
 
             Path cqlsh = cassandraHome.resolve("bin/cqlsh");
-            CommandResult version = run(Arrays.asList(
+            CommandResult version = runCqlsh(Arrays.asList(
                     cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
                     "SHOW VERSION"));
             Assert.assertEquals(version.output, 0, version.exitCode);
             Assert.assertTrue(version.output, version.output.contains("Cassandra 3.11.19"));
             Assert.assertTrue(version.output, version.output.contains("Native protocol v4"));
 
-            CommandResult mutate = run(Arrays.asList(
+            CommandResult mutate = runCqlsh(Arrays.asList(
                     cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
                     "CREATE KEYSPACE sandbox_it WITH replication = "
                             + "{'class': 'SimpleStrategy', 'replication_factor': 1}; "
@@ -110,7 +110,7 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(start.output + workerError(workspace), 0, start.exitCode);
             workerRunning = true;
             nativeEndpoint = property(start.output, "worker.native").split(":", 2);
-            CommandResult replayed = run(Arrays.asList(
+            CommandResult replayed = runCqlsh(Arrays.asList(
                     cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
                     "SELECT value FROM sandbox_it.items WHERE id = 1;"));
             Assert.assertEquals(replayed.output, 0, replayed.exitCode);
@@ -203,11 +203,21 @@ public class Cassandra311SandboxIT {
     }
 
     private static CommandResult run(java.util.List<String> command) throws Exception {
+        return run(command, Collections.emptyMap());
+    }
+
+    private static CommandResult runCqlsh(java.util.List<String> command) throws Exception {
+        return run(command, Collections.singletonMap("PYTHONDONTWRITEBYTECODE", "1"));
+    }
+
+    private static CommandResult run(java.util.List<String> command,
+                                     Map<String, String> environment) throws Exception {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.redirectErrorStream(true);
         builder.environment().remove("JAVA_TOOL_OPTIONS");
         builder.environment().remove("JDK_JAVA_OPTIONS");
         builder.environment().remove("_JAVA_OPTIONS");
+        builder.environment().putAll(environment);
         Process process = builder.start();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         Thread reader = new Thread(() -> copy(process.getInputStream(), output),
