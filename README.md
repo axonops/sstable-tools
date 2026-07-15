@@ -122,14 +122,32 @@ Used sstables, schema, and paging settings and persisted for future use. Use the
 
 ## Building
 
-This project uses [Apache Maven](https://maven.apache.org/) to build a
-self-contained executable jar.  To build the jar simply execute:
+This project uses [Apache Maven](https://maven.apache.org/) and is organized as a
+single multi-module build. To compile and test every shared and version-specific
+module, execute:
+
+```shell
+mvn test
+```
+
+Build the legacy reader and the Cassandra 3.11, 4.0, 4.1, and 5.0 thin-JAR
+artifacts with:
 
 ```shell
 mvn package
+scripts/verify-thin-jars
 ```
 
-The executable jar will be present in the target directory.
+The existing executable reader is written to
+`legacy-reader-3.11/target/sstable-tools-<version>.jar`. Version-specific
+workspace artifacts are written below `workers/cassandra-<line>/target/`.
+Workspace commands in those thin JARs are under development.
+
+## Design documents
+
+* [CQL mutation workspaces for SSTables](docs/cql-mutation-workspace-design.md) -
+  Proposed design for safe `INSERT` and `UPDATE` support with Apache cqlsh
+  across Cassandra 3.11, 4.0, 4.1, and 5.0 formats.
 
 ## cqlsh
 cql shell similiar and modeled after the C* cqlsh tool. Enables issuing cql queries against raw sstables and
