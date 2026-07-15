@@ -194,7 +194,8 @@ mvn clean verify -pl workers/cassandra-3.11 -am \
 It starts the thin JAR worker, connects with the distribution's `cqlsh`, runs
 `INSERT` and `UPDATE`, forces termination, reconciles the recorded PID, restarts,
 verifies workspace commit-log replay, and drains cleanly. GitHub Actions runs
-the same profile against a SHA-512-pinned 3.11.19 archive.
+the same profile against a SHA-512-pinned 3.11.19 archive and supplies a
+SHA-256-pinned PyPy 2.7 runtime required by that release's `cqlsh` launcher.
 
 Compatibility is deliberately conservative until broader installed-package
 fixtures are in CI:

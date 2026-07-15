@@ -119,6 +119,14 @@ jobs:
           echo '42d7732c2b81c65a960101d1146603d430de341adcdf8d0ffc649753a340cf64dad696050f2ec01faff5f15e726f4f2a459f0b3ac281569b957f7726f51d43e0  apache-cassandra-3.11.19-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-3.11.19-bin.tar.gz
 
+      - name: Install pinned Python 2.7 runtime for Cassandra cqlsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSLO https://downloads.python.org/pypy/pypy2.7-v7.3.20-linux64.tar.bz2
+          echo 'aa3bb92dbb529fa2d4920895b16d67a810b0c709207857d56cfe4a6e3b41e02a  pypy2.7-v7.3.20-linux64.tar.bz2' | sha256sum --check
+          tar -xjf pypy2.7-v7.3.20-linux64.tar.bz2
+          echo "${{ runner.temp }}/pypy2.7-v7.3.20-linux64/bin" >> "$GITHUB_PATH"
+
       - name: Test isolated daemon, cqlsh mutations, and crash recovery
         run: >-
           mvn -B -ntp clean verify

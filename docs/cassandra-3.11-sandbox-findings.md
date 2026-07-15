@@ -94,7 +94,8 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 1. reserve normal Cassandra storage and native ports to prove non-conflict;
 2. start the thin JAR against the SHA-512-pinned 3.11.19 final tarball using
    JDK 8;
-3. connect using the tarball's `cqlsh` and verify Cassandra 3.11.19/native v4;
+3. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
+   PyPy 2.7 runtime and verify Cassandra 3.11.19/native v4;
 4. execute `CREATE TABLE`, `INSERT`, and `UPDATE` through native transport;
 5. send `SIGKILL` before flush, detect failure, reconcile the PID, and restart;
 6. verify the updated value is restored by commit-log replay;
