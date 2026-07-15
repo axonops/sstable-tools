@@ -2,6 +2,11 @@ package com.csforge.sstable.workspace;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -125,6 +130,46 @@ public class WorkspaceManifestTest {
         assertManifestFileFailure("../outside.db", hash);
         assertManifestFileFailure("C:\\outside.db", hash);
         assertManifestFileFailure("\\\\server\\share.db", hash);
+    }
+
+    @Test
+    public void recordsImmutableSchemaAndBaselineImportIdentity() throws Exception {
+        Path root = temporary.newFolder("import-identity").toPath();
+        Map<String, String> bundle = new LinkedHashMap<>();
+        bundle.put("bundle.sha256", hash('a'));
+        WorkspaceManifest validated = WorkspaceManifest.create(
+                        WorkspaceTestFixtures.inventory(root))
+                .withSchemaIdentity(bundle)
+                .transitionTo(WorkspaceState.VALIDATED);
+        Map<String, String> parsed = new LinkedHashMap<>();
+        parsed.put("table", "users");
+        List<ManifestFile> baseline = Arrays.asList(
+                new ManifestFile("data/ks/table/mc-2-big-Data.db", 2, hash('b')),
+                new ManifestFile("data/ks/table/mc-1-big-Data.db", 1, hash('c')));
+
+        WorkspaceManifest imported = validated.withImportResult(parsed, baseline)
+                .transitionTo(WorkspaceState.IMPORTED);
+        WorkspaceManifest roundTripped = new WorkspaceManifestCodec().decode(
+                new WorkspaceManifestCodec().encode(imported));
+
+        Assert.assertEquals("users", imported.schemaIdentity().get("table"));
+        Assert.assertEquals("data/ks/table/mc-1-big-Data.db",
+                imported.baselineInventory().get(0).relativePath());
+        Assert.assertEquals(imported, roundTripped);
+
+        try {
+            validated.withImportResult(Collections.singletonMap("bundle.sha256", hash('d')),
+                    baseline);
+            Assert.fail("Expected schema identity change to be rejected");
+        } catch (WorkspaceException e) {
+            Assert.assertTrue(e.getMessage().contains("cannot change"));
+        }
+    }
+
+    private static String hash(char value) {
+        char[] hash = new char[64];
+        Arrays.fill(hash, value);
+        return new String(hash);
     }
 
     private static void assertManifestFileFailure(String path, String hash) throws Exception {

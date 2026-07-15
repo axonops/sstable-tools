@@ -29,8 +29,22 @@ final class Hashing {
             throw new WorkspaceException("Cannot hash source component " + path, e);
         }
 
+        return hex(digest.digest());
+    }
+
+    static String sha256(byte[] content) {
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("JDK does not provide SHA-256", e);
+        }
+        return hex(digest.digest(content));
+    }
+
+    private static String hex(byte[] digest) {
         StringBuilder result = new StringBuilder(64);
-        for (byte value : digest.digest()) {
+        for (byte value : digest) {
             result.append(String.format("%02x", value & 0xff));
         }
         return result.toString();

@@ -142,10 +142,39 @@ The existing executable reader is written to
 `legacy-reader-3.11/target/sstable-tools-<version>.jar`. Version-specific
 workspace artifacts are written below `workers/cassandra-<line>/target/`.
 The shared workspace manifest commands are available in those thin JARs. The
-Cassandra 3.11 artifact also contains the isolated-daemon start, status, stop,
-and crash-recovery prototype. SSTable import, guarded mutation, flush, and
-export remain under development, so this is not yet an operator-ready write
-workflow.
+Cassandra 3.11 artifact also contains schema/header validation, copy-based
+SSTable import, isolated-daemon start, status, stop, and crash recovery.
+Statement guarding, explicit flush/delta export, and broader fixture coverage
+remain under development, so this is not yet an operator-ready write workflow.
+
+The current Cassandra 3.11 workflow is:
+
+```shell
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  workspace create ./case \
+  --sstables /evidence/snapshot/table-directory \
+  --schema /evidence/schema.cql
+
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  --cassandra-home /opt/apache-cassandra-3.11.19 \
+  --java-home /usr/lib/jvm/java-8-openjdk \
+  workspace import ./case
+
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  --cassandra-home /opt/apache-cassandra-3.11.19 \
+  --java-home /usr/lib/jvm/java-8-openjdk \
+  workspace start ./case
+```
+
+`workspace start` prints the private native endpoint for the installation's
+unmodified `cqlsh`. The schema bundle and SSTable sources must remain outside
+the workspace and unchanged. The importer recognizes Cassandra 3.11 Big `ma`,
+`mb`, and `mc` descriptors with a complete digest-bearing component set,
+subject to exact schema and partitioner validation. Real successful-import
+coverage currently includes the repository's `ma` and `mc` fixtures. Its `mb`
+fixture declares `LocalPartitioner`, so the integration test proves that it is
+rejected against the sandbox's `Murmur3Partitioner`; a compatible `mb` success
+fixture is still required before claiming full format-range coverage.
 
 The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
 provided/packaged boundary and the build checks that enforce it. GitHub Actions
@@ -192,14 +221,15 @@ mvn clean verify -pl workers/cassandra-3.11 -am \
 ```
 
 It first starts a complete production-like daemon on normal ports 7000 and
-9042, then starts the thin JAR worker from the same installed distribution on
-private loopback endpoints. The test connects with the distribution's `cqlsh`,
-runs `INSERT` and `UPDATE`, forces worker termination, verifies the production
-daemon remains isolated and queryable, reconciles the recorded worker PID,
-restarts, verifies workspace commit-log replay, and drains cleanly. GitHub
-Actions runs the same profile against a SHA-512-pinned 3.11.19 archive and
-supplies a SHA-256-pinned PyPy 2.7 runtime required by that release's `cqlsh`
-launcher.
+9042, rejects a schema-mismatched real SSTable fixture, imports a matching
+`ma` fixture, and starts the thin JAR worker from the same installed
+distribution on private loopback endpoints. The test reads the imported row,
+runs `INSERT` and `UPDATE` with the distribution's `cqlsh`, forces worker
+termination, verifies the production daemon remains isolated and queryable,
+reconciles the recorded worker PID, restarts, verifies workspace commit-log
+replay, and drains cleanly. GitHub Actions runs the same profile against a
+SHA-512-pinned 3.11.19 archive and supplies a SHA-256-pinned PyPy 2.7 runtime
+required by that release's `cqlsh` launcher.
 
 Compatibility is deliberately conservative until broader installed-package
 fixtures are in CI:

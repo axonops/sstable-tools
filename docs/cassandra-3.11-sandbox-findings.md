@@ -19,7 +19,8 @@ packaged in the tool JAR.
 This validates the central architecture proposed in
 `cql-mutation-workspace-design.md`: Cassandra should own CQL mutation and
 storage semantics, with one release-specific worker process per release line.
-It does not validate SSTable import or export yet.
+It now also validates and imports genuine Cassandra 3.11 Big SSTables before
+native transport is enabled. Export is not implemented yet.
 
 ## Process and classpath contract
 
@@ -94,39 +95,51 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 1. start a complete production-like Cassandra daemon on loopback storage port
    7000 and native port 9042, with gossip and internode messaging enabled and
    every mutable path redirected to a private fixture root;
-2. verify that production fixture is queryable and has no peers, then start the
-   thin JAR against the same SHA-512-pinned 3.11.19 final tarball using JDK 8;
-3. verify the worker's native and control endpoints are loopback-only,
+2. verify that production is queryable and has no peers, reject a genuine `ma`
+   fixture against a mismatched schema without retaining table data, exercise
+   collision cleanup and retry, and then import it with the matching schema;
+3. verify source hashes, full data digest, serialization header, extended
+   Cassandra verification, one logical imported row, disabled auto-compaction,
+   and a baseline inventory while native transport remains disabled;
+4. start the thin JAR against the same SHA-512-pinned 3.11.19 final tarball
+   using JDK 8;
+5. verify the worker's native and control endpoints are loopback-only,
    dynamically allocated, and distinct from the production ports;
-4. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
+6. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
    PyPy 2.7 runtime, disable Python bytecode writes into the Cassandra
    installation, and verify Cassandra 3.11.19/native v4;
-5. execute `CREATE TABLE`, `INSERT`, and `UPDATE` through native transport;
-6. send `SIGKILL` before flush, verify the production daemon remains queryable
+7. read the imported row, then execute `INSERT` and `UPDATE` through native
+   transport;
+8. send `SIGKILL` before flush, verify the production daemon remains queryable
    with no peers, detect worker failure, reconcile the PID, and restart;
-7. verify the updated value is restored by commit-log replay;
-8. drain the worker to `STOPPED` and verify the production daemon is still
+9. verify the inserted and updated values are restored by commit-log replay;
+10. drain the worker to `STOPPED` and verify the production daemon is still
    queryable before stopping the fixture; and
-9. verify source component hashes and all installation file metadata are
-   unchanged.
+11. reject the repository's `mb` fixture because its explicit
+   `LocalPartitioner` conflicts with the sandbox partitioner, successfully
+   import its `mc` fixture, and verify source component hashes and all
+   installation file metadata are unchanged.
 
-Unit tests cover strict endpoint parsing/publication, authenticated control,
-private config generation, child JVM arguments, lifecycle transitions, stale
-PID handling, symlink/path confinement, and source inventories.
+Unit tests cover strict endpoint/import-result parsing and publication,
+authenticated control, private config generation, schema capture/CQL splitting,
+child JVM arguments, lifecycle transitions, baseline verification, stale PID
+handling, symlink/path confinement, and source inventories.
 
 ## Remaining blockers
 
-- Implement schema ingestion and validated SSTable copying into the workspace.
 - Reject live Cassandra data directories and require stable snapshot/backup
   component sets.
 - Install a parsed-statement query guard. The prototype currently permits DDL
   so its test can create a fixture table; the product must allow only the
   documented read, `INSERT`, and `UPDATE` subset.
-- Implement flush, baseline/delta inventories, export, and post-export source
-  verification.
+- Implement flush, baseline/delta classification, export, and post-export
+  validation. The imported baseline is already recorded and reverified.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 
-The Cassandra 3.11 vertical prototype now covers issue #5's acceptance scope.
-Issues #6 through #10 own the later import, guard, flush/export, and other
-release-adapter work.
+The Cassandra 3.11 vertical prototype covers issue #5's acceptance scope and
+the core import, schema/partitioner rejection, and destination-collision paths
+from issue #6. Issue #6 remains open for compatible `mb`, checksum,
+missing-component, unsupported-format, collection/UDT, and compact-table
+fixtures. Issues #7 through #10 own query guarding, flush/export, and the other
+release adapters.

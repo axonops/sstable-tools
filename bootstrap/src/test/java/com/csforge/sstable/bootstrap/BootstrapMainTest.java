@@ -145,6 +145,52 @@ public class BootstrapMainTest {
     }
 
     @Test
+    public void createRejectsSchemaStoredInsideWorkspace() throws Exception {
+        Path source = createSstableSource("schema-overlap-source", "mc-6-big");
+        Path workspace = temporary.newFolder("schema-overlap-workspace").toPath();
+        Path schema = Files.write(workspace.resolve("input.cql"), Arrays.asList(
+                "CREATE KEYSPACE test WITH replication = {'class': 'SimpleStrategy', "
+                        + "'replication_factor': 1};",
+                "CREATE TABLE test.items (id int PRIMARY KEY);"),
+                StandardCharsets.UTF_8);
+        ByteArrayOutputStream error = new ByteArrayOutputStream();
+
+        int exitCode = BootstrapMain.run(new String[]{
+                        "workspace", "create", workspace.toString(),
+                        "--sstables", source.toString(), "--schema", schema.toString()
+                }, System.out, new PrintStream(error, true, "UTF-8"));
+
+        Assert.assertEquals(BootstrapException.WORKSPACE_EXIT_CODE, exitCode);
+        Assert.assertTrue(error.toString("UTF-8").contains("outside the workspace"));
+        Assert.assertFalse(Files.exists(workspace.resolve("manifest.json")));
+    }
+
+    @Test
+    public void repeatedCreateVerifiesPreviouslyCapturedSchema() throws Exception {
+        Path source = createSstableSource("repeated-schema-source", "mc-7-big");
+        Path workspace = temporary.newFolder("repeated-schema-workspace").toPath();
+        Path schema = Files.write(temporary.newFile("schema.cql").toPath(), Arrays.asList(
+                "CREATE KEYSPACE test WITH replication = {'class': 'SimpleStrategy', "
+                        + "'replication_factor': 1};",
+                "CREATE TABLE test.items (id int PRIMARY KEY);"),
+                StandardCharsets.UTF_8);
+        Assert.assertEquals(0, BootstrapMain.run(new String[]{
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString(), "--schema", schema.toString()
+        }, discard(), System.err));
+        Files.delete(schema);
+
+        ByteArrayOutputStream error = new ByteArrayOutputStream();
+        int exitCode = BootstrapMain.run(new String[]{
+                        "workspace", "create", workspace.toString(),
+                        "--sstables", source.toString()
+                }, System.out, new PrintStream(error, true, "UTF-8"));
+
+        Assert.assertEquals(BootstrapException.WORKSPACE_EXIT_CODE, exitCode);
+        Assert.assertTrue(error.toString("UTF-8").contains("Cannot capture schema bundle"));
+    }
+
+    @Test
     public void recoverRefusesWorkerStateWithoutWorkerReconciliation() throws Exception {
         Path source = createSstableSource("worker-state-source", "mc-5-big");
         Path workspace = temporary.newFolder("worker-state-workspace").toPath();

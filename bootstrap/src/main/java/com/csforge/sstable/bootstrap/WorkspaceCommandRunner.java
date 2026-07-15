@@ -1,6 +1,9 @@
 package com.csforge.sstable.bootstrap;
 
 import com.csforge.sstable.worker.api.WorkerEndpoint;
+import com.csforge.sstable.worker.api.ImportResult;
+import com.csforge.sstable.workspace.ManifestFile;
+import com.csforge.sstable.workspace.SchemaBundle;
 import com.csforge.sstable.workspace.SourceInventory;
 import com.csforge.sstable.workspace.SstableSet;
 import com.csforge.sstable.workspace.WorkspaceException;
@@ -8,6 +11,7 @@ import com.csforge.sstable.workspace.WorkspaceLock;
 import com.csforge.sstable.workspace.WorkspaceManifest;
 import com.csforge.sstable.workspace.WorkspaceRepository;
 import com.csforge.sstable.workspace.WorkspaceState;
+import com.csforge.sstable.workspace.WorkspaceFileInventory;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetAddress;
@@ -16,6 +20,7 @@ import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.SecureRandom;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,17 +61,17 @@ final class WorkspaceCommandRunner {
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
             manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
             if (manifest.state() != WorkspaceState.IMPORTED
                     && manifest.state() != WorkspaceState.STOPPED) {
                 throw new WorkspaceException("workspace start requires state IMPORTED or "
                         + "STOPPED, not " + manifest.state());
             }
+            WorkspaceFileInventory.verifyUnchanged(repository.root(),
+                    manifest.baselineInventory());
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
-            Map<String, String> outputIdentity = new LinkedHashMap<>();
-            outputIdentity.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
-            outputIdentity.put("sandbox.network", "loopback-only");
-            manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity);
+            manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity());
             repository.save(lock, manifest);
 
             int nativePort = allocateLoopbackPort();
@@ -81,6 +86,8 @@ final class WorkspaceCommandRunner {
                         repository.root(), manifest.workspaceId(), nativePort);
                 new WorkerControlClient().status(repository, manifest.workspaceId());
                 manifest.sourceInventory().verifyUnchanged();
+                WorkspaceFileInventory.verifyUnchanged(repository.root(),
+                        manifest.baselineInventory());
                 manifest = manifest.transitionTo(WorkspaceState.RUNNING);
                 repository.save(lock, manifest);
                 printStatus(repository, manifest, out);
@@ -107,9 +114,87 @@ final class WorkspaceCommandRunner {
         }
     }
 
+    void importSstables(BootstrapArguments arguments,
+                        AdapterMetadata adapter,
+                        CassandraInstallation installation,
+                        PrintStream out) throws WorkspaceException, BootstrapException {
+        if (!"3.11".equals(adapter.releaseLine())) {
+            throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
+                    "SSTable import is currently implemented only by the Cassandra 3.11 adapter");
+        }
+        WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest manifest = repository.load();
+            manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
+            if (manifest.state() == WorkspaceState.IMPORTED) {
+                verifyBaselineIfPresent(repository, manifest);
+                printStatus(repository, manifest, out);
+                return;
+            }
+            if (manifest.state() != WorkspaceState.VALIDATED) {
+                throw new WorkspaceException("workspace import requires state VALIDATED, not "
+                        + manifest.state());
+            }
+            verifySchemaBundle(repository, manifest);
+
+            RuntimeIdentity identity = RuntimeIdentity.capture(installation);
+            manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity());
+            repository.save(lock, manifest);
+            int unusedNativePort = allocateLoopbackPort();
+            Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
+                    unusedNativePort);
+            repository.deleteOwnedFile(lock, ImportResult.WORKSPACE_PATH);
+
+            try {
+                ImportResult result = new ChildProcessLauncher().runImport(
+                        installation, repository.root(), manifest.workspaceId());
+                if (!manifest.workspaceId().equals(result.workspaceId())
+                        || !installation.version().toString().equals(result.release())
+                        || result.sourceSets() != manifest.sourceInventory().sets().size()) {
+                    throw new WorkspaceException("Import worker returned inconsistent identity");
+                }
+                manifest.sourceInventory().verifyUnchanged();
+                verifySchemaBundle(repository, manifest);
+                List<ManifestFile> baseline = WorkspaceFileInventory.capture(
+                        repository.root(), result.tableDirectory());
+                Map<String, String> schema = new LinkedHashMap<>();
+                schema.put("keyspace", result.keyspace());
+                schema.put("table", result.table());
+                schema.put("table.id", result.tableId().toString());
+                schema.put("partitioner", result.partitioner());
+                schema.put("table.directory", result.tableDirectory());
+                schema.put("import.source-sets", Integer.toString(result.sourceSets()));
+                schema.put("import.live-sstables", Integer.toString(result.liveSstables()));
+                schema.put("import.logical-rows", Long.toString(result.logicalRows()));
+                manifest = manifest.withImportResult(schema, baseline)
+                        .transitionTo(WorkspaceState.IMPORTED);
+                repository.save(lock, manifest);
+                printStatus(repository, manifest, out);
+                out.println("import.table=" + result.keyspace() + "." + result.table());
+                out.println("import.logicalRows=" + result.logicalRows());
+                out.println("import.liveSstables=" + result.liveSstables());
+            } catch (BootstrapException | WorkspaceException e) {
+                WorkspaceManifest current = repository.load();
+                if (current.state() != WorkspaceState.FAILED_RECOVERABLE) {
+                    repository.save(lock, current.fail("SSTable import failed: "
+                            + e.getMessage()));
+                }
+                manifest.sourceInventory().verifyUnchanged();
+                verifySchemaBundle(repository, manifest);
+                throw e;
+            }
+        }
+    }
+
     private static void create(BootstrapArguments arguments, PrintStream out)
             throws WorkspaceException {
         requireSeparateArguments(arguments.workspacePath(), arguments.sourceDirectories());
+        SchemaBundle schema = arguments.schemaPath() == null
+                ? null : SchemaBundle.capture(arguments.schemaPath());
+        if (schema != null) {
+            requireSchemaOutsideWorkspace(arguments.workspacePath(), schema.source());
+        }
         WorkspaceRepository repository = WorkspaceRepository.createAt(
                 arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
@@ -128,8 +213,23 @@ final class WorkspaceCommandRunner {
                 }
             } else {
                 manifest = WorkspaceManifest.create(requested);
+                if (schema != null) {
+                    manifest = manifest.withSchemaIdentity(schema.identity());
+                }
                 repository.initialize(lock, manifest);
             }
+
+            if (schema != null) {
+                if (!manifest.schemaIdentity().isEmpty()) {
+                    requireSchemaIdentity(manifest, schema);
+                } else {
+                    manifest = manifest.withSchemaIdentity(schema.identity());
+                    repository.save(lock, manifest);
+                }
+                repository.writeOwnedFile(lock, SchemaBundle.WORKSPACE_PATH, schema.content());
+                schema.verifyUnchanged();
+            }
+            verifySchemaIfPresent(repository, manifest);
 
             if (manifest.state() == WorkspaceState.NEW) {
                 manifest = manifest.transitionTo(WorkspaceState.VALIDATED);
@@ -145,6 +245,8 @@ final class WorkspaceCommandRunner {
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
             manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
+            verifyBaselineIfPresent(repository, manifest);
             WorkerEndpoint endpoint = null;
             if (manifest.state() == WorkspaceState.RUNNING) {
                 try {
@@ -170,6 +272,8 @@ final class WorkspaceCommandRunner {
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
             manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
+            verifyBaselineIfPresent(repository, manifest);
             if (manifest.state() == WorkspaceState.STOPPED) {
                 printStatus(repository, manifest, out);
                 return;
@@ -185,6 +289,7 @@ final class WorkspaceCommandRunner {
                 endpoint = new WorkerControlClient().stop(repository,
                         manifest.workspaceId());
                 manifest.sourceInventory().verifyUnchanged();
+                verifyBaselineIfPresent(repository, manifest);
             } catch (WorkspaceException e) {
                 WorkspaceManifest failed = manifest.fail("Sandbox stop failed: "
                         + e.getMessage());
@@ -204,6 +309,8 @@ final class WorkspaceCommandRunner {
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
             manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
+            verifyBaselineIfPresent(repository, manifest);
             if (manifest.state() == WorkspaceState.FAILED_RECOVERABLE) {
                 WorkspaceState recoveryTarget = manifest.lastStableState();
                 if (recoveryTarget == WorkspaceState.RUNNING
@@ -273,6 +380,69 @@ final class WorkspaceCommandRunner {
 
     private static String singleLine(String value) {
         return value.replace('\r', ' ').replace('\n', ' ');
+    }
+
+    private static void verifySchemaBundle(WorkspaceRepository repository,
+                                           WorkspaceManifest manifest)
+            throws WorkspaceException {
+        String source = manifest.schemaIdentity().get("bundle.source");
+        if (source == null) {
+            throw new WorkspaceException("workspace import requires a schema bundle captured "
+                    + "with workspace create --schema");
+        }
+        SchemaBundle sourceBundle = SchemaBundle.capture(Paths.get(source));
+        requireSchemaIdentity(manifest, sourceBundle);
+        SchemaBundle workspaceBundle = SchemaBundle.capture(
+                repository.resolveInside(SchemaBundle.WORKSPACE_PATH));
+        if (workspaceBundle.size() != sourceBundle.size()
+                || !workspaceBundle.sha256().equals(sourceBundle.sha256())) {
+            throw new WorkspaceException("Workspace schema copy does not match captured bundle");
+        }
+    }
+
+    private static void requireSchemaIdentity(WorkspaceManifest manifest, SchemaBundle schema)
+            throws WorkspaceException {
+        if (!schema.source().toString().equals(manifest.schemaIdentity().get("bundle.source"))
+                || !Long.toString(schema.size()).equals(
+                manifest.schemaIdentity().get("bundle.size"))
+                || !schema.sha256().equals(manifest.schemaIdentity().get("bundle.sha256"))) {
+            throw new WorkspaceException("Workspace is already initialized with a different "
+                    + "schema bundle");
+        }
+    }
+
+    private static Map<String, String> outputIdentity() {
+        Map<String, String> output = new LinkedHashMap<>();
+        output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
+        output.put("sandbox.network", "loopback-only");
+        output.put("import.contract", "cassandra-3.11-refresh-v1");
+        return output;
+    }
+
+    private static void verifyBaselineIfPresent(WorkspaceRepository repository,
+                                                WorkspaceManifest manifest)
+            throws WorkspaceException {
+        if (!manifest.baselineInventory().isEmpty()) {
+            WorkspaceFileInventory.verifyUnchanged(repository.root(),
+                    manifest.baselineInventory());
+        }
+    }
+
+    private static void verifySchemaIfPresent(WorkspaceRepository repository,
+                                              WorkspaceManifest manifest)
+            throws WorkspaceException {
+        if (!manifest.schemaIdentity().isEmpty()) {
+            verifySchemaBundle(repository, manifest);
+        }
+    }
+
+    private static void requireSchemaOutsideWorkspace(Path workspaceArgument, Path schema)
+            throws WorkspaceException {
+        Path workspace = canonicalCandidate(workspaceArgument);
+        if (schema.startsWith(workspace)) {
+            throw new WorkspaceException("Schema bundle must be outside the workspace: "
+                    + schema);
+        }
     }
 
     private static void requireSeparateSourceAndWorkspace(WorkspaceRepository repository,

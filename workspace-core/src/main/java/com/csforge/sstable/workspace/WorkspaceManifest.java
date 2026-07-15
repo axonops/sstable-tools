@@ -169,6 +169,39 @@ public final class WorkspaceManifest {
                 nextRuntime, nextOutput, baselineInventory, exports);
     }
 
+    public WorkspaceManifest withSchemaIdentity(Map<String, String> additions)
+            throws WorkspaceException {
+        if (additions == null || additions.isEmpty()) {
+            throw new WorkspaceException("Schema identity additions must not be empty");
+        }
+        SortedMap<String, String> merged = mergeIdentity(schemaIdentity, additions,
+                "schema identity");
+        return new WorkspaceManifest(formatVersion, workspaceId, state, lastStableState,
+                failureMessage, createdAt, Instant.now(), sourceInventory, merged,
+                runtimeIdentity, outputIdentity, baselineInventory, exports);
+    }
+
+    public WorkspaceManifest withImportResult(Map<String, String> schemaAdditions,
+                                              List<ManifestFile> baseline)
+            throws WorkspaceException {
+        if (state != WorkspaceState.VALIDATED) {
+            throw new WorkspaceException("Import result requires state VALIDATED, not " + state);
+        }
+        if (schemaAdditions == null || schemaAdditions.isEmpty()
+                || baseline == null || baseline.isEmpty()) {
+            throw new WorkspaceException("Import result requires schema and baseline identities");
+        }
+        SortedMap<String, String> merged = mergeIdentity(schemaIdentity, schemaAdditions,
+                "schema identity");
+        List<ManifestFile> nextBaseline = immutableFiles(baseline);
+        if (!baselineInventory.isEmpty() && !baselineInventory.equals(nextBaseline)) {
+            throw new WorkspaceException("Workspace baseline inventory cannot change");
+        }
+        return new WorkspaceManifest(formatVersion, workspaceId, state, lastStableState,
+                failureMessage, createdAt, Instant.now(), sourceInventory, merged,
+                runtimeIdentity, outputIdentity, nextBaseline, exports);
+    }
+
     private WorkspaceManifest copy(WorkspaceState nextState,
                                    WorkspaceState nextStableState,
                                    String nextFailureMessage,
@@ -193,6 +226,38 @@ public final class WorkspaceManifest {
             copy.put(entry.getKey(), entry.getValue());
         }
         return Collections.unmodifiableSortedMap(copy);
+    }
+
+    private static SortedMap<String, String> mergeIdentity(Map<String, String> existing,
+                                                           Map<String, String> additions,
+                                                           String description)
+            throws WorkspaceException {
+        TreeMap<String, String> merged = new TreeMap<>(existing);
+        SortedMap<String, String> validated = immutableMap(additions, description);
+        for (Map.Entry<String, String> entry : validated.entrySet()) {
+            String previous = merged.putIfAbsent(entry.getKey(), entry.getValue());
+            if (previous != null && !previous.equals(entry.getValue())) {
+                throw new WorkspaceException("Workspace " + description + " entry cannot change: "
+                        + entry.getKey());
+            }
+        }
+        return Collections.unmodifiableSortedMap(merged);
+    }
+
+    private static List<ManifestFile> immutableFiles(List<ManifestFile> files)
+            throws WorkspaceException {
+        List<ManifestFile> copy = new ArrayList<>(files);
+        if (copy.contains(null)) {
+            throw new WorkspaceException("Baseline inventory contains a null file");
+        }
+        Map<String, ManifestFile> unique = new TreeMap<>();
+        for (ManifestFile file : copy) {
+            if (unique.put(file.relativePath(), file) != null) {
+                throw new WorkspaceException("Duplicate baseline file " + file.relativePath());
+            }
+        }
+        copy.sort((left, right) -> left.relativePath().compareTo(right.relativePath()));
+        return Collections.unmodifiableList(copy);
     }
 
     public int formatVersion() {

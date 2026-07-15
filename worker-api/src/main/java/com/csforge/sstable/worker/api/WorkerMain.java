@@ -30,7 +30,7 @@ public final class WorkerMain {
 
     public static void main(String[] args) {
         int exitCode = run(args, System.out, System.err);
-        if (exitCode != 0 || isSandboxCommand(args)) {
+        if (exitCode != 0 || isSandboxCommand(args) || isImportCommand(args)) {
             System.exit(exitCode);
         }
     }
@@ -42,8 +42,53 @@ public final class WorkerMain {
         if (isSandboxCommand(args)) {
             return runSandbox(args, out, err);
         }
-        err.println("error: expected --self-test or --sandbox worker arguments");
+        if (isImportCommand(args)) {
+            return runImport(args, out, err);
+        }
+        err.println("error: expected --self-test, --import, or --sandbox worker arguments");
         return 2;
+    }
+
+    private static int runImport(String[] args, PrintStream out, PrintStream err) {
+        try {
+            ImportArguments parsed = ImportArguments.parse(args);
+            ImportRuntimeAdapter adapter = requireImportAdapter(loadAdapter());
+            String installedVersion = adapter.installedVersion();
+            if (!parsed.expectedVersion.equals(installedVersion)) {
+                throw new IllegalStateException("Discovered Cassandra "
+                        + parsed.expectedVersion + " but the worker loaded " + installedVersion);
+            }
+            adapter.verifyLinkage();
+            Path workspace = parsed.workspace.toRealPath();
+            if (!Files.isDirectory(workspace, LinkOption.NOFOLLOW_LINKS)
+                    || Files.isSymbolicLink(parsed.workspace)) {
+                throw new IllegalStateException("Workspace is not a canonical directory: "
+                        + parsed.workspace);
+            }
+            Path configuration = regularFileInside(workspace, "runtime/cassandra.yaml");
+            regularFileInside(workspace, "schema/schema.cql");
+            Path resultPath = pathInside(workspace, ImportResult.WORKSPACE_PATH);
+            ImportResult result = adapter.importSstables(new ImportOptions(
+                    workspace, configuration, parsed.workspaceId));
+            if (!parsed.workspaceId.equals(result.workspaceId())
+                    || !installedVersion.equals(result.release())) {
+                throw new IllegalStateException("Import adapter returned mismatched identity");
+            }
+            result.writeAtomically(resultPath);
+            out.println("IMPORT_COMPLETE protocol=" + WorkerProtocol.CURRENT_VERSION
+                    + " release=" + installedVersion + " table=" + result.keyspace()
+                    + "." + result.table() + " sstables=" + result.liveSstables()
+                    + " rows=" + result.logicalRows());
+            return 0;
+        } catch (Exception | LinkageError e) {
+            Throwable cause = e instanceof InvocationTargetException
+                    && ((InvocationTargetException) e).getCause() != null
+                    ? ((InvocationTargetException) e).getCause() : e;
+            err.println("error: Cassandra import worker failed: "
+                    + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+            cause.printStackTrace(err);
+            return 4;
+        }
     }
 
     private static int runSelfTest(String expectedVersion, PrintStream out, PrintStream err) {
@@ -231,6 +276,14 @@ public final class WorkerMain {
         return (SandboxRuntimeAdapter) adapter;
     }
 
+    private static ImportRuntimeAdapter requireImportAdapter(RuntimeAdapter adapter) {
+        if (!(adapter instanceof ImportRuntimeAdapter)) {
+            throw new IllegalStateException(adapter.getClass().getName()
+                    + " does not provide import support");
+        }
+        return (ImportRuntimeAdapter) adapter;
+    }
+
     private static Path regularFileInside(Path workspace, String relative) throws IOException {
         Path path = pathInside(workspace, relative);
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
@@ -273,6 +326,10 @@ public final class WorkerMain {
 
     private static boolean isSandboxCommand(String[] args) {
         return args.length > 0 && "--sandbox".equals(args[0]);
+    }
+
+    private static boolean isImportCommand(String[] args) {
+        return args.length > 0 && "--import".equals(args[0]);
     }
 
     private static Properties loadMetadata() throws IOException {
@@ -327,6 +384,30 @@ public final class WorkerMain {
             }
             return new SandboxArguments(args[2], Paths.get(args[4]),
                     UUID.fromString(args[6]), port);
+        }
+    }
+
+    private static final class ImportArguments {
+        private final String expectedVersion;
+        private final Path workspace;
+        private final UUID workspaceId;
+
+        private ImportArguments(String expectedVersion, Path workspace, UUID workspaceId) {
+            this.expectedVersion = expectedVersion;
+            this.workspace = workspace;
+            this.workspaceId = workspaceId;
+        }
+
+        private static ImportArguments parse(String[] args) {
+            if (args.length != 7 || !"--import".equals(args[0])
+                    || !"--expected-version".equals(args[1])
+                    || !"--workspace".equals(args[3])
+                    || !"--workspace-id".equals(args[5])) {
+                throw new IllegalArgumentException("Expected --import --expected-version "
+                        + "<version> --workspace <path> --workspace-id <uuid>");
+            }
+            return new ImportArguments(args[2], Paths.get(args[4]),
+                    UUID.fromString(args[6]));
         }
     }
 }

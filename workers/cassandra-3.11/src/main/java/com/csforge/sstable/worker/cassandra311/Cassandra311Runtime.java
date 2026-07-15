@@ -1,5 +1,8 @@
 package com.csforge.sstable.worker.cassandra311;
 
+import com.csforge.sstable.worker.api.ImportOptions;
+import com.csforge.sstable.worker.api.ImportResult;
+import com.csforge.sstable.worker.api.ImportRuntimeAdapter;
 import com.csforge.sstable.worker.api.LinkageVerifier;
 import com.csforge.sstable.worker.api.SandboxHandle;
 import com.csforge.sstable.worker.api.SandboxOptions;
@@ -27,7 +30,7 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 /** Isolated managed-daemon adapter compiled against Cassandra 3.11.19. */
-public final class Cassandra311Runtime implements SandboxRuntimeAdapter {
+public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportRuntimeAdapter {
     public Cassandra311Runtime() {
     }
 
@@ -43,9 +46,9 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter {
 
     @Override
     public SandboxHandle startSandbox(SandboxOptions options) throws Exception {
-        requireIsolationProperties(options);
+        requireIsolationProperties(options.configurationFile(), true);
         DatabaseDescriptor.daemonInitialization();
-        validateConfiguration(options);
+        validateConfiguration(options.workspaceRoot(), true, options.nativePort());
 
         CassandraDaemon daemon = new CassandraDaemon(true);
         daemon.activate();
@@ -58,6 +61,35 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter {
             throw new IllegalStateException("Isolated Cassandra worker started internode services");
         }
         return new Cassandra311SandboxHandle(daemon, options.nativePort());
+    }
+
+    @Override
+    public ImportResult importSstables(ImportOptions options) throws Exception {
+        requireIsolationProperties(options.configurationFile(), false);
+        DatabaseDescriptor.daemonInitialization();
+        validateConfiguration(options.workspaceRoot(), false, -1);
+
+        CassandraDaemon daemon = new CassandraDaemon(true);
+        boolean activated = false;
+        try {
+            daemon.activate();
+            activated = true;
+            installLocalRingState();
+            if (daemon.isNativeTransportRunning()) {
+                throw new IllegalStateException("Import worker started native transport");
+            }
+            if (Gossiper.instance.isEnabled() || MessagingService.instance().isListening()) {
+                throw new IllegalStateException("Import worker started internode services");
+            }
+            return Cassandra311Importer.run(options);
+        } finally {
+            if (activated) {
+                // Cassandra 3.11 cannot destroy an uninitialized native service; the import
+                // worker exits immediately after draining, so there is no client transport
+                // to stop here.
+                StorageService.instance.drain();
+            }
+        }
     }
 
     private static void installLocalRingState() {
@@ -99,13 +131,16 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter {
         LinkageVerifier.requireAssignable(QueryHandler.class, QueryProcessor.class);
     }
 
-    private static void requireIsolationProperties(SandboxOptions options) {
+    private static void requireIsolationProperties(Path configurationFile,
+                                                   boolean startNativeTransport) {
         requireFalse("cassandra.start_gossip");
         requireFalse("cassandra.join_ring");
         requireFalse("cassandra.load_ring_state");
         requireFalse("cassandra.start_rpc");
-        if (!Boolean.parseBoolean(System.getProperty("cassandra.start_native_transport"))) {
-            throw new IllegalStateException("cassandra.start_native_transport must be true");
+        if (!Boolean.toString(startNativeTransport).equalsIgnoreCase(
+                System.getProperty("cassandra.start_native_transport"))) {
+            throw new IllegalStateException("cassandra.start_native_transport must be "
+                    + startNativeTransport);
         }
         if (System.getProperty("cassandra.jmx.remote.port") != null
                 || System.getProperty("cassandra.jmx.local.port") != null
@@ -118,7 +153,7 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter {
         }
         try {
             Path configuredPath = Paths.get(URI.create(configured)).toRealPath();
-            if (!configuredPath.equals(options.configurationFile().toRealPath())) {
+            if (!configuredPath.equals(configurationFile.toRealPath())) {
                 throw new IllegalStateException("cassandra.config does not reference the "
                         + "workspace configuration");
             }
@@ -127,8 +162,9 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter {
         }
     }
 
-    private static void validateConfiguration(SandboxOptions options) throws IOException {
-        Path root = options.workspaceRoot();
+    private static void validateConfiguration(Path root,
+                                              boolean startNativeTransport,
+                                              int nativePort) throws IOException {
         requireLoopback("listen_address", DatabaseDescriptor.getListenAddress());
         requireLoopback("rpc_address", DatabaseDescriptor.getRpcAddress());
         requireLoopback("broadcast_address", FBUtilities.getBroadcastAddress());
@@ -136,8 +172,9 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter {
         if (DatabaseDescriptor.startRpc()) {
             throw new IllegalStateException("Thrift RPC must be disabled");
         }
-        if (!DatabaseDescriptor.startNativeTransport()
-                || DatabaseDescriptor.getNativeTransportPort() != options.nativePort()) {
+        if (DatabaseDescriptor.startNativeTransport() != startNativeTransport
+                || startNativeTransport
+                && DatabaseDescriptor.getNativeTransportPort() != nativePort) {
             throw new IllegalStateException("Native transport configuration does not match "
                     + "the allocated endpoint");
         }

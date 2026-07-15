@@ -417,7 +417,7 @@ descriptor inventory. Auto-compaction is disabled before accepting mutations.
 
 ### 10.3 Connect with cqlsh
 
-The controller exposes both commands:
+The target controller exposes both commands:
 
 ```shell
 sstable-tools workspace start ./case
@@ -426,18 +426,18 @@ sstable-tools workspace cqlsh ./case
 
 `start` prints a loopback endpoint for an external client. `cqlsh` launches the
 client from the selected Cassandra installation, which avoids unsupported
-client/server version combinations.
+client/server version combinations. The current 3.11 implementation provides
+`start`; the convenience `workspace cqlsh` wrapper remains planned.
 
 Example workflow:
 
 ```shell
 sstable-tools workspace create ./case \
   --sstables /evidence/table-snapshot \
-  --schema /evidence/schema.cql \
-  --target 4.1 \
-  --format big
+  --schema /evidence/schema.cql
 
-sstable-tools workspace cqlsh ./case
+sstable-tools workspace import ./case
+sstable-tools workspace start ./case
 ```
 
 Inside Apache cqlsh:

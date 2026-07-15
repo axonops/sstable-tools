@@ -18,14 +18,23 @@ replace this contract.
 The shared bootstrap currently implements:
 
 ```shell
-java -jar sstable-tools-cassandra-4.1-<version>.jar \
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace create ./case \
-  --sstables /evidence/snapshots/before-change
+  --sstables /evidence/snapshots/before-change \
+  --schema /evidence/schema.cql
 
-java -jar sstable-tools-cassandra-4.1-<version>.jar \
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
+  --cassandra-home /opt/apache-cassandra-3.11.19 \
+  workspace import ./case
+
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
+  --cassandra-home /opt/apache-cassandra-3.11.19 \
+  workspace start ./case
+
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace status ./case
 
-java -jar sstable-tools-cassandra-4.1-<version>.jar \
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace recover ./case
 ```
 
@@ -35,16 +44,17 @@ the manifest from `NEW` to `VALIDATED`. Repeating create with the same canonical
 directories and byte identities is idempotent. Repeating it with different
 inputs fails.
 
-`workspace status` reads under the exclusive workspace lock and verifies every
-source component before printing stable `key=value` output. `workspace recover`
-does the same and can currently restore the pre-worker states `NEW` and
-`VALIDATED`. Worker-owned states fail until the matching release adapter can
-reconcile process health and files. Recovering an already stable state is a
-no-op.
+`workspace import` is currently implemented by the Cassandra 3.11 adapter. It
+parses the schema with installed Cassandra classes, validates every source set,
+copies and loads it with native transport disabled, and records the table and
+baseline identities before committing `IMPORTED`. `workspace status`, `start`,
+`stop`, and `recover` reverify source, schema, and imported baseline hashes.
+New delta files are allowed; changing or removing a baseline file fails closed.
 
-The bootstrap does not discover or load Cassandra for these three commands.
-`start`, `cqlsh`, `export`, `stop`, and `destroy` are later implementation
-stages and are not implied by the presence of a validated manifest.
+The bootstrap does not discover or load Cassandra for create, status, stop, or
+recover. Import and start launch a release-specific child JVM against the
+selected installation. `cqlsh`, explicit flush, export, and destroy remain
+later implementation stages.
 
 ## Owned layout
 
@@ -67,9 +77,10 @@ workspace/
 
 All controller-resolved paths must remain beneath the canonical workspace root.
 Absolute paths, `.` or `..` segments, and existing symlink crossings are
-rejected. Source paths are the only paths outside the workspace; they are
-recorded as canonical absolute paths and are read-only inputs. A source
-directory may not contain, equal, or be contained by the workspace root.
+rejected. Source and schema paths are the only paths outside the workspace;
+they are recorded as canonical absolute paths and are read-only inputs. A
+source directory may not contain, equal, or be contained by the workspace root,
+and the schema bundle may not be stored below the workspace.
 
 ## Persistence protocol
 
@@ -111,10 +122,10 @@ controller.
 | `createdAt` | ISO-8601 instant | Initial manifest creation time |
 | `updatedAt` | ISO-8601 instant | Last committed transition time |
 | `sourceInventory` | object | Canonical source descriptors and components |
-| `schemaIdentity` | string map | Canonical schema and table identity, populated later |
-| `runtimeIdentity` | string map | Tool, Java, and Cassandra identity, populated later |
-| `outputIdentity` | string map | Requested release and output format, populated later |
-| `baselineInventory` | file array | Imported descriptor baseline, populated later |
+| `schemaIdentity` | string map | Bundle hash/source plus imported table identity |
+| `runtimeIdentity` | string map | Tool, Java, and Cassandra installation identity |
+| `outputIdentity` | string map | Sandbox/import contract and network identity |
+| `baselineInventory` | file array | Checksummed imported descriptor baseline |
 | `exports` | export array | Successfully verified export history |
 
 Each `sourceInventory.sets` item records:

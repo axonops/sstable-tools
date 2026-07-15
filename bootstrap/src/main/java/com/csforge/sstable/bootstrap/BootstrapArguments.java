@@ -14,6 +14,7 @@ final class BootstrapArguments {
         RUNTIME_INSPECT,
         RUNTIME_PREFLIGHT,
         WORKSPACE_CREATE,
+        WORKSPACE_IMPORT,
         WORKSPACE_START,
         WORKSPACE_STATUS,
         WORKSPACE_STOP,
@@ -24,28 +25,32 @@ final class BootstrapArguments {
     private final RuntimeOptions runtimeOptions;
     private final Path workspacePath;
     private final List<Path> sourceDirectories;
+    private final Path schemaPath;
 
     private BootstrapArguments(Action action,
                                RuntimeOptions runtimeOptions,
                                Path workspacePath,
-                               List<Path> sourceDirectories) {
+                               List<Path> sourceDirectories,
+                               Path schemaPath) {
         this.action = action;
         this.runtimeOptions = runtimeOptions;
         this.workspacePath = workspacePath;
         this.sourceDirectories = Collections.unmodifiableList(
                 new ArrayList<>(sourceDirectories));
+        this.schemaPath = schemaPath;
     }
 
     static BootstrapArguments parse(String[] args) throws BootstrapException {
         if (args.length == 0) {
             return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
-                    null, Collections.<Path>emptyList());
+                    null, Collections.<Path>emptyList(), null);
         }
 
         Path cassandraHome = null;
         Path cassandraConf = null;
         Path javaHome = null;
         List<Path> sourceDirectories = new ArrayList<>();
+        Path schemaPath = null;
         List<String> command = new ArrayList<>();
 
         for (int index = 0; index < args.length; index++) {
@@ -53,12 +58,12 @@ final class BootstrapArguments {
             if ("--help".equals(argument) || "-h".equals(argument)) {
                 return new BootstrapArguments(Action.HELP,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                        null, sourceDirectories);
+                        null, sourceDirectories, schemaPath);
             }
             if ("--version".equals(argument)) {
                 return new BootstrapArguments(Action.VERSION,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                        null, sourceDirectories);
+                        null, sourceDirectories, schemaPath);
             }
             if ("--cassandra-home".equals(argument)) {
                 cassandraHome = pathValue(args, ++index, argument);
@@ -68,6 +73,8 @@ final class BootstrapArguments {
                 javaHome = pathValue(args, ++index, argument);
             } else if ("--sstables".equals(argument)) {
                 sourceDirectories.add(pathValue(args, ++index, argument));
+            } else if ("--schema".equals(argument)) {
+                schemaPath = pathValue(args, ++index, argument);
             } else if (argument.startsWith("--")) {
                 throw usage("Unknown option: " + argument);
             } else {
@@ -86,6 +93,10 @@ final class BootstrapArguments {
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "create".equals(command.get(1))) {
             action = Action.WORKSPACE_CREATE;
+            workspacePath = commandPath(command.get(2));
+        } else if (command.size() == 3 && "workspace".equals(command.get(0))
+                && "import".equals(command.get(1))) {
+            action = Action.WORKSPACE_IMPORT;
             workspacePath = commandPath(command.get(2));
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "start".equals(command.get(1))) {
@@ -109,9 +120,11 @@ final class BootstrapArguments {
         }
 
         boolean workspaceAction = action == Action.WORKSPACE_CREATE
-                || action == Action.WORKSPACE_START || action == Action.WORKSPACE_STATUS
+                || action == Action.WORKSPACE_IMPORT || action == Action.WORKSPACE_START
+                || action == Action.WORKSPACE_STATUS
                 || action == Action.WORKSPACE_STOP || action == Action.WORKSPACE_RECOVER;
         if (workspaceAction && action != Action.WORKSPACE_START
+                && action != Action.WORKSPACE_IMPORT
                 && (cassandraHome != null || cassandraConf != null
                 || javaHome != null)) {
             throw usage("Cassandra runtime options are not accepted by this workspace command");
@@ -122,9 +135,12 @@ final class BootstrapArguments {
         if (action != Action.WORKSPACE_CREATE && !sourceDirectories.isEmpty()) {
             throw usage("--sstables is only valid with workspace create");
         }
+        if (action != Action.WORKSPACE_CREATE && schemaPath != null) {
+            throw usage("--schema is only valid with workspace create");
+        }
         return new BootstrapArguments(action,
                 new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                workspacePath, sourceDirectories);
+                workspacePath, sourceDirectories, schemaPath);
     }
 
     private static Path pathValue(String[] args, int index, String option)
@@ -168,5 +184,9 @@ final class BootstrapArguments {
 
     List<Path> sourceDirectories() {
         return sourceDirectories;
+    }
+
+    Path schemaPath() {
+        return schemaPath;
     }
 }

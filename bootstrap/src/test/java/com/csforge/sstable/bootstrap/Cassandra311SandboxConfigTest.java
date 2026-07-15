@@ -55,4 +55,29 @@ public class Cassandra311SandboxConfigTest {
                 root.resolve(Cassandra311SandboxConfig.CONTROL_TOKEN_PATH)),
                 StandardCharsets.US_ASCII));
     }
+
+    @Test
+    public void importConfigurationKeepsNativeTransportDisabled() throws Exception {
+        Path source = temporary.newFolder("import-source").toPath();
+        Files.write(source.resolve("mc-1-big-TOC.txt"), Arrays.asList(
+                "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
+        Files.write(source.resolve("mc-1-big-Data.db"), new byte[]{1});
+        Files.write(source.resolve("mc-1-big-Statistics.db"), new byte[]{2});
+        Path root = temporary.newFolder("import-workspace").toPath();
+        WorkspaceRepository repository = WorkspaceRepository.createAt(root);
+        WorkspaceManifest manifest = WorkspaceManifest.create(SourceInventory.capture(
+                Collections.singletonList(source)));
+
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
+                    19042);
+        }
+
+        String yaml = new String(Files.readAllBytes(
+                root.resolve(Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("start_native_transport: false"));
+        Assert.assertFalse(Files.exists(root.resolve(
+                Cassandra311SandboxConfig.CONTROL_TOKEN_PATH)));
+    }
 }

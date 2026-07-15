@@ -1,6 +1,7 @@
 package com.csforge.sstable.bootstrap;
 
 import com.csforge.sstable.worker.api.WorkerEndpoint;
+import com.csforge.sstable.worker.api.ImportResult;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 public final class ChildProcessLauncher {
     static final String WORKER_MAIN = "com.csforge.sstable.worker.api.WorkerMain";
     private static final long SANDBOX_START_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(2);
+    private static final long IMPORT_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(5);
     private final boolean inheritIo;
 
     public ChildProcessLauncher() {
@@ -80,12 +82,7 @@ public final class ChildProcessLauncher {
                 logs.resolve("worker.out").toFile()));
         builder.redirectError(ProcessBuilder.Redirect.appendTo(
                 logs.resolve("worker.err").toFile()));
-        builder.environment().put("CASSANDRA_HOME", installation.home().toString());
-        builder.environment().put("CASSANDRA_CONF", runtime.toString());
-        builder.environment().put("JAVA_HOME", installation.java().home().toString());
-        builder.environment().remove("JAVA_TOOL_OPTIONS");
-        builder.environment().remove("JDK_JAVA_OPTIONS");
-        builder.environment().remove("_JAVA_OPTIONS");
+        configureEnvironment(builder, installation, runtime);
 
         final Process child;
         try {
@@ -136,6 +133,62 @@ public final class ChildProcessLauncher {
                         + logs.resolve("worker.err"));
     }
 
+    public ImportResult runImport(CassandraInstallation installation,
+                                  Path workspace,
+                                  UUID workspaceId) throws BootstrapException {
+        ProcessBuilder builder = new ProcessBuilder(importCommand(
+                installation, workspace, workspaceId));
+        Path logs = prepareOwnedDirectory(workspace, "logs");
+        Path runtime = prepareOwnedDirectory(workspace, "runtime");
+        prepareOwnedDirectory(workspace, "runtime/tmp");
+        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(
+                logs.resolve("import.out").toFile()));
+        builder.redirectError(ProcessBuilder.Redirect.appendTo(
+                logs.resolve("import.err").toFile()));
+        configureEnvironment(builder, installation, runtime);
+
+        final Process child;
+        try {
+            child = builder.start();
+        } catch (IOException e) {
+            throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
+                    "Cannot start Cassandra import worker", e);
+        }
+        Thread shutdownHook = new Thread(() -> stopChild(child),
+                "sstable-tools-import-shutdown");
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
+        try {
+            if (!child.waitFor(IMPORT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                stopChild(child);
+                throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
+                        "Timed out waiting for Cassandra import worker; inspect "
+                                + logs.resolve("import.err"));
+            }
+            if (child.exitValue() != 0) {
+                throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
+                        "Cassandra import worker exited with code " + child.exitValue()
+                                + "; inspect " + logs.resolve("import.err"));
+            }
+            try {
+                return ImportResult.read(workspace.resolve(ImportResult.WORKSPACE_PATH));
+            } catch (IOException e) {
+                throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
+                        "Cannot read Cassandra import result", e);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            stopChild(child);
+            throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
+                    "Interrupted while waiting for Cassandra import worker", e);
+        } finally {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (IllegalStateException ignored) {
+                // JVM shutdown is already in progress and owns hook execution.
+            }
+        }
+    }
+
     private static void closeQuietly(InputStream input) {
         try {
             input.close();
@@ -161,6 +214,41 @@ public final class ChildProcessLauncher {
                                 UUID workspaceId,
                                 int nativePort) throws BootstrapException {
         Path configuration = workspace.resolve(Cassandra311SandboxConfig.CONFIG_PATH);
+        List<String> command = workerCommand(installation, workspace, configuration, true);
+        command.add(WORKER_MAIN);
+        command.add("--sandbox");
+        command.add("--expected-version");
+        command.add(installation.version().toString());
+        command.add("--workspace");
+        command.add(workspace.toString());
+        command.add("--workspace-id");
+        command.add(workspaceId.toString());
+        command.add("--native-port");
+        command.add(Integer.toString(nativePort));
+        return Collections.unmodifiableList(command);
+    }
+
+    List<String> importCommand(CassandraInstallation installation,
+                               Path workspace,
+                               UUID workspaceId) throws BootstrapException {
+        Path configuration = workspace.resolve(Cassandra311SandboxConfig.CONFIG_PATH);
+        List<String> command = workerCommand(installation, workspace, configuration, false);
+        command.add(WORKER_MAIN);
+        command.add("--import");
+        command.add("--expected-version");
+        command.add(installation.version().toString());
+        command.add("--workspace");
+        command.add(workspace.toString());
+        command.add("--workspace-id");
+        command.add(workspaceId.toString());
+        return Collections.unmodifiableList(command);
+    }
+
+    private List<String> workerCommand(CassandraInstallation installation,
+                                       Path workspace,
+                                       Path configuration,
+                                       boolean startNativeTransport)
+            throws BootstrapException {
         List<String> command = new ArrayList<>();
         command.add(installation.java().executable().toString());
         command.add("-Xms512m");
@@ -174,22 +262,23 @@ public final class ChildProcessLauncher {
         command.add("-Dcassandra.join_ring=false");
         command.add("-Dcassandra.load_ring_state=false");
         command.add("-Dcassandra.start_rpc=false");
-        command.add("-Dcassandra.start_native_transport=true");
+        command.add("-Dcassandra.start_native_transport=" + startNativeTransport);
         command.add("-Dcassandra.size_recorder_interval=0");
         command.add("-Djava.io.tmpdir=" + workspace.resolve("runtime/tmp"));
         command.add("-cp");
         command.add(joinClasspath(installation));
-        command.add(WORKER_MAIN);
-        command.add("--sandbox");
-        command.add("--expected-version");
-        command.add(installation.version().toString());
-        command.add("--workspace");
-        command.add(workspace.toString());
-        command.add("--workspace-id");
-        command.add(workspaceId.toString());
-        command.add("--native-port");
-        command.add(Integer.toString(nativePort));
-        return Collections.unmodifiableList(command);
+        return command;
+    }
+
+    private static void configureEnvironment(ProcessBuilder builder,
+                                             CassandraInstallation installation,
+                                             Path runtime) {
+        builder.environment().put("CASSANDRA_HOME", installation.home().toString());
+        builder.environment().put("CASSANDRA_CONF", runtime.toString());
+        builder.environment().put("JAVA_HOME", installation.java().home().toString());
+        builder.environment().remove("JAVA_TOOL_OPTIONS");
+        builder.environment().remove("JDK_JAVA_OPTIONS");
+        builder.environment().remove("_JAVA_OPTIONS");
     }
 
     private static String joinClasspath(CassandraInstallation installation) {

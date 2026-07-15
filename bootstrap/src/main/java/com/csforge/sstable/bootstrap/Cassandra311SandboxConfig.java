@@ -25,6 +25,27 @@ final class Cassandra311SandboxConfig {
                 || controlToken == null || !controlToken.matches("[0-9a-f]{64}")) {
             throw new WorkspaceException("Invalid Cassandra 3.11 sandbox endpoint inputs");
         }
+        writeConfiguration(repository, lock, workspaceId, nativePort, true);
+        repository.writeOwnedFile(lock, CONTROL_TOKEN_PATH,
+                (controlToken + "\n").getBytes(StandardCharsets.US_ASCII));
+    }
+
+    static void writeImport(WorkspaceRepository repository,
+                            WorkspaceLock lock,
+                            UUID workspaceId,
+                            int nativePort) throws WorkspaceException {
+        if (nativePort < 1 || nativePort > 65535) {
+            throw new WorkspaceException("Invalid Cassandra 3.11 import endpoint input");
+        }
+        writeConfiguration(repository, lock, workspaceId, nativePort, false);
+    }
+
+    private static void writeConfiguration(WorkspaceRepository repository,
+                                           WorkspaceLock lock,
+                                           UUID workspaceId,
+                                           int nativePort,
+                                           boolean startNativeTransport)
+            throws WorkspaceException {
         Path root = repository.root();
         String yaml = "cluster_name: 'sstable-tools-" + workspaceId + "'\n"
                 + "authenticator: AllowAllAuthenticator\n"
@@ -50,7 +71,7 @@ final class Cassandra311SandboxConfig {
                 + "rpc_address: 127.0.0.1\n"
                 + "broadcast_rpc_address: 127.0.0.1\n"
                 + "rpc_port: 19160\n"
-                + "start_native_transport: true\n"
+                + "start_native_transport: " + startNativeTransport + "\n"
                 + "native_transport_port: " + nativePort + "\n"
                 + "native_transport_max_threads: 16\n"
                 + "endpoint_snitch: SimpleSnitch\n"
@@ -88,8 +109,6 @@ final class Cassandra311SandboxConfig {
                 + "min_free_space_per_drive_in_mb: 1\n";
         repository.writeOwnedFile(lock, CONFIG_PATH,
                 yaml.getBytes(StandardCharsets.UTF_8));
-        repository.writeOwnedFile(lock, CONTROL_TOKEN_PATH,
-                (controlToken + "\n").getBytes(StandardCharsets.US_ASCII));
     }
 
     private static String quote(Path path) {

@@ -73,6 +73,35 @@ public class ChildProcessLauncherTest {
         }
     }
 
+    @Test
+    public void importCommandDisablesNativeAndAllInternodeServices() throws Exception {
+        Path root = temporary.newFolder("import command").toPath();
+        Path home = Files.createDirectory(root.resolve("cassandra home"));
+        Path conf = Files.createDirectory(root.resolve("cassandra conf"));
+        Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
+        Path serverJar = Files.write(root.resolve("cassandra-all-3.11.19.jar"), new byte[0]);
+        Path jamm = Files.write(root.resolve("jamm-0.3.2.jar"), new byte[0]);
+        Path tool = Files.write(root.resolve("sstable-tools.jar"), new byte[0]);
+        Path workspace = Files.createDirectory(root.resolve("workspace"));
+        JavaInstallation java = JavaInstallation.discover(
+                Paths.get(System.getProperty("java.home")),
+                System.getenv(), System.getProperties());
+        CassandraInstallation installation = new CassandraInstallation(
+                home, conf, serverJar, CassandraVersion.parse("3.11.19"), java,
+                tool, Arrays.asList(tool, conf, serverJar, jamm));
+
+        List<String> command = new ChildProcessLauncher(false).importCommand(
+                installation, workspace,
+                UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"));
+
+        Assert.assertTrue(command.contains("--import"));
+        Assert.assertTrue(command.contains("-Dcassandra.start_native_transport=false"));
+        Assert.assertTrue(command.contains("-Dcassandra.start_gossip=false"));
+        Assert.assertTrue(command.contains("-Dcassandra.join_ring=false"));
+        Assert.assertTrue(command.contains("-Dcassandra.load_ring_state=false"));
+        Assert.assertTrue(command.contains("-Dcassandra.start_rpc=false"));
+    }
+
     private static Path locationOf(Class<?> type) throws Exception {
         return Paths.get(type.getProtectionDomain().getCodeSource().getLocation().toURI())
                 .toRealPath();

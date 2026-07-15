@@ -113,6 +113,7 @@
                 <sandbox.it.cassandra.home>${cassandra311.home}</sandbox.it.cassandra.home>
                 <sandbox.it.java.home>${cassandra311.java.home}</sandbox.it.java.home>
                 <sandbox.it.jar>${project.build.directory}/${project.build.finalName}.jar</sandbox.it.jar>
+                <sandbox.it.fixture.directory>${maven.multiModuleProjectDirectory}/legacy-reader-3.11/src/test/resources</sandbox.it.fixture.directory>
               </systemPropertyVariables>
             </configuration>
           </plugin>

@@ -52,6 +52,11 @@ public final class BootstrapMain {
                 new WorkspaceCommandRunner().start(arguments, adapter, installation, out);
                 return 0;
             }
+            if (arguments.action() == BootstrapArguments.Action.WORKSPACE_IMPORT) {
+                new WorkspaceCommandRunner().importSstables(
+                        arguments, adapter, installation, out);
+                return 0;
+            }
 
             if (arguments.action() == BootstrapArguments.Action.RUNTIME_INSPECT) {
                 RuntimeIdentity identity = RuntimeIdentity.capture(installation);
@@ -118,6 +123,7 @@ public final class BootstrapMain {
         out.println("  --cassandra-conf <path>  Cassandra configuration directory to use");
         out.println("  --java-home <path>       Compatible Java installation to use");
         out.println("  --sstables <path>        Stable SSTable directory (repeatable for create)");
+        out.println("  --schema <path>          UTF-8 CQL schema bundle for workspace import");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();
@@ -127,6 +133,7 @@ public final class BootstrapMain {
         out.println();
         out.println("Workspace commands:");
         out.println("  workspace create <path>  Inventory sources and create a validated workspace");
+        out.println("  workspace import <path>  Validate and copy SSTables with native CQL disabled");
         out.println("  workspace start <path>   Start an imported workspace sandbox (3.11 prototype)");
         out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
         out.println("  workspace stop <path>    Drain and stop a running workspace sandbox");
