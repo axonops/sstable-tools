@@ -7,11 +7,11 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-final class Hashing {
+public final class Hashing {
     private Hashing() {
     }
 
-    static String sha256(Path path) throws WorkspaceException {
+    public static String sha256(Path path) throws WorkspaceException {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -26,13 +26,13 @@ final class Hashing {
                 digest.update(buffer, 0, count);
             }
         } catch (IOException e) {
-            throw new WorkspaceException("Cannot hash source component " + path, e);
+            throw new WorkspaceException("Cannot hash file " + path, e);
         }
 
         return hex(digest.digest());
     }
 
-    static String sha256(byte[] content) {
+    public static String sha256(byte[] content) {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");

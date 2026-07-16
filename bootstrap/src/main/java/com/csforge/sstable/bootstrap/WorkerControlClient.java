@@ -72,6 +72,16 @@ final class WorkerControlClient {
         return flushed(repository, workspaceId);
     }
 
+    WorkerEndpoint verify(WorkspaceRepository repository, UUID workspaceId)
+            throws WorkspaceException {
+        WorkerEndpoint endpoint = flushed(repository, workspaceId);
+        String response = command(repository, endpoint, "VERIFY", stopTimeoutMillis);
+        if (!"OK VERIFIED".equals(response)) {
+            throw new WorkspaceException("Worker verification failed: " + response);
+        }
+        return flushed(repository, workspaceId);
+    }
+
     WorkerEndpoint stop(WorkspaceRepository repository, UUID workspaceId)
             throws WorkspaceException {
         WorkerEndpoint endpoint = readEndpoint(repository, workspaceId);

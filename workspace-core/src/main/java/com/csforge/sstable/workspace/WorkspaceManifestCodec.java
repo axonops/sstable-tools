@@ -81,6 +81,7 @@ public final class WorkspaceManifestCodec {
             item.addProperty("exportId", record.exportId().toString());
             item.addProperty("createdAt", record.createdAt().toString());
             item.addProperty("outputFormat", record.outputFormat());
+            item.addProperty("outputPath", record.outputPath().toString());
             item.add("files", filesToJson(record.files()));
             exports.add(item);
         }
@@ -247,7 +248,7 @@ public final class WorkspaceManifestCodec {
         for (int index = 0; index < values.size(); index++) {
             JsonObject item = arrayObject(values, index, "exports");
             requireOnly(item, "exports[" + index + "]", "exportId", "createdAt",
-                    "outputFormat", "files");
+                    "outputFormat", "outputPath", "files");
             UUID id = parseUuid(requiredString(item, "exportId"), "exportId");
             if (!ids.add(id)) {
                 throw new WorkspaceException("Duplicate export ID " + id);
@@ -255,6 +256,8 @@ public final class WorkspaceManifestCodec {
             exports.add(new ExportRecord(id,
                     parseInstant(requiredString(item, "createdAt"), "export.createdAt"),
                     requiredString(item, "outputFormat"),
+                    absoluteNormalizedPath(requiredString(item, "outputPath"),
+                            "export output path"),
                     filesFromJson(requiredArray(item, "files"), "export.files")));
         }
         return exports;

@@ -2,6 +2,7 @@ package com.csforge.sstable.bootstrap;
 
 import com.csforge.sstable.worker.api.WorkerEndpoint;
 import com.csforge.sstable.worker.api.ImportResult;
+import com.csforge.sstable.workspace.ExportRecord;
 import com.csforge.sstable.workspace.ManifestFile;
 import com.csforge.sstable.workspace.SchemaBundle;
 import com.csforge.sstable.workspace.SourceInventory;
@@ -13,6 +14,7 @@ import com.csforge.sstable.workspace.WorkspaceRepository;
 import com.csforge.sstable.workspace.WorkspaceState;
 import com.csforge.sstable.workspace.WorkspaceFileInventory;
 import com.csforge.sstable.workspace.WorkspaceFlushResult;
+import com.csforge.sstable.workspace.WorkspaceVerificationResult;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetAddress;
@@ -40,6 +42,9 @@ final class WorkspaceCommandRunner {
                 return;
             case WORKSPACE_FLUSH:
                 flush(arguments, out);
+                return;
+            case WORKSPACE_EXPORT:
+                exportWorkspace(arguments, out);
                 return;
             case WORKSPACE_STOP:
                 stop(arguments, out);
@@ -90,6 +95,7 @@ final class WorkspaceCommandRunner {
             WorkspaceTimestampState.prepare(repository, lock, manifest.workspaceId(),
                     timestampPolicy, sourceMaximumMicros, !timestampPolicyRecorded);
             repository.deleteOwnedFile(lock, WorkspaceFlushResult.WORKSPACE_PATH);
+            repository.deleteOwnedFile(lock, WorkspaceVerificationResult.WORKSPACE_PATH);
             repository.save(lock, manifest);
 
             int nativePort = allocateLoopbackPort();
@@ -295,11 +301,17 @@ final class WorkspaceCommandRunner {
                     repository.save(lock, failed);
                     throw e;
                 }
-            } else if (manifest.state() == WorkspaceState.FLUSHED) {
+            } else if (manifest.state() == WorkspaceState.FLUSHED
+                    || manifest.state() == WorkspaceState.EXPORTED) {
                 try {
                     endpoint = new WorkerControlClient().flushed(repository,
                             manifest.workspaceId());
-                    requireFlushResult(repository, manifest, endpoint.release());
+                    WorkspaceFlushResult flush = requireFlushResult(repository, manifest,
+                            endpoint.release());
+                    if (manifest.state() == WorkspaceState.EXPORTED) {
+                        requireVerificationResult(repository, manifest, flush);
+                        verifyRecordedExports(manifest);
+                    }
                 } catch (WorkspaceException e) {
                     WorkspaceManifest failed = manifest.fail("Flushed worker health check "
                             + "failed: " + e.getMessage());
@@ -390,6 +402,14 @@ final class WorkspaceCommandRunner {
             }
             final WorkerEndpoint endpoint;
             try {
+                if (manifest.state() == WorkspaceState.EXPORTED) {
+                    WorkerEndpoint flushed = new WorkerControlClient().flushed(repository,
+                            manifest.workspaceId());
+                    WorkspaceFlushResult flush = requireFlushResult(repository, manifest,
+                            flushed.release());
+                    requireVerificationResult(repository, manifest, flush);
+                    verifyRecordedExports(manifest);
+                }
                 endpoint = new WorkerControlClient().stop(repository,
                         manifest.workspaceId());
                 repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
@@ -405,6 +425,65 @@ final class WorkspaceCommandRunner {
             repository.save(lock, manifest);
             printStatus(repository, manifest, out);
             printEndpoint(endpoint, out);
+        }
+    }
+
+    private static void exportWorkspace(BootstrapArguments arguments, PrintStream out)
+            throws WorkspaceException {
+        WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest manifest = repository.load();
+            manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
+            verifyBaselineIfPresent(repository, manifest);
+            WorkspaceExportPublisher publisher = new WorkspaceExportPublisher();
+
+            if (manifest.state() == WorkspaceState.EXPORTED) {
+                WorkerEndpoint endpoint = new WorkerControlClient().flushed(repository,
+                        manifest.workspaceId());
+                WorkspaceFlushResult flush = requireFlushResult(repository, manifest,
+                        endpoint.release());
+                requireVerificationResult(repository, manifest, flush);
+                Path output = publisher.resolveOutput(repository, manifest,
+                        arguments.outputPath());
+                ExportRecord recorded = requireRecordedExport(manifest,
+                        arguments.exportMode(), output);
+                publisher.verifyRecorded(recorded);
+                printStatus(repository, manifest, out);
+                printEndpoint(endpoint, out);
+                printExport(recorded, out);
+                return;
+            }
+            if (manifest.state() != WorkspaceState.FLUSHED) {
+                throw new WorkspaceException("workspace export requires state FLUSHED or "
+                        + "EXPORTED, not " + manifest.state());
+            }
+
+            try {
+                WorkerEndpoint endpoint = new WorkerControlClient().verify(repository,
+                        manifest.workspaceId());
+                WorkspaceFlushResult flush = requireFlushResult(repository, manifest,
+                        endpoint.release());
+                WorkspaceVerificationResult verification = requireVerificationResult(
+                        repository, manifest, flush);
+                ExportRecord record = publisher.publish(repository, manifest, flush,
+                        verification, arguments.exportMode(), arguments.outputPath());
+                manifest.sourceInventory().verifyUnchanged();
+                verifySchemaIfPresent(repository, manifest);
+                verifyBaselineIfPresent(repository, manifest);
+                manifest = manifest.withExport(record).transitionTo(WorkspaceState.EXPORTED);
+                repository.save(lock, manifest);
+                printStatus(repository, manifest, out);
+                printEndpoint(endpoint, out);
+                printExport(record, out);
+            } catch (WorkspaceException e) {
+                WorkspaceManifest current = repository.load();
+                if (current.state() == WorkspaceState.FLUSHED) {
+                    repository.save(lock, current.fail("Workspace export failed: "
+                            + e.getMessage()));
+                }
+                throw e;
+            }
         }
     }
 
@@ -438,11 +517,17 @@ final class WorkspaceCommandRunner {
                     try {
                         if (endpoint.status() == WorkerEndpoint.Status.FLUSHED
                                 && (recoveryTarget == WorkspaceState.RUNNING
-                                || recoveryTarget == WorkspaceState.FLUSHED)) {
+                                || recoveryTarget == WorkspaceState.FLUSHED
+                                || recoveryTarget == WorkspaceState.EXPORTED)) {
                             WorkerEndpoint flushed = new WorkerControlClient().flushed(
                                     repository, manifest.workspaceId());
-                            requireFlushResult(repository, manifest, flushed.release());
-                            if (recoveryTarget == WorkspaceState.FLUSHED) {
+                            WorkspaceFlushResult flush = requireFlushResult(repository,
+                                    manifest, flushed.release());
+                            if (recoveryTarget == WorkspaceState.EXPORTED) {
+                                requireVerificationResult(repository, manifest, flush);
+                                verifyRecordedExports(manifest);
+                            }
+                            if (recoveryTarget != WorkspaceState.RUNNING) {
                                 repository.deleteOwnedFile(lock,
                                         Cassandra311SandboxConfig.CQLSHRC_PATH);
                             }
@@ -532,7 +617,34 @@ final class WorkspaceCommandRunner {
             out.println("flush.fileCount=" + result.files().size());
             out.println("flush.deltaFileCount="
                     + result.deltaFiles(manifest.baselineInventory()).size());
+            Path verificationPath = repository.resolveInside(
+                    WorkspaceVerificationResult.WORKSPACE_PATH);
+            if (manifest.state() == WorkspaceState.EXPORTED
+                    || Files.exists(verificationPath, LinkOption.NOFOLLOW_LINKS)) {
+                WorkspaceVerificationResult verification = requireVerificationResult(
+                        repository, manifest, result);
+                out.println("verification.verifiedAt=" + verification.verifiedAt());
+                out.println("verification.liveSstables=" + verification.liveSstables());
+                out.println("verification.deltaSstables=" + verification.deltaSstables());
+                out.println("verification.logicalRows=" + verification.logicalRows());
+                out.println("verification.formats="
+                        + String.join(",", verification.formats()));
+            }
         }
+        out.println("export.count=" + manifest.exports().size());
+        for (ExportRecord export : manifest.exports()) {
+            out.println("export." + export.exportId() + ".mode=" + export.outputFormat());
+            out.println("export." + export.exportId() + ".path=" + export.outputPath());
+            out.println("export." + export.exportId() + ".fileCount="
+                    + export.files().size());
+        }
+    }
+
+    private static void printExport(ExportRecord export, PrintStream out) {
+        out.println("export.id=" + export.exportId());
+        out.println("export.mode=" + export.outputFormat());
+        out.println("export.path=" + export.outputPath());
+        out.println("export.fileCount=" + export.files().size());
     }
 
     private static void printEndpoint(WorkerEndpoint endpoint, PrintStream out) {
@@ -675,6 +787,46 @@ final class WorkspaceCommandRunner {
         result.verifyCompleteInventory(repository.root());
         result.deltaFiles(manifest.baselineInventory());
         return result;
+    }
+
+    private static WorkspaceVerificationResult requireVerificationResult(
+            WorkspaceRepository repository,
+            WorkspaceManifest manifest,
+            WorkspaceFlushResult flush) throws WorkspaceException {
+        WorkspaceVerificationResult result = WorkspaceVerificationResult.read(
+                repository.root());
+        result.requireIdentity(manifest.workspaceId(), flush.release(), flush.keyspace(),
+                flush.table(), flush.sha256());
+        if (result.liveSstables() < 1
+                || result.deltaSstables() != result.deltaDescriptors().size()) {
+            throw new WorkspaceException("Workspace verification result counts are invalid");
+        }
+        return result;
+    }
+
+    private static ExportRecord requireRecordedExport(WorkspaceManifest manifest,
+                                                       ExportMode mode,
+                                                       Path output)
+            throws WorkspaceException {
+        for (ExportRecord record : manifest.exports()) {
+            if (record.outputFormat().equals(mode.value())
+                    && record.outputPath().equals(output)) {
+                return record;
+            }
+        }
+        throw new WorkspaceException("Workspace EXPORTED state has no matching "
+                + mode.value() + " export at " + output);
+    }
+
+    private static void verifyRecordedExports(WorkspaceManifest manifest)
+            throws WorkspaceException {
+        if (manifest.exports().isEmpty()) {
+            throw new WorkspaceException("Workspace EXPORTED state has no export record");
+        }
+        WorkspaceExportPublisher publisher = new WorkspaceExportPublisher();
+        for (ExportRecord record : manifest.exports()) {
+            publisher.verifyRecorded(record);
+        }
     }
 
     private static String requiredRuntimeValue(WorkspaceManifest manifest, String key)

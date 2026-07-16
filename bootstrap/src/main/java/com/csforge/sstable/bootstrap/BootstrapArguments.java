@@ -18,6 +18,7 @@ final class BootstrapArguments {
         WORKSPACE_START,
         WORKSPACE_STATUS,
         WORKSPACE_FLUSH,
+        WORKSPACE_EXPORT,
         WORKSPACE_STOP,
         WORKSPACE_RECOVER
     }
@@ -29,6 +30,8 @@ final class BootstrapArguments {
     private final Path schemaPath;
     private final TimestampPolicy timestampPolicy;
     private final boolean timestampPolicySpecified;
+    private final ExportMode exportMode;
+    private final Path outputPath;
 
     private BootstrapArguments(Action action,
                                RuntimeOptions runtimeOptions,
@@ -36,7 +39,9 @@ final class BootstrapArguments {
                                List<Path> sourceDirectories,
                                Path schemaPath,
                                TimestampPolicy timestampPolicy,
-                               boolean timestampPolicySpecified) {
+                               boolean timestampPolicySpecified,
+                               ExportMode exportMode,
+                               Path outputPath) {
         this.action = action;
         this.runtimeOptions = runtimeOptions;
         this.workspacePath = workspacePath;
@@ -45,13 +50,15 @@ final class BootstrapArguments {
         this.schemaPath = schemaPath;
         this.timestampPolicy = timestampPolicy;
         this.timestampPolicySpecified = timestampPolicySpecified;
+        this.exportMode = exportMode;
+        this.outputPath = outputPath;
     }
 
     static BootstrapArguments parse(String[] args) throws BootstrapException {
         if (args.length == 0) {
             return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
                     null, Collections.<Path>emptyList(), null, TimestampPolicy.WALL_CLOCK,
-                    false);
+                    false, null, null);
         }
 
         Path cassandraHome = null;
@@ -61,6 +68,8 @@ final class BootstrapArguments {
         Path schemaPath = null;
         TimestampPolicy timestampPolicy = TimestampPolicy.WALL_CLOCK;
         boolean timestampPolicySpecified = false;
+        ExportMode exportMode = null;
+        Path outputPath = null;
         List<String> command = new ArrayList<>();
 
         for (int index = 0; index < args.length; index++) {
@@ -69,13 +78,13 @@ final class BootstrapArguments {
                 return new BootstrapArguments(Action.HELP,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified);
+                        timestampPolicySpecified, exportMode, outputPath);
             }
             if ("--version".equals(argument)) {
                 return new BootstrapArguments(Action.VERSION,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified);
+                        timestampPolicySpecified, exportMode, outputPath);
             }
             if ("--cassandra-home".equals(argument)) {
                 cassandraHome = pathValue(args, ++index, argument);
@@ -93,6 +102,16 @@ final class BootstrapArguments {
                 }
                 timestampPolicy = TimestampPolicy.parse(args[index]);
                 timestampPolicySpecified = true;
+            } else if ("--mode".equals(argument)) {
+                if (exportMode != null || ++index >= args.length) {
+                    throw usage("--mode requires one value");
+                }
+                exportMode = ExportMode.parse(args[index]);
+            } else if ("--output".equals(argument)) {
+                if (outputPath != null) {
+                    throw usage("--output may be specified only once");
+                }
+                outputPath = pathValue(args, ++index, argument);
             } else if (argument.startsWith("--")) {
                 throw usage("Unknown option: " + argument);
             } else {
@@ -129,6 +148,10 @@ final class BootstrapArguments {
             action = Action.WORKSPACE_FLUSH;
             workspacePath = commandPath(command.get(2));
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
+                && "export".equals(command.get(1))) {
+            action = Action.WORKSPACE_EXPORT;
+            workspacePath = commandPath(command.get(2));
+        } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "stop".equals(command.get(1))) {
             action = Action.WORKSPACE_STOP;
             workspacePath = commandPath(command.get(2));
@@ -145,6 +168,7 @@ final class BootstrapArguments {
                 || action == Action.WORKSPACE_IMPORT || action == Action.WORKSPACE_START
                 || action == Action.WORKSPACE_STATUS
                 || action == Action.WORKSPACE_FLUSH
+                || action == Action.WORKSPACE_EXPORT
                 || action == Action.WORKSPACE_STOP || action == Action.WORKSPACE_RECOVER;
         if (workspaceAction && action != Action.WORKSPACE_START
                 && action != Action.WORKSPACE_IMPORT
@@ -164,10 +188,16 @@ final class BootstrapArguments {
         if (action != Action.WORKSPACE_START && timestampPolicySpecified) {
             throw usage("--timestamp-policy is only valid with workspace start");
         }
+        if (action == Action.WORKSPACE_EXPORT && (exportMode == null || outputPath == null)) {
+            throw usage("workspace export requires --mode delta|snapshot and --output <path>");
+        }
+        if (action != Action.WORKSPACE_EXPORT && (exportMode != null || outputPath != null)) {
+            throw usage("--mode and --output are only valid with workspace export");
+        }
         return new BootstrapArguments(action,
                 new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                 workspacePath, sourceDirectories, schemaPath, timestampPolicy,
-                timestampPolicySpecified);
+                timestampPolicySpecified, exportMode, outputPath);
     }
 
     private static Path pathValue(String[] args, int index, String option)
@@ -223,5 +253,13 @@ final class BootstrapArguments {
 
     boolean timestampPolicySpecified() {
         return timestampPolicySpecified;
+    }
+
+    ExportMode exportMode() {
+        return exportMode;
+    }
+
+    Path outputPath() {
+        return outputPath;
     }
 }

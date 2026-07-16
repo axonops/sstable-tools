@@ -87,6 +87,7 @@ public final class BootstrapMain {
         return action == BootstrapArguments.Action.WORKSPACE_CREATE
                 || action == BootstrapArguments.Action.WORKSPACE_STATUS
                 || action == BootstrapArguments.Action.WORKSPACE_FLUSH
+                || action == BootstrapArguments.Action.WORKSPACE_EXPORT
                 || action == BootstrapArguments.Action.WORKSPACE_STOP
                 || action == BootstrapArguments.Action.WORKSPACE_RECOVER;
     }
@@ -95,7 +96,8 @@ public final class BootstrapMain {
         return action == BootstrapArguments.Action.WORKSPACE_CREATE
                 || action == BootstrapArguments.Action.WORKSPACE_IMPORT
                 || action == BootstrapArguments.Action.WORKSPACE_START
-                || action == BootstrapArguments.Action.WORKSPACE_FLUSH;
+                || action == BootstrapArguments.Action.WORKSPACE_FLUSH
+                || action == BootstrapArguments.Action.WORKSPACE_EXPORT;
     }
 
     private static void printSstableWriteWarning(PrintStream err) {
@@ -146,6 +148,8 @@ public final class BootstrapMain {
         out.println("  --sstables <path>        Stable SSTable directory (repeatable for create)");
         out.println("  --schema <path>          UTF-8 CQL schema bundle for workspace import");
         out.println("  --timestamp-policy <p>  wall-clock or after-source (workspace start)");
+        out.println("  --mode <mode>           delta or snapshot (workspace export)");
+        out.println("  --output <path>         Atomic publication destination (workspace export)");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();
@@ -159,6 +163,7 @@ public final class BootstrapMain {
         out.println("  workspace start <path>   Start an imported workspace sandbox (3.11 prototype)");
         out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
         out.println("  workspace flush <path>   Quiesce CQL and flush the workspace table");
+        out.println("  workspace export <path>  Verify and publish a delta or snapshot export");
         out.println("  workspace stop <path>    Drain and stop a running workspace sandbox");
         out.println("  workspace recover <path> Recover a failed workspace to its last stable state");
         out.println();
@@ -168,6 +173,6 @@ public final class BootstrapMain {
         out.println("  backup copied outside every live Cassandra data directory.");
         out.println();
         out.println("Workspace commands planned for later implementation:");
-        out.println("  workspace cqlsh|export|destroy");
+        out.println("  workspace cqlsh|destroy");
     }
 }

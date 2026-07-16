@@ -166,6 +166,29 @@ public class WorkspaceManifestTest {
         }
     }
 
+    @Test
+    public void recordsAndRoundTripsPublishedExportIdentity() throws Exception {
+        Path root = temporary.newFolder("export-record").toPath().toRealPath();
+        WorkspaceManifest flushed = WorkspaceManifest.create(
+                        WorkspaceTestFixtures.inventory(root))
+                .transitionTo(WorkspaceState.VALIDATED)
+                .transitionTo(WorkspaceState.IMPORTED)
+                .transitionTo(WorkspaceState.RUNNING)
+                .transitionTo(WorkspaceState.FLUSHED);
+        Path output = root.resolveSibling("published-export").toAbsolutePath().normalize();
+        ExportRecord record = new ExportRecord(UUID.randomUUID(), Instant.now(), "delta",
+                output, Collections.singletonList(
+                new ManifestFile("export-manifest.json", 10, hash('e'))));
+
+        WorkspaceManifest exported = flushed.withExport(record)
+                .transitionTo(WorkspaceState.EXPORTED);
+        WorkspaceManifest restored = new WorkspaceManifestCodec().decode(
+                new WorkspaceManifestCodec().encode(exported));
+
+        Assert.assertEquals(exported, restored);
+        Assert.assertEquals(output, restored.exports().get(0).outputPath());
+    }
+
     private static String hash(char value) {
         char[] hash = new char[64];
         Arrays.fill(hash, value);

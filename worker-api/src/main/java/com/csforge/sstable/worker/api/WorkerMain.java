@@ -241,6 +241,14 @@ public final class WorkerMain {
                             "workspace table flushed and inventoried");
                     current.writeAtomically(endpointPath);
                     writeLine(response, "OK FLUSHED");
+                } else if ((token + " VERIFY").equals(request)
+                        && current.status() == WorkerEndpoint.Status.FLUSHED) {
+                    handle.verify();
+                    if (!handle.isVerified()) {
+                        throw new IllegalStateException("Sandbox verification did not publish "
+                                + "durable evidence");
+                    }
+                    writeLine(response, "OK VERIFIED");
                 } else if ((token + " STOP").equals(request)) {
                     current = current.withStatus(WorkerEndpoint.Status.STOPPING,
                             "graceful stop requested");

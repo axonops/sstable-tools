@@ -12,5 +12,9 @@ public interface SandboxHandle {
 
     boolean isFlushed();
 
+    void verify() throws Exception;
+
+    boolean isVerified();
+
     void stop() throws Exception;
 }

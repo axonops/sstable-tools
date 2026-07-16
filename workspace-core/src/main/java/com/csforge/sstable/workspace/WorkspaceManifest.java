@@ -202,6 +202,27 @@ public final class WorkspaceManifest {
                 runtimeIdentity, outputIdentity, nextBaseline, exports);
     }
 
+    public WorkspaceManifest withExport(ExportRecord export) throws WorkspaceException {
+        if (state != WorkspaceState.FLUSHED) {
+            throw new WorkspaceException("Export record requires state FLUSHED, not " + state);
+        }
+        if (export == null) {
+            throw new WorkspaceException("Export record must not be null");
+        }
+        List<ExportRecord> nextExports = new ArrayList<>(exports);
+        for (ExportRecord existing : nextExports) {
+            if (existing.exportId().equals(export.exportId())
+                    || existing.outputPath().equals(export.outputPath())) {
+                throw new WorkspaceException("Workspace export identity or output path is "
+                        + "already recorded");
+            }
+        }
+        nextExports.add(export);
+        return new WorkspaceManifest(formatVersion, workspaceId, state, lastStableState,
+                failureMessage, createdAt, Instant.now(), sourceInventory, schemaIdentity,
+                runtimeIdentity, outputIdentity, baselineInventory, nextExports);
+    }
+
     private WorkspaceManifest copy(WorkspaceState nextState,
                                    WorkspaceState nextStableState,
                                    String nextFailureMessage,

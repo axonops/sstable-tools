@@ -61,4 +61,33 @@ public class BootstrapArgumentsTest {
             Assert.assertTrue(e.getMessage().contains("wall-clock or after-source"));
         }
     }
+
+    @Test
+    public void parsesAndValidatesWorkspaceExportOptions() throws Exception {
+        BootstrapArguments export = BootstrapArguments.parse(new String[]{
+                "workspace", "export", "workspace", "--mode", "delta",
+                "--output", "published"
+        });
+        Assert.assertEquals(BootstrapArguments.Action.WORKSPACE_EXPORT, export.action());
+        Assert.assertEquals(ExportMode.DELTA, export.exportMode());
+        Assert.assertEquals(Paths.get("published"), export.outputPath());
+
+        assertUsageFailure(new String[]{"workspace", "export", "workspace"},
+                "requires --mode");
+        assertUsageFailure(new String[]{"workspace", "export", "workspace", "--mode",
+                "archive", "--output", "published"}, "delta or snapshot");
+        assertUsageFailure(new String[]{"workspace", "status", "workspace", "--mode",
+                "snapshot", "--output", "published"}, "only valid with workspace export");
+    }
+
+    private static void assertUsageFailure(String[] arguments, String expected)
+            throws Exception {
+        try {
+            BootstrapArguments.parse(arguments);
+            Assert.fail("Expected usage failure containing " + expected);
+        } catch (BootstrapException failure) {
+            Assert.assertEquals(BootstrapException.USAGE_EXIT_CODE, failure.exitCode());
+            Assert.assertTrue(failure.getMessage(), failure.getMessage().contains(expected));
+        }
+    }
 }

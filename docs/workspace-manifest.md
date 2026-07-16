@@ -199,6 +199,26 @@ The controller requires the imported baseline to remain an exact subset and
 reports the remaining files as the delta. It removes `state/cqlshrc` after a
 successful or reconciled flush.
 
+`workspace export <path> --mode delta|snapshot --output <destination>` first
+uses authenticated worker protocol `VERIFY` while the worker remains
+`FLUSHED`. The Cassandra 3.11 worker requires its live descriptor set to equal
+the committed flush, runs extended verification, checks generated SSTables are
+latest-format and unrepaired, performs a logical row-count scan, and atomically
+writes owner-only `state/verification-result.properties`. The evidence is bound
+to the SHA-256 of the complete flush result.
+
+The controller accepts only complete TOC-declared descriptor component sets.
+It publishes `export-manifest.json`, `schema.cql`, and `sstables/` through a
+mode-0700 temporary sibling, fsyncs files and directories, and requires an
+atomic non-replacing directory rename. `delta` contains only descriptors added
+after the immutable baseline and records every required source component;
+`snapshot` contains the complete flushed inventory. A deterministic export ID
+and byte-stable manifest allow a retry to adopt an already-published directory
+only when its exact path, size, and SHA-256 inventory matches. The workspace
+manifest records that inventory and canonical output path before entering
+`EXPORTED`; publication never writes into or overlaps the workspace or source
+directories.
+
 ## Lifecycle and recovery
 
 The legal forward transitions are:
@@ -242,6 +262,13 @@ boundary after the worker committed the result. A missing, changed, mismatched,
 or unsafe flush record fails closed. Starting a stopped workspace deletes the
 old record before reopening native transport; no old flush inventory is reused
 for a later mutation session.
+
+If publication completes but the controller exits before recording it, the
+manifest remains recoverable from `FLUSHED`; rerunning the same export command
+recomputes its deterministic identity and validates the existing directory.
+An `EXPORTED` workspace and a failed workspace whose last stable state was
+`EXPORTED` must validate the flush-bound verification evidence and every
+recorded export hash before status or recovery succeeds.
 
 Each Cassandra 3.11 start replaces `state/cqlshrc` with a new random 256-bit
 password for the fixed `sstable_workspace` identity. Graceful stop and

@@ -1,6 +1,7 @@
 package com.csforge.sstable.workspace;
 
 import java.time.Instant;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -12,20 +13,37 @@ public final class ExportRecord {
     private final UUID exportId;
     private final Instant createdAt;
     private final String outputFormat;
+    private final Path outputPath;
     private final List<ManifestFile> files;
 
     public ExportRecord(UUID exportId,
                         Instant createdAt,
                         String outputFormat,
+                        Path outputPath,
                         List<ManifestFile> files) throws WorkspaceException {
         if (exportId == null || createdAt == null || outputFormat == null
-                || outputFormat.trim().isEmpty() || files == null) {
+                || outputFormat.trim().isEmpty() || outputPath == null || files == null
+                || files.isEmpty()) {
             throw new WorkspaceException("Export record fields must not be null or empty");
+        }
+        Path normalized = outputPath.toAbsolutePath().normalize();
+        if (!outputPath.isAbsolute() || !outputPath.equals(normalized)) {
+            throw new WorkspaceException("Export output path must be absolute and normalized: "
+                    + outputPath);
+        }
+        List<ManifestFile> sorted = new ArrayList<>(files);
+        sorted.sort((left, right) -> left.relativePath().compareTo(right.relativePath()));
+        java.util.Set<String> paths = new java.util.HashSet<>();
+        for (ManifestFile file : sorted) {
+            if (file == null || !paths.add(file.relativePath())) {
+                throw new WorkspaceException("Export record contains a null or duplicate file");
+            }
         }
         this.exportId = exportId;
         this.createdAt = createdAt;
         this.outputFormat = outputFormat;
-        this.files = Collections.unmodifiableList(new ArrayList<>(files));
+        this.outputPath = normalized;
+        this.files = Collections.unmodifiableList(sorted);
     }
 
     public UUID exportId() {
@@ -38,6 +56,10 @@ public final class ExportRecord {
 
     public String outputFormat() {
         return outputFormat;
+    }
+
+    public Path outputPath() {
+        return outputPath;
     }
 
     public List<ManifestFile> files() {
@@ -54,11 +76,12 @@ public final class ExportRecord {
         }
         ExportRecord that = (ExportRecord) other;
         return exportId.equals(that.exportId) && createdAt.equals(that.createdAt)
-                && outputFormat.equals(that.outputFormat) && files.equals(that.files);
+                && outputFormat.equals(that.outputFormat)
+                && outputPath.equals(that.outputPath) && files.equals(that.files);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(exportId, createdAt, outputFormat, files);
+        return Objects.hash(exportId, createdAt, outputFormat, outputPath, files);
     }
 }

@@ -101,6 +101,8 @@ public class WorkerMainTest {
             Assert.assertEquals(WorkerEndpoint.Status.FLUSHED, endpoint.status());
             Assert.assertEquals("OK FLUSHED",
                     control(endpoint, CONTROL_TOKEN + " STATUS"));
+            Assert.assertEquals("OK VERIFIED",
+                    control(endpoint, CONTROL_TOKEN + " VERIFY"));
             Assert.assertEquals("OK STOPPING",
                     control(endpoint, CONTROL_TOKEN + " STOP"));
 
@@ -184,6 +186,15 @@ public class WorkerMainTest {
 
                 @Override
                 public boolean isFlushed() {
+                    return !running;
+                }
+
+                @Override
+                public void verify() {
+                }
+
+                @Override
+                public boolean isVerified() {
                     return !running;
                 }
 

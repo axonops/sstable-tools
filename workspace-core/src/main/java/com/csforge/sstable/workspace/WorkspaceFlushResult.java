@@ -198,6 +198,10 @@ public final class WorkspaceFlushResult {
         return Collections.unmodifiableList(delta);
     }
 
+    public String sha256() {
+        return Hashing.sha256(encode());
+    }
+
     private byte[] encode() {
         JsonObject root = new JsonObject();
         root.addProperty("formatVersion", FORMAT_VERSION);

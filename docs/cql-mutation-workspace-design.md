@@ -482,8 +482,9 @@ WHERE user_name = 'frodo';
 ```
 
 The sandbox gives immediate read-your-writes behavior through its memtable.
-`workspace flush` is the implemented Cassandra 3.11 boundary that quiesces CQL
-and creates new SSTables; export publication remains separate.
+`workspace flush` is the Cassandra 3.11 boundary that quiesces CQL and creates
+new SSTables; `workspace export` performs release verification and publishes
+those immutable results separately.
 
 ### 10.4 Flush and export
 
@@ -495,8 +496,7 @@ worker endpoint becomes `FLUSHED`. The strict result records every table file's
 path, size, and SHA-256. The controller verifies that the imported baseline is
 unchanged, classifies every remaining file as delta, removes the CQL credential,
 and can reconcile a `RUNNING` manifest when the worker/result already committed
-`FLUSHED`. Release-level verification and export publication below remain to be
-implemented.
+`FLUSHED`.
 
 ```shell
 sstable-tools workspace export ./case \
@@ -504,13 +504,13 @@ sstable-tools workspace export ./case \
   --output ./case-output
 ```
 
-Full export will consume the committed flush result and:
+The implemented Cassandra 3.11 export consumes the committed flush result and:
 
 1. reverify the complete inventory and post-import delta classification;
 2. run the target release's SSTable verification and a reconciliation scan;
 3. copy complete component sets into a temporary export directory;
-4. write `manifest.json`, `schema.cql`, checksums, runtime identity, and a source
-   dependency list;
+4. write `export-manifest.json`, `schema.cql`, checksums, runtime identity, and
+   a source dependency list;
 5. fsync and atomically rename the export directory into place.
 
 Export modes are:
@@ -527,6 +527,17 @@ Export modes are:
 Generated SSTables are unrepaired and use the target runtime's native latest
 format. An export is not copied directly into a production data directory; it is
 intended for later validation and import with Cassandra's supported tools.
+
+Verification is worker-owned because only the matching release adapter may
+interpret Cassandra descriptors and metadata. Worker protocol `VERIFY` is
+accepted only after `FLUSHED`; it runs Cassandra extended verification,
+requires the live-reader descriptors to match the flush inventory, checks each
+generated reader's format and repaired metadata, scans a logical row count, and
+durably binds the result to the flush hash. Controller-owned publication then
+requires complete TOC component sets, an existing canonical destination
+parent, owner-only staging, fsync, and an atomic non-replacing rename. A retry
+can reconcile only a byte-identical deterministic export and never overwrites
+an existing destination.
 
 ## 11. Mutation semantics
 

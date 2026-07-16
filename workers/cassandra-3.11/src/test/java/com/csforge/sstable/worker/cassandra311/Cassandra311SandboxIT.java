@@ -1,11 +1,15 @@
 package com.csforge.sstable.worker.cassandra311;
 
 import com.csforge.sstable.worker.api.WorkerEndpoint;
+import com.csforge.sstable.workspace.ExportRecord;
+import com.csforge.sstable.workspace.Hashing;
+import com.csforge.sstable.workspace.ManifestFile;
 import com.csforge.sstable.workspace.SourceInventory;
 import com.csforge.sstable.workspace.WorkspaceFlushResult;
 import com.csforge.sstable.workspace.WorkspaceManifest;
 import com.csforge.sstable.workspace.WorkspaceRepository;
 import com.csforge.sstable.workspace.WorkspaceState;
+import com.csforge.sstable.workspace.WorkspaceVerificationResult;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
@@ -420,6 +424,59 @@ public class Cassandra311SandboxIT {
                     property(flushedStatus.output, "workspace.state"));
             Assert.assertEquals("FLUSHED",
                     property(flushedStatus.output, "worker.status"));
+
+            Path deltaExport = temporary.getRoot().toPath().resolve("delta-export");
+            CommandResult exported = run(command(controllerJava(), toolJar,
+                    "workspace", "export", workspace.toString(), "--mode", "delta",
+                    "--output", deltaExport.toString()));
+            Assert.assertEquals(exported.output + workerError(workspace),
+                    0, exported.exitCode);
+            Assert.assertEquals("EXPORTED", property(exported.output, "workspace.state"));
+            Assert.assertEquals("FLUSHED", property(exported.output, "worker.status"));
+            Assert.assertEquals("delta", property(exported.output, "export.mode"));
+            Assert.assertEquals(deltaExport.toRealPath().toString(),
+                    property(exported.output, "export.path"));
+            Assert.assertTrue(exported.output,
+                    Integer.parseInt(property(exported.output,
+                            "verification.deltaSstables")) > 0);
+            Assert.assertTrue(exported.output,
+                    Long.parseLong(property(exported.output,
+                            "verification.logicalRows")) >= 4);
+
+            WorkspaceManifest exportedManifest = WorkspaceRepository.open(workspace).load();
+            Assert.assertEquals(WorkspaceState.EXPORTED, exportedManifest.state());
+            Assert.assertEquals(1, exportedManifest.exports().size());
+            ExportRecord exportRecord = exportedManifest.exports().get(0);
+            Assert.assertEquals(property(exported.output, "export.id"),
+                    exportRecord.exportId().toString());
+            for (ManifestFile file : exportRecord.files()) {
+                Path published = deltaExport.resolve(file.relativePath());
+                Assert.assertTrue("Missing published export file " + published,
+                        Files.isRegularFile(published));
+                Assert.assertEquals(file.size(), Files.size(published));
+                Assert.assertEquals(file.sha256(), Hashing.sha256(published));
+            }
+            for (ManifestFile baseline : exportedManifest.baselineInventory()) {
+                Assert.assertFalse("Delta export contains baseline component " + baseline,
+                        Files.exists(deltaExport.resolve("sstables").resolve(
+                                Paths.get(baseline.relativePath()).getFileName())));
+            }
+            String exportManifest = new String(Files.readAllBytes(
+                    deltaExport.resolve("export-manifest.json")), StandardCharsets.UTF_8);
+            Assert.assertTrue(exportManifest, exportManifest.contains("\"mode\": \"delta\""));
+            Assert.assertTrue(exportManifest,
+                    exportManifest.contains("\"requiredSources\""));
+            WorkspaceVerificationResult verification = WorkspaceVerificationResult.read(
+                    workspace);
+            verification.requireIdentity(exportedManifest.workspaceId(), "3.11.19", "blog",
+                    "users", flushResult.sha256());
+
+            CommandResult replayedExport = run(command(controllerJava(), toolJar,
+                    "workspace", "export", workspace.toString(), "--mode", "delta",
+                    "--output", deltaExport.toString()));
+            Assert.assertEquals(replayedExport.output, 0, replayedExport.exitCode);
+            Assert.assertEquals(exportRecord.exportId().toString(),
+                    property(replayedExport.output, "export.id"));
 
             CommandResult stop = run(command(controllerJava(), toolJar,
                     "workspace", "stop", workspace.toString()));

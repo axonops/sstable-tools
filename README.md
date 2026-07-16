@@ -213,7 +213,24 @@ auto-compaction, performs a blocking table flush, and atomically records the
 complete checksummed table inventory in `state/flush-result.json`. It removes
 the native credential and reports the full and post-import delta file counts.
 The worker remains available only through its authenticated control endpoint
-until `workspace stop`; export publication is not implemented yet.
+until `workspace stop`. Publish either the generated delta or a self-contained
+snapshot to a new destination directory:
+
+```shell
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  workspace export ./case --mode delta --output ./case-delta
+```
+
+Export first asks the quiesced release worker to run Cassandra's extended
+SSTable verification and a logical row-count scan. It records owner-only,
+flush-bound evidence in `state/verification-result.properties`, validates
+complete TOC-declared descriptor sets, copies and fsyncs into a private sibling
+directory, and publishes with an atomic directory rename. The output contains
+`export-manifest.json`, `schema.cql`, and `sstables/`. Delta manifests list the
+exact source component hashes required alongside the generated SSTables;
+snapshot mode includes the entire flushed table. Existing output is never
+overwritten and is adopted after a controller crash only when every path, size,
+and SHA-256 matches the deterministic publication.
 
 The schema bundle and SSTable sources must remain outside the workspace and
 unchanged. The importer recognizes Cassandra 3.11 Big `ma`,

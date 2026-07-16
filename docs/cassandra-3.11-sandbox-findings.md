@@ -139,12 +139,12 @@ statement guard, not production RBAC, is the authorization boundary.
 
 The child publishes a strict, atomic endpoint record containing workspace UUID,
 PID, Cassandra release, loopback native/control endpoints, status, and times.
-The control socket accepts `STATUS` and `STOP` only with a random 256-bit token
-stored as a mode-0600 workspace file. Graceful stop closes native transport and
-drains Cassandra before publishing `STOPPED`. Start and live status output also
-publish the native username and canonical `cqlshrc` path. The native password
-rotates on restart, and graceful stop or dead-worker recovery deletes its
-credential file.
+The control socket accepts `STATUS`, `FLUSH`, `VERIFY`, and `STOP` only with a
+random 256-bit token stored as a mode-0600 workspace file. Graceful stop closes
+native transport and drains Cassandra before publishing `STOPPED`. Start and
+live status output also publish the native username and canonical `cqlshrc`
+path. The native password rotates on restart, and graceful stop or dead-worker
+recovery deletes its credential file.
 
 After a failed health check, recovery first tries the authenticated control
 endpoint. If it is unreachable, Linux `/proc/<pid>/cmdline` must prove that the
@@ -160,6 +160,16 @@ verifies baseline inclusion and delta hashes before committing manifest state.
 If the controller disappears after the worker commits, status, flush, or
 recovery reconciles `RUNNING` to `FLUSHED`. A flushed worker exposes only the
 authenticated control endpoint until stop; its CQL credential is deleted.
+
+`workspace export` invokes authenticated `VERIFY` only from `FLUSHED`. The
+worker reconciles the committed inventory with Cassandra's live readers, runs
+extended SSTable verification, checks generated readers are latest-format and
+unrepaired, counts logical rows, and atomically records owner-only evidence
+bound to the flush hash. The controller publishes complete TOC component sets,
+schema, and a deterministic export manifest through an fsynced atomic directory
+rename. Delta mode excludes the baseline and declares its exact source hash
+dependencies; snapshot mode includes all flushed descriptors. Existing output
+is never overwritten.
 
 ## Automated evidence
 
@@ -208,15 +218,20 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 12. inject the controller-crash boundary where the worker/result are `FLUSHED`
     but the manifest remains `RUNNING`, then prove `workspace status` validates
     the inventory and completes the transition;
-13. drain the flushed worker to `STOPPED`, prove the native credential remains
+13. run Cassandra extended verification and logical reconciliation, atomically
+    publish a delta export, verify every recorded path, size, and SHA-256, prove
+    no baseline component was copied, and replay the export command
+    idempotently;
+14. drain the exported worker to `STOPPED`, prove the native credential remains
     deleted, and verify the production daemon is still queryable before
     stopping the fixture; and
-14. reject the repository's `mb` fixture because its explicit
+15. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
 
-Unit tests cover strict endpoint/import/flush-result parsing and publication,
+Unit tests cover strict endpoint/import/flush/verification result parsing,
+delta and snapshot publication, crash reconciliation and corruption refusal,
 authenticated control, native credential parsing and loopback enforcement, the
 fixed role manager, future-source timestamp warnings, private config generation,
 schema capture/CQL splitting, child JVM arguments, lifecycle transitions,
@@ -230,9 +245,9 @@ inventories.
 - Add a compatible future-dated SSTable fixture so CI proves reconciliation
   against a real source cell above wall clock, not only allocator boundaries
   derived from real statistics metadata.
-- Implement release verification of generated components, atomic delta/snapshot
-  export publication, base-plus-delta reopening, and clean-node import
-  validation. Quiesced table flush, strict full inventory, and baseline/delta
+- Implement base-plus-delta reopening and clean-node import validation.
+  Quiesced table flush, strict full inventory, release verification, atomic
+  delta/snapshot publication, and baseline/delta
   classification are implemented.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
