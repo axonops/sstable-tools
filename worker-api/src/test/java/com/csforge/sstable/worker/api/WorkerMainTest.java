@@ -38,7 +38,7 @@ public class WorkerMainTest {
 
         Assert.assertEquals(0, exitCode);
         Assert.assertTrue(output.toString("UTF-8")
-                .contains("WORKER_READY protocol=2 release=9.9.9"));
+                .contains("WORKER_READY protocol=3 release=9.9.9"));
     }
 
     @Test
@@ -94,6 +94,12 @@ public class WorkerMainTest {
             Assert.assertEquals("ERROR unauthorized-or-unsupported-command",
                     control(endpoint, "wrong STATUS"));
             Assert.assertEquals("OK RUNNING",
+                    control(endpoint, CONTROL_TOKEN + " STATUS"));
+            Assert.assertEquals("OK FLUSHED",
+                    control(endpoint, CONTROL_TOKEN + " FLUSH"));
+            endpoint = WorkerEndpoint.read(endpointPath);
+            Assert.assertEquals(WorkerEndpoint.Status.FLUSHED, endpoint.status());
+            Assert.assertEquals("OK FLUSHED",
                     control(endpoint, CONTROL_TOKEN + " STATUS"));
             Assert.assertEquals("OK STOPPING",
                     control(endpoint, CONTROL_TOKEN + " STOP"));
@@ -169,6 +175,16 @@ public class WorkerMainTest {
                 @Override
                 public boolean isRunning() {
                     return running;
+                }
+
+                @Override
+                public void flush() {
+                    running = false;
+                }
+
+                @Override
+                public boolean isFlushed() {
+                    return !running;
                 }
 
                 @Override

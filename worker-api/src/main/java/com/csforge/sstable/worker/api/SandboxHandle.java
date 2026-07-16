@@ -8,5 +8,9 @@ public interface SandboxHandle {
 
     boolean isRunning();
 
+    void flush() throws Exception;
+
+    boolean isFlushed();
+
     void stop() throws Exception;
 }

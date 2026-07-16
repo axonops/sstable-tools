@@ -12,6 +12,7 @@ import com.csforge.sstable.workspace.WorkspaceManifest;
 import com.csforge.sstable.workspace.WorkspaceRepository;
 import com.csforge.sstable.workspace.WorkspaceState;
 import com.csforge.sstable.workspace.WorkspaceFileInventory;
+import com.csforge.sstable.workspace.WorkspaceFlushResult;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetAddress;
@@ -36,6 +37,9 @@ final class WorkspaceCommandRunner {
                 return;
             case WORKSPACE_STATUS:
                 status(arguments, out);
+                return;
+            case WORKSPACE_FLUSH:
+                flush(arguments, out);
                 return;
             case WORKSPACE_STOP:
                 stop(arguments, out);
@@ -85,6 +89,7 @@ final class WorkspaceCommandRunner {
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity());
             WorkspaceTimestampState.prepare(repository, lock, manifest.workspaceId(),
                     timestampPolicy, sourceMaximumMicros, !timestampPolicyRecorded);
+            repository.deleteOwnedFile(lock, WorkspaceFlushResult.WORKSPACE_PATH);
             repository.save(lock, manifest);
 
             int nativePort = allocateLoopbackPort();
@@ -274,11 +279,30 @@ final class WorkspaceCommandRunner {
             WorkerEndpoint endpoint = null;
             if (manifest.state() == WorkspaceState.RUNNING) {
                 try {
-                    endpoint = new WorkerControlClient().status(repository,
+                    WorkerEndpoint recorded = WorkerControlClient.readEndpoint(repository,
                             manifest.workspaceId());
+                    if (recorded.status() == WorkerEndpoint.Status.FLUSHED) {
+                        endpoint = new WorkerControlClient().flushed(repository,
+                                manifest.workspaceId());
+                        manifest = transitionToFlushed(repository, lock, manifest, endpoint);
+                    } else {
+                        endpoint = new WorkerControlClient().status(repository,
+                                manifest.workspaceId());
+                    }
                 } catch (WorkspaceException e) {
                     WorkspaceManifest failed = manifest.fail("Worker health check failed: "
                             + e.getMessage());
+                    repository.save(lock, failed);
+                    throw e;
+                }
+            } else if (manifest.state() == WorkspaceState.FLUSHED) {
+                try {
+                    endpoint = new WorkerControlClient().flushed(repository,
+                            manifest.workspaceId());
+                    requireFlushResult(repository, manifest, endpoint.release());
+                } catch (WorkspaceException e) {
+                    WorkspaceManifest failed = manifest.fail("Flushed worker health check "
+                            + "failed: " + e.getMessage());
                     repository.save(lock, failed);
                     throw e;
                 }
@@ -286,8 +310,62 @@ final class WorkspaceCommandRunner {
             printStatus(repository, manifest, out);
             if (endpoint != null) {
                 printEndpoint(endpoint, out);
-                printNativeAuthentication(repository, out);
+                if (endpoint.status() == WorkerEndpoint.Status.RUNNING) {
+                    printNativeAuthentication(repository, out);
+                }
             }
+        }
+    }
+
+    private static void flush(BootstrapArguments arguments, PrintStream out)
+            throws WorkspaceException {
+        WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest manifest = repository.load();
+            manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
+            verifyBaselineIfPresent(repository, manifest);
+            if (manifest.state() == WorkspaceState.FLUSHED) {
+                WorkerEndpoint endpoint = new WorkerControlClient().flushed(repository,
+                        manifest.workspaceId());
+                requireFlushResult(repository, manifest, endpoint.release());
+                repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
+                printStatus(repository, manifest, out);
+                printEndpoint(endpoint, out);
+                return;
+            }
+            if (manifest.state() != WorkspaceState.RUNNING) {
+                throw new WorkspaceException("workspace flush requires state RUNNING or "
+                        + "FLUSHED, not " + manifest.state());
+            }
+
+            WorkerEndpoint endpoint;
+            try {
+                endpoint = new WorkerControlClient().flush(repository,
+                        manifest.workspaceId());
+                manifest = transitionToFlushed(repository, lock, manifest, endpoint);
+            } catch (WorkspaceException e) {
+                try {
+                    WorkerEndpoint recorded = WorkerControlClient.readEndpoint(repository,
+                            manifest.workspaceId());
+                    if (recorded.status() == WorkerEndpoint.Status.FLUSHED) {
+                        endpoint = new WorkerControlClient().flushed(repository,
+                                manifest.workspaceId());
+                        manifest = transitionToFlushed(repository, lock, manifest, endpoint);
+                        printStatus(repository, manifest, out);
+                        printEndpoint(endpoint, out);
+                        return;
+                    }
+                } catch (WorkspaceException reconciliationFailure) {
+                    e.addSuppressed(reconciliationFailure);
+                }
+                WorkspaceManifest failed = manifest.fail("Workspace flush failed: "
+                        + e.getMessage());
+                repository.save(lock, failed);
+                throw e;
+            }
+            printStatus(repository, manifest, out);
+            printEndpoint(endpoint, out);
         }
     }
 
@@ -338,6 +416,18 @@ final class WorkspaceCommandRunner {
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             verifyBaselineIfPresent(repository, manifest);
+            if (manifest.state() == WorkspaceState.RUNNING) {
+                WorkerEndpoint recorded = WorkerControlClient.readEndpoint(repository,
+                        manifest.workspaceId());
+                if (recorded.status() == WorkerEndpoint.Status.FLUSHED) {
+                    WorkerEndpoint flushed = new WorkerControlClient().flushed(repository,
+                            manifest.workspaceId());
+                    manifest = transitionToFlushed(repository, lock, manifest, flushed);
+                    printStatus(repository, manifest, out);
+                    printEndpoint(flushed, out);
+                    return;
+                }
+            }
             if (manifest.state() == WorkspaceState.FAILED_RECOVERABLE) {
                 WorkspaceState recoveryTarget = manifest.lastStableState();
                 if (recoveryTarget == WorkspaceState.RUNNING
@@ -346,6 +436,26 @@ final class WorkspaceCommandRunner {
                     WorkerEndpoint endpoint = WorkerControlClient.readEndpoint(repository,
                             manifest.workspaceId());
                     try {
+                        if (endpoint.status() == WorkerEndpoint.Status.FLUSHED
+                                && (recoveryTarget == WorkspaceState.RUNNING
+                                || recoveryTarget == WorkspaceState.FLUSHED)) {
+                            WorkerEndpoint flushed = new WorkerControlClient().flushed(
+                                    repository, manifest.workspaceId());
+                            requireFlushResult(repository, manifest, flushed.release());
+                            if (recoveryTarget == WorkspaceState.FLUSHED) {
+                                repository.deleteOwnedFile(lock,
+                                        Cassandra311SandboxConfig.CQLSHRC_PATH);
+                            }
+                            manifest = manifest.recover();
+                            repository.save(lock, manifest);
+                            if (recoveryTarget == WorkspaceState.RUNNING) {
+                                manifest = transitionToFlushed(repository, lock, manifest,
+                                        flushed);
+                            }
+                            printStatus(repository, manifest, out);
+                            printEndpoint(flushed, out);
+                            return;
+                        }
                         WorkerEndpoint running = new WorkerControlClient().status(repository,
                                 manifest.workspaceId());
                         manifest = manifest.recover();
@@ -412,6 +522,17 @@ final class WorkspaceCommandRunner {
                 out.println("timestamp.highWaterMicros=" + highWater);
             }
         }
+        Path flushPath = repository.resolveInside(WorkspaceFlushResult.WORKSPACE_PATH);
+        boolean flushResultRequired = manifest.state() == WorkspaceState.FLUSHED
+                || manifest.state() == WorkspaceState.EXPORTED;
+        if (flushResultRequired || Files.exists(flushPath, LinkOption.NOFOLLOW_LINKS)) {
+            WorkspaceFlushResult result = requireFlushResult(repository, manifest,
+                    requiredRuntimeValue(manifest, "cassandra.version"));
+            out.println("flush.flushedAt=" + result.flushedAt());
+            out.println("flush.fileCount=" + result.files().size());
+            out.println("flush.deltaFileCount="
+                    + result.deltaFiles(manifest.baselineInventory()).size());
+        }
     }
 
     private static void printEndpoint(WorkerEndpoint endpoint, PrintStream out) {
@@ -468,7 +589,8 @@ final class WorkspaceCommandRunner {
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
         output.put("native.authentication", "cassandra-3.11-cqlshrc-v1");
-        output.put("native.query-guard", "cassandra-3.11-workspace-v3");
+        output.put("native.query-guard", "cassandra-3.11-workspace-v4");
+        output.put("flush.contract", "cassandra-3.11-quiesced-table-v1");
         output.put("import.contract", "cassandra-3.11-refresh-v2");
         return output;
     }
@@ -520,6 +642,48 @@ final class WorkspaceCommandRunner {
                     + "; restart with --timestamp-policy " + recorded);
         }
         return policy;
+    }
+
+    private static WorkspaceManifest transitionToFlushed(WorkspaceRepository repository,
+                                                          WorkspaceLock lock,
+                                                          WorkspaceManifest manifest,
+                                                          WorkerEndpoint endpoint)
+            throws WorkspaceException {
+        if (manifest.state() != WorkspaceState.RUNNING) {
+            throw new WorkspaceException("Cannot record a flush from workspace state "
+                    + manifest.state());
+        }
+        requireFlushResult(repository, manifest, endpoint.release());
+        manifest.sourceInventory().verifyUnchanged();
+        verifySchemaIfPresent(repository, manifest);
+        verifyBaselineIfPresent(repository, manifest);
+        repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
+        WorkspaceManifest flushed = manifest.transitionTo(WorkspaceState.FLUSHED);
+        repository.save(lock, flushed);
+        return flushed;
+    }
+
+    private static WorkspaceFlushResult requireFlushResult(WorkspaceRepository repository,
+                                                            WorkspaceManifest manifest,
+                                                            String release)
+            throws WorkspaceException {
+        WorkspaceFlushResult result = WorkspaceFlushResult.read(repository.root());
+        result.requireIdentity(manifest.workspaceId(), release,
+                requiredImportedSchema(manifest, "keyspace"),
+                requiredImportedSchema(manifest, "table"),
+                requiredImportedSchema(manifest, "table.directory"));
+        result.verifyCompleteInventory(repository.root());
+        result.deltaFiles(manifest.baselineInventory());
+        return result;
+    }
+
+    private static String requiredRuntimeValue(WorkspaceManifest manifest, String key)
+            throws WorkspaceException {
+        String value = manifest.runtimeIdentity().get(key);
+        if (value == null || value.trim().isEmpty()) {
+            throw new WorkspaceException("Workspace runtime identity is missing " + key);
+        }
+        return value;
     }
 
     private static TimestampPolicy parseTimestampPolicy(String recorded)

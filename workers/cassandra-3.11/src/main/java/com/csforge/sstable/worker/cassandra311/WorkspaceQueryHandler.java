@@ -2,6 +2,7 @@ package com.csforge.sstable.worker.cassandra311;
 
 import java.nio.ByteBuffer;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.cql3.BatchQueryOptions;
 import org.apache.cassandra.cql3.CQLStatement;
@@ -35,11 +36,15 @@ public final class WorkspaceQueryHandler implements QueryHandler {
     static final String SOURCE_MAX_TIMESTAMP_PROPERTY =
             "sstable.tools.workspace.source-max-timestamp-micros";
     static final String POLICY_PREFIX = "SSTABLE_TOOLS_POLICY: ";
+    private static volatile WorkspaceQueryHandler active;
 
     private final QueryHandler delegate = QueryProcessor.instance;
     private final String keyspace;
     private final String table;
     private final WorkspaceTimestampAllocator timestampAllocator;
+    private final Object requestMonitor = new Object();
+    private boolean acceptingRequests = true;
+    private int inFlightRequests;
 
     public WorkspaceQueryHandler() {
         keyspace = requiredProperty(KEYSPACE_PROPERTY);
@@ -56,6 +61,7 @@ public final class WorkspaceQueryHandler implements QueryHandler {
         } else {
             throw new IllegalStateException("Unsupported workspace timestamp policy " + policy);
         }
+        active = this;
     }
 
     @Override
@@ -65,11 +71,16 @@ public final class WorkspaceQueryHandler implements QueryHandler {
                                  Map<String, ByteBuffer> customPayload,
                                  long queryStartNanoTime)
             throws RequestExecutionException, RequestValidationException {
-        ParsedStatement.Prepared parsed = QueryProcessor.parseStatement(query, state);
-        requireAllowed(parsed.statement);
-        requireLocalConsistency(options);
-        return delegate.process(query, timestampState(parsed.statement, state, options),
-                options, customPayload, queryStartNanoTime);
+        enterRequest();
+        try {
+            ParsedStatement.Prepared parsed = QueryProcessor.parseStatement(query, state);
+            requireAllowed(parsed.statement);
+            requireLocalConsistency(options);
+            return delegate.process(query, timestampState(parsed.statement, state, options),
+                    options, customPayload, queryStartNanoTime);
+        } finally {
+            exitRequest();
+        }
     }
 
     @Override
@@ -77,9 +88,14 @@ public final class WorkspaceQueryHandler implements QueryHandler {
                                           QueryState state,
                                           Map<String, ByteBuffer> customPayload)
             throws RequestValidationException {
-        ParsedStatement.Prepared parsed = QueryProcessor.parseStatement(query, state);
-        requireAllowed(parsed.statement);
-        return delegate.prepare(query, state, customPayload);
+        enterRequest();
+        try {
+            ParsedStatement.Prepared parsed = QueryProcessor.parseStatement(query, state);
+            requireAllowed(parsed.statement);
+            return delegate.prepare(query, state, customPayload);
+        } finally {
+            exitRequest();
+        }
     }
 
     @Override
@@ -99,10 +115,15 @@ public final class WorkspaceQueryHandler implements QueryHandler {
                                          Map<String, ByteBuffer> customPayload,
                                          long queryStartNanoTime)
             throws RequestExecutionException, RequestValidationException {
-        requireAllowed(statement);
-        requireLocalConsistency(options);
-        return delegate.processPrepared(statement, timestampState(statement, state, options),
-                options, customPayload, queryStartNanoTime);
+        enterRequest();
+        try {
+            requireAllowed(statement);
+            requireLocalConsistency(options);
+            return delegate.processPrepared(statement, timestampState(statement, state, options),
+                    options, customPayload, queryStartNanoTime);
+        } finally {
+            exitRequest();
+        }
     }
 
     @Override
@@ -111,7 +132,64 @@ public final class WorkspaceQueryHandler implements QueryHandler {
                                       BatchQueryOptions options,
                                       Map<String, ByteBuffer> customPayload,
                                       long queryStartNanoTime) throws InvalidRequestException {
-        throw rejected("BATCH statements are disabled");
+        enterRequest();
+        try {
+            throw rejected("BATCH statements are disabled");
+        } finally {
+            exitRequest();
+        }
+    }
+
+    static void quiesceAndAwaitRequests() throws InterruptedException {
+        WorkspaceQueryHandler handler = active;
+        if (handler == null) {
+            throw new IllegalStateException("Workspace query guard is not active");
+        }
+        handler.quiesceAndAwait();
+    }
+
+    static boolean isQuiesced() {
+        WorkspaceQueryHandler handler = active;
+        return handler != null && handler.quiesced();
+    }
+
+    private void enterRequest() throws InvalidRequestException {
+        synchronized (requestMonitor) {
+            if (!acceptingRequests) {
+                throw rejected("workspace is quiesced for flush");
+            }
+            inFlightRequests++;
+        }
+    }
+
+    private void exitRequest() {
+        synchronized (requestMonitor) {
+            inFlightRequests--;
+            if (inFlightRequests == 0) {
+                requestMonitor.notifyAll();
+            }
+        }
+    }
+
+    private void quiesceAndAwait() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(2);
+        synchronized (requestMonitor) {
+            acceptingRequests = false;
+            while (inFlightRequests > 0) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    throw new IllegalStateException("Timed out waiting for workspace requests "
+                            + "to quiesce");
+                }
+                TimeUnit.NANOSECONDS.timedWait(requestMonitor, remaining);
+            }
+        }
+    }
+
+    private boolean quiesced() {
+        synchronized (requestMonitor) {
+            return !acceptingRequests && inFlightRequests == 0;
+        }
     }
 
     private void requireAllowed(CQLStatement statement) throws InvalidRequestException {

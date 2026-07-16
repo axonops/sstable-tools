@@ -29,6 +29,8 @@ public final class WorkerEndpoint {
 
     public enum Status {
         RUNNING,
+        FLUSHING,
+        FLUSHED,
         STOPPING,
         STOPPED,
         FAILED

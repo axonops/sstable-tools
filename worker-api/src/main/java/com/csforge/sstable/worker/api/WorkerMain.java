@@ -169,7 +169,7 @@ public final class WorkerMain {
                         + handle.nativePort());
                 out.flush();
 
-                waitForStop(control, token, handle, endpoint, endpointPath);
+                endpoint = waitForStop(control, token, handle, endpoint, endpointPath);
             }
 
             handle.stop();
@@ -203,11 +203,12 @@ public final class WorkerMain {
         }
     }
 
-    private static void waitForStop(ServerSocket control,
-                                    String token,
-                                    SandboxHandle handle,
-                                    WorkerEndpoint endpoint,
-                                    Path endpointPath) throws Exception {
+    private static WorkerEndpoint waitForStop(ServerSocket control,
+                                              String token,
+                                              SandboxHandle handle,
+                                              WorkerEndpoint endpoint,
+                                              Path endpointPath) throws Exception {
+        WorkerEndpoint current = endpoint;
         while (true) {
             try (Socket client = control.accept()) {
                 client.setSoTimeout(5000);
@@ -215,16 +216,37 @@ public final class WorkerMain {
                 BufferedWriter response = new BufferedWriter(new OutputStreamWriter(
                         client.getOutputStream(), StandardCharsets.US_ASCII));
                 if ((token + " STATUS").equals(request)) {
-                    if (!handle.isRunning()) {
-                        throw new IllegalStateException("Cassandra native transport stopped "
-                                + "unexpectedly");
+                    if (current.status() == WorkerEndpoint.Status.RUNNING) {
+                        if (!handle.isRunning()) {
+                            throw new IllegalStateException("Cassandra native transport stopped "
+                                    + "unexpectedly");
+                        }
+                        writeLine(response, "OK RUNNING");
+                    } else if (current.status() == WorkerEndpoint.Status.FLUSHED) {
+                        if (!handle.isFlushed()) {
+                            throw new IllegalStateException("Cassandra flush state changed "
+                                    + "unexpectedly");
+                        }
+                        writeLine(response, "OK FLUSHED");
+                    } else {
+                        writeLine(response, "ERROR worker-not-ready");
                     }
-                    writeLine(response, "OK RUNNING");
+                } else if ((token + " FLUSH").equals(request)
+                        && current.status() == WorkerEndpoint.Status.RUNNING) {
+                    current = current.withStatus(WorkerEndpoint.Status.FLUSHING,
+                            "quiescing native transport and flushing workspace table");
+                    current.writeAtomically(endpointPath);
+                    handle.flush();
+                    current = current.withStatus(WorkerEndpoint.Status.FLUSHED,
+                            "workspace table flushed and inventoried");
+                    current.writeAtomically(endpointPath);
+                    writeLine(response, "OK FLUSHED");
                 } else if ((token + " STOP").equals(request)) {
-                    endpoint.withStatus(WorkerEndpoint.Status.STOPPING,
-                            "graceful stop requested").writeAtomically(endpointPath);
+                    current = current.withStatus(WorkerEndpoint.Status.STOPPING,
+                            "graceful stop requested");
+                    current.writeAtomically(endpointPath);
                     writeLine(response, "OK STOPPING");
-                    return;
+                    return current;
                 } else {
                     writeLine(response, "ERROR unauthorized-or-unsupported-command");
                 }

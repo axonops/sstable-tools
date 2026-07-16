@@ -86,6 +86,7 @@ public final class BootstrapMain {
     private static boolean isCassandraFreeWorkspaceAction(BootstrapArguments.Action action) {
         return action == BootstrapArguments.Action.WORKSPACE_CREATE
                 || action == BootstrapArguments.Action.WORKSPACE_STATUS
+                || action == BootstrapArguments.Action.WORKSPACE_FLUSH
                 || action == BootstrapArguments.Action.WORKSPACE_STOP
                 || action == BootstrapArguments.Action.WORKSPACE_RECOVER;
     }
@@ -93,7 +94,8 @@ public final class BootstrapMain {
     private static boolean requiresSstableWriteWarning(BootstrapArguments.Action action) {
         return action == BootstrapArguments.Action.WORKSPACE_CREATE
                 || action == BootstrapArguments.Action.WORKSPACE_IMPORT
-                || action == BootstrapArguments.Action.WORKSPACE_START;
+                || action == BootstrapArguments.Action.WORKSPACE_START
+                || action == BootstrapArguments.Action.WORKSPACE_FLUSH;
     }
 
     private static void printSstableWriteWarning(PrintStream err) {
@@ -156,6 +158,7 @@ public final class BootstrapMain {
         out.println("  workspace import <path>  Validate and copy SSTables with native CQL disabled");
         out.println("  workspace start <path>   Start an imported workspace sandbox (3.11 prototype)");
         out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
+        out.println("  workspace flush <path>   Quiesce CQL and flush the workspace table");
         out.println("  workspace stop <path>    Drain and stop a running workspace sandbox");
         out.println("  workspace recover <path> Recover a failed workspace to its last stable state");
         out.println();

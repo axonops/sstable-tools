@@ -143,9 +143,10 @@ The existing executable reader is written to
 workspace artifacts are written below `workers/cassandra-<line>/target/`.
 The shared workspace manifest commands are available in those thin JARs. The
 Cassandra 3.11 artifact also contains schema/header validation, copy-based
-SSTable import, isolated-daemon start, status, stop, and crash recovery.
+SSTable import, isolated-daemon start, guarded table flush, status, stop, and
+crash recovery.
 Its native endpoint now requires an ephemeral workspace credential and guards
-direct and prepared CQL statements. Explicit flush/delta export, live-source
+direct and prepared CQL statements. Delta/snapshot export, live-source
 rejection, and broader fixture coverage remain under development, so this is
 not yet an operator-ready write workflow.
 
@@ -198,6 +199,21 @@ does not replace ordinary stock-cqlsh timestamps. When the imported maximum is
 in the future, use an explicit `USING TIMESTAMP` greater than
 `source.maxTimestampMicros`. Direct and prepared clients that omit both forms
 of timestamp use the durable `after-source` allocator.
+
+After completing mutations, quiesce native transport and flush the exact
+workspace table:
+
+```shell
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  workspace flush ./case
+```
+
+Flush closes all CQL connections, waits for guarded requests, disables
+auto-compaction, performs a blocking table flush, and atomically records the
+complete checksummed table inventory in `state/flush-result.json`. It removes
+the native credential and reports the full and post-import delta file counts.
+The worker remains available only through its authenticated control endpoint
+until `workspace stop`; export publication is not implemented yet.
 
 The schema bundle and SSTable sources must remain outside the workspace and
 unchanged. The importer recognizes Cassandra 3.11 Big `ma`,
@@ -295,7 +311,9 @@ generation disabled. It then forces worker termination, verifies the
 production daemon remains isolated and queryable, reconciles the recorded
 worker PID, removes the stale credential, restarts with a rotated credential,
 verifies workspace commit-log replay and timestamp high-water advancement, and
-drains cleanly without retaining the credential file.
+then quiesces CQL, flushes and inventories generated table files, exercises
+manifest reconciliation after an interrupted controller transition, and drains
+cleanly without retaining the credential file.
 GitHub Actions runs the same profile against a SHA-512-pinned 3.11.19 archive
 and supplies a SHA-256-pinned PyPy 2.7 runtime
 required by that release's `cqlsh` launcher.

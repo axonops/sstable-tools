@@ -2,6 +2,8 @@ package com.csforge.sstable.worker.cassandra311;
 
 import com.csforge.sstable.worker.api.WorkerEndpoint;
 import com.csforge.sstable.workspace.SourceInventory;
+import com.csforge.sstable.workspace.WorkspaceFlushResult;
+import com.csforge.sstable.workspace.WorkspaceManifest;
 import com.csforge.sstable.workspace.WorkspaceRepository;
 import com.csforge.sstable.workspace.WorkspaceState;
 import java.io.ByteArrayOutputStream;
@@ -378,6 +380,46 @@ public class Cassandra311SandboxIT {
                     postRestartMutation.exitCode);
             Assert.assertTrue("Restart reused the after-source timestamp high-water",
                     timestampHighWater(timestampState) > preCrashHighWater);
+
+            CommandResult flushed = run(command(controllerJava(), toolJar,
+                    "workspace", "flush", workspace.toString()));
+            Assert.assertEquals(flushed.output + workerError(workspace),
+                    0, flushed.exitCode);
+            Assert.assertEquals("FLUSHED", property(flushed.output, "workspace.state"));
+            Assert.assertEquals("FLUSHED", property(flushed.output, "worker.status"));
+            Assert.assertTrue(flushed.output,
+                    Integer.parseInt(property(flushed.output, "flush.deltaFileCount")) > 0);
+            Assert.assertFalse("Flush retained native credentials", Files.exists(cqlshrc));
+            WorkspaceManifest flushedManifest = WorkspaceRepository.open(workspace).load();
+            WorkspaceFlushResult flushResult = WorkspaceFlushResult.read(workspace);
+            flushResult.requireIdentity(flushedManifest.workspaceId(), "3.11.19", "blog",
+                    "users", flushedManifest.schemaIdentity().get("table.directory"));
+            flushResult.verifyCompleteInventory(workspace);
+            Assert.assertFalse(flushResult.deltaFiles(
+                    flushedManifest.baselineInventory()).isEmpty());
+
+            CommandResult closedNative = runCqlsh(Arrays.asList(cqlsh.toString(),
+                    nativeEndpoint[0], nativeEndpoint[1], "-e", "SHOW VERSION"));
+            Assert.assertNotEquals("Native CQL remained available after flush:\n"
+                    + closedNative.output, 0, closedNative.exitCode);
+
+            Path manifestPath = workspace.resolve("manifest.json");
+            String committedManifest = new String(Files.readAllBytes(manifestPath),
+                    StandardCharsets.UTF_8);
+            String interruptedManifest = committedManifest.replace(
+                    "\"state\": \"FLUSHED\"", "\"state\": \"RUNNING\"");
+            Assert.assertNotEquals("Flush failure injection did not change manifest state",
+                    committedManifest, interruptedManifest);
+            Files.write(manifestPath, interruptedManifest.getBytes(StandardCharsets.UTF_8));
+            Assert.assertEquals(WorkspaceState.RUNNING,
+                    WorkspaceRepository.open(workspace).load().state());
+            CommandResult flushedStatus = run(command(controllerJava(), toolJar,
+                    "workspace", "status", workspace.toString()));
+            Assert.assertEquals(flushedStatus.output, 0, flushedStatus.exitCode);
+            Assert.assertEquals("FLUSHED",
+                    property(flushedStatus.output, "workspace.state"));
+            Assert.assertEquals("FLUSHED",
+                    property(flushedStatus.output, "worker.status"));
 
             CommandResult stop = run(command(controllerJava(), toolJar,
                     "workspace", "stop", workspace.toString()));

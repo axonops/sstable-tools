@@ -17,6 +17,7 @@ final class BootstrapArguments {
         WORKSPACE_IMPORT,
         WORKSPACE_START,
         WORKSPACE_STATUS,
+        WORKSPACE_FLUSH,
         WORKSPACE_STOP,
         WORKSPACE_RECOVER
     }
@@ -124,6 +125,10 @@ final class BootstrapArguments {
             action = Action.WORKSPACE_STATUS;
             workspacePath = commandPath(command.get(2));
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
+                && "flush".equals(command.get(1))) {
+            action = Action.WORKSPACE_FLUSH;
+            workspacePath = commandPath(command.get(2));
+        } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "stop".equals(command.get(1))) {
             action = Action.WORKSPACE_STOP;
             workspacePath = commandPath(command.get(2));
@@ -139,6 +144,7 @@ final class BootstrapArguments {
         boolean workspaceAction = action == Action.WORKSPACE_CREATE
                 || action == Action.WORKSPACE_IMPORT || action == Action.WORKSPACE_START
                 || action == Action.WORKSPACE_STATUS
+                || action == Action.WORKSPACE_FLUSH
                 || action == Action.WORKSPACE_STOP || action == Action.WORKSPACE_RECOVER;
         if (workspaceAction && action != Action.WORKSPACE_START
                 && action != Action.WORKSPACE_IMPORT

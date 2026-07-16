@@ -7,6 +7,8 @@ import com.csforge.sstable.worker.api.LinkageVerifier;
 import com.csforge.sstable.worker.api.SandboxHandle;
 import com.csforge.sstable.worker.api.SandboxOptions;
 import com.csforge.sstable.worker.api.SandboxRuntimeAdapter;
+import com.csforge.sstable.workspace.WorkspaceFlushResult;
+import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.URI;
@@ -16,12 +18,17 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryHandler;
 import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.db.ColumnFamilyStore;
+import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.db.compaction.CompactionManager;
+import org.apache.cassandra.db.commitlog.CommitLogPosition;
 import org.apache.cassandra.dht.Token;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.net.MessagingService;
@@ -60,7 +67,25 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
             daemon.stop();
             throw new IllegalStateException("Isolated Cassandra worker started internode services");
         }
-        return new Cassandra311SandboxHandle(daemon, options.nativePort());
+        String keyspace = System.getProperty(WorkspaceQueryHandler.KEYSPACE_PROPERTY);
+        String table = System.getProperty(WorkspaceQueryHandler.TABLE_PROPERTY);
+        ColumnFamilyStore cfs = Keyspace.open(keyspace).getColumnFamilyStore(table);
+        cfs.disableAutoCompaction();
+        List<ColumnFamilyStore> workspaceStores = Collections.singletonList(cfs);
+        CompactionManager.instance.interruptCompactionForCFs(workspaceStores, true);
+        CompactionManager.instance.waitForCessation(workspaceStores);
+        if (!cfs.isAutoCompactionDisabled()) {
+            daemon.stop();
+            throw new IllegalStateException("Workspace table auto-compaction remains enabled");
+        }
+        if (CompactionManager.instance.isCompacting(workspaceStores)) {
+            daemon.stop();
+            throw new IllegalStateException("Workspace table compaction did not stop");
+        }
+        String tableDirectory = requireSingleTableDirectory(options.workspaceRoot(), cfs);
+        return new Cassandra311SandboxHandle(daemon, options.nativePort(),
+                options.workspaceRoot(), options.workspaceId(), installedVersion(), keyspace,
+                table, tableDirectory, cfs);
     }
 
     @Override
@@ -126,6 +151,20 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
                 "stopNativeTransport", void.class);
         LinkageVerifier.requirePublicMethod(CassandraDaemon.class,
                 "isNativeTransportRunning", boolean.class);
+        LinkageVerifier.requirePublicMethod(ColumnFamilyStore.class,
+                "disableAutoCompaction", void.class);
+        LinkageVerifier.requirePublicMethod(ColumnFamilyStore.class,
+                "isAutoCompactionDisabled", boolean.class);
+        LinkageVerifier.requirePublicMethod(ColumnFamilyStore.class,
+                "forceBlockingFlush", CommitLogPosition.class);
+        LinkageVerifier.requirePublicStaticField(CompactionManager.class,
+                "instance", CompactionManager.class);
+        LinkageVerifier.requirePublicMethod(CompactionManager.class,
+                "interruptCompactionForCFs", void.class, Iterable.class, boolean.class);
+        LinkageVerifier.requirePublicMethod(CompactionManager.class,
+                "waitForCessation", void.class, Iterable.class);
+        LinkageVerifier.requirePublicMethod(CompactionManager.class,
+                "isCompacting", boolean.class, Iterable.class);
         LinkageVerifier.requirePublicStaticField(QueryProcessor.class,
                 "instance", QueryProcessor.class);
         LinkageVerifier.requireAssignable(QueryHandler.class, QueryProcessor.class);
@@ -258,14 +297,54 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
         }
     }
 
+    private static String requireSingleTableDirectory(Path workspace,
+                                                      ColumnFamilyStore cfs)
+            throws IOException {
+        List<File> directories = cfs.getDirectories().getCFDirectories();
+        if (directories.size() != 1) {
+            throw new IllegalStateException("Workspace table must use exactly one data "
+                    + "directory, not " + directories.size());
+        }
+        Path root = workspace.toRealPath();
+        Path directory = directories.get(0).toPath().toRealPath();
+        if (!directory.startsWith(root) || directory.equals(root)) {
+            throw new IllegalStateException("Workspace table directory escapes workspace: "
+                    + directory);
+        }
+        return root.relativize(directory).toString().replace(File.separatorChar, '/');
+    }
+
     private static final class Cassandra311SandboxHandle implements SandboxHandle {
         private final CassandraDaemon daemon;
         private final int nativePort;
+        private final Path workspace;
+        private final java.util.UUID workspaceId;
+        private final String release;
+        private final String keyspace;
+        private final String table;
+        private final String tableDirectory;
+        private final ColumnFamilyStore cfs;
         private final AtomicBoolean stopped = new AtomicBoolean();
+        private volatile boolean flushed;
 
-        private Cassandra311SandboxHandle(CassandraDaemon daemon, int nativePort) {
+        private Cassandra311SandboxHandle(CassandraDaemon daemon,
+                                          int nativePort,
+                                          Path workspace,
+                                          java.util.UUID workspaceId,
+                                          String release,
+                                          String keyspace,
+                                          String table,
+                                          String tableDirectory,
+                                          ColumnFamilyStore cfs) {
             this.daemon = daemon;
             this.nativePort = nativePort;
+            this.workspace = workspace;
+            this.workspaceId = workspaceId;
+            this.release = release;
+            this.keyspace = keyspace;
+            this.table = table;
+            this.tableDirectory = tableDirectory;
+            this.cfs = cfs;
         }
 
         @Override
@@ -280,7 +359,44 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
 
         @Override
         public boolean isRunning() {
-            return !stopped.get() && daemon.isNativeTransportRunning()
+            return !stopped.get() && !flushed && daemon.isNativeTransportRunning()
+                    && !Gossiper.instance.isEnabled()
+                    && !MessagingService.instance().isListening();
+        }
+
+        @Override
+        public synchronized void flush() throws Exception {
+            if (flushed) {
+                return;
+            }
+            if (stopped.get() || !daemon.isNativeTransportRunning()) {
+                throw new IllegalStateException("Workspace sandbox is not running");
+            }
+            daemon.stopNativeTransport();
+            WorkspaceQueryHandler.quiesceAndAwaitRequests();
+            if (daemon.isNativeTransportRunning()) {
+                throw new IllegalStateException("Native transport did not quiesce");
+            }
+            if (!cfs.isAutoCompactionDisabled()) {
+                throw new IllegalStateException("Workspace table auto-compaction was enabled");
+            }
+            if (CompactionManager.instance.isCompacting(Collections.singletonList(cfs))) {
+                throw new IllegalStateException("Workspace table compaction is still active");
+            }
+            cfs.forceBlockingFlush();
+            WorkspaceFlushResult result = WorkspaceFlushResult.capture(workspace, workspaceId,
+                    release, keyspace, table, tableDirectory);
+            result.writeAtomically(workspace);
+            if (Gossiper.instance.isEnabled() || MessagingService.instance().isListening()) {
+                throw new IllegalStateException("Workspace flush started internode services");
+            }
+            flushed = true;
+        }
+
+        @Override
+        public boolean isFlushed() {
+            return !stopped.get() && flushed && !daemon.isNativeTransportRunning()
+                    && WorkspaceQueryHandler.isQuiesced()
                     && !Gossiper.instance.isEnabled()
                     && !MessagingService.instance().isListening();
         }

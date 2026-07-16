@@ -34,11 +34,42 @@ final class WorkerControlClient {
             throw new WorkspaceException("Worker endpoint is not RUNNING: "
                     + endpoint.status());
         }
-        String response = command(repository, endpoint, "STATUS");
+        String response = command(repository, endpoint, "STATUS", 5000);
         if (!"OK RUNNING".equals(response)) {
             throw new WorkspaceException("Worker status failed: " + response);
         }
         return endpoint;
+    }
+
+    WorkerEndpoint flushed(WorkspaceRepository repository, UUID workspaceId)
+            throws WorkspaceException {
+        WorkerEndpoint endpoint = readEndpoint(repository, workspaceId);
+        if (endpoint.status() != WorkerEndpoint.Status.FLUSHED) {
+            throw new WorkspaceException("Worker endpoint is not FLUSHED: "
+                    + endpoint.status());
+        }
+        String response = command(repository, endpoint, "STATUS", 5000);
+        if (!"OK FLUSHED".equals(response)) {
+            throw new WorkspaceException("Worker flushed status failed: " + response);
+        }
+        return endpoint;
+    }
+
+    WorkerEndpoint flush(WorkspaceRepository repository, UUID workspaceId)
+            throws WorkspaceException {
+        WorkerEndpoint endpoint = readEndpoint(repository, workspaceId);
+        if (endpoint.status() == WorkerEndpoint.Status.FLUSHED) {
+            return flushed(repository, workspaceId);
+        }
+        if (endpoint.status() != WorkerEndpoint.Status.RUNNING) {
+            throw new WorkspaceException("Worker endpoint cannot flush from "
+                    + endpoint.status());
+        }
+        String response = command(repository, endpoint, "FLUSH", stopTimeoutMillis);
+        if (!"OK FLUSHED".equals(response)) {
+            throw new WorkspaceException("Worker flush failed: " + response);
+        }
+        return flushed(repository, workspaceId);
     }
 
     WorkerEndpoint stop(WorkspaceRepository repository, UUID workspaceId)
@@ -47,7 +78,7 @@ final class WorkerControlClient {
         if (endpoint.status() == WorkerEndpoint.Status.STOPPED) {
             return endpoint;
         }
-        String response = command(repository, endpoint, "STOP");
+        String response = command(repository, endpoint, "STOP", 5000);
         if (!"OK STOPPING".equals(response)) {
             throw new WorkspaceException("Worker stop failed: " + response);
         }
@@ -75,12 +106,13 @@ final class WorkerControlClient {
 
     private static String command(WorkspaceRepository repository,
                                   WorkerEndpoint endpoint,
-                                  String operation) throws WorkspaceException {
+                                  String operation,
+                                  long readTimeoutMillis) throws WorkspaceException {
         String token = readToken(repository);
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(endpoint.controlAddress(),
                     endpoint.controlPort()), 3000);
-            socket.setSoTimeout(5000);
+            socket.setSoTimeout((int) Math.min(Integer.MAX_VALUE, readTimeoutMillis));
             OutputStreamWriter output = new OutputStreamWriter(socket.getOutputStream(),
                     StandardCharsets.US_ASCII);
             output.write(token + " " + operation + "\n");

@@ -35,6 +35,9 @@ java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace status ./case
 
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
+  workspace flush ./case
+
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace stop ./case
 
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
@@ -51,16 +54,16 @@ inputs fails.
 parses the schema with installed Cassandra classes, validates every source set,
 copies and loads it with native transport disabled, and records the table and
 baseline identities before committing `IMPORTED`. `workspace status`, `start`,
-`stop`, and `recover` reverify source, schema, and imported baseline hashes.
+`flush`, `stop`, and `recover` reverify source, schema, and imported baseline
+hashes.
 New delta files are allowed; changing or removing a baseline file fails closed.
 
-The bootstrap does not discover or load Cassandra for create, status, stop, or
-recover. Import and start launch a release-specific child JVM against the
-selected installation. Cassandra 3.11 start and live status output include the
-loopback native endpoint, fixed username, and owner-only `state/cqlshrc` path
-needed by the installation's stock cqlsh. A convenience `workspace cqlsh`
-wrapper, explicit flush, export, and destroy remain later implementation
-stages.
+The bootstrap does not discover or load Cassandra for create, status, flush,
+stop, or recover. Import and start launch a release-specific child JVM against
+the selected installation. Cassandra 3.11 start and live status output include
+the loopback native endpoint, fixed username, and owner-only `state/cqlshrc`
+path needed by the installation's stock cqlsh. A convenience `workspace cqlsh`
+wrapper, export, and destroy remain later implementation stages.
 
 ## Owned layout
 
@@ -164,7 +167,7 @@ are the normal source. Operators are responsible for ensuring any other
 directory is quiescent before it is inventoried.
 
 The release worker reads the maximum timestamp from each validated statistics
-component during import. Worker protocol v2 returns the overall maximum, which
+component during import. Worker protocol v3 returns the overall maximum, which
 is persisted under the `schemaIdentity` map key
 `source.max-timestamp-micros`. Import, start, and status compare it with the
 current controller clock and warn while the source remains in the future.
@@ -184,6 +187,17 @@ An explicit CQL `USING TIMESTAMP` or native-protocol timestamp bypasses the
 allocator and is preserved exactly. In particular, stock Cassandra 3.11 cqlsh
 normally sends a protocol timestamp. `workspace status` reports the policy and
 the current durable high-water when present.
+
+`workspace flush` is terminal for the current native session. Worker protocol
+v3 closes native transport, waits for all requests already admitted by the
+query guard, verifies auto-compaction is disabled, and performs a blocking
+flush of only the imported table. The worker then atomically writes the strict,
+owner-only `state/flush-result.json` record before publishing endpoint state
+`FLUSHED`. The record contains workspace/release/table identity, flush time, and
+the complete sorted table inventory with size and SHA-256 for every component.
+The controller requires the imported baseline to remain an exact subset and
+reports the remaining files as the delta. It removes `state/cqlshrc` after a
+successful or reconciled flush.
 
 ## Lifecycle and recovery
 
@@ -220,6 +234,14 @@ proves the exact workspace worker command is gone; missing or ambiguous process
 identity fails closed. Other worker-owned recovery remains unimplemented. A
 worker exit code alone is never sufficient evidence that a transition
 completed.
+
+If the worker and flush record are already `FLUSHED` while the manifest still
+says `RUNNING`, `workspace status`, `flush`, or `recover` verifies the complete
+inventory and finishes the manifest transition. This is the controller-crash
+boundary after the worker committed the result. A missing, changed, mismatched,
+or unsafe flush record fails closed. Starting a stopped workspace deletes the
+old record before reopening native transport; no old flush inventory is reused
+for a later mutation session.
 
 Each Cassandra 3.11 start replaces `state/cqlshrc` with a new random 256-bit
 password for the fixed `sstable_workspace` identity. Graceful stop and

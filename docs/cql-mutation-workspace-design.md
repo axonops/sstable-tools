@@ -463,6 +463,7 @@ sstable-tools workspace create ./case \
 
 sstable-tools workspace import ./case
 sstable-tools workspace start ./case
+sstable-tools workspace flush ./case
 ```
 
 Inside Apache cqlsh:
@@ -480,10 +481,22 @@ SET state = 'OR'
 WHERE user_name = 'frodo';
 ```
 
-The sandbox gives immediate read-your-writes behavior through its memtable. No
-new SSTable is promised until flush/export.
+The sandbox gives immediate read-your-writes behavior through its memtable.
+`workspace flush` is the implemented Cassandra 3.11 boundary that quiesces CQL
+and creates new SSTables; export publication remains separate.
 
 ### 10.4 Flush and export
+
+The Cassandra 3.11 checkpoint implements `workspace flush` separately from
+export. Worker protocol v3 closes native transport, waits for all query-guard
+requests, confirms auto-compaction is disabled, blockingly flushes the exact
+workspace table, and atomically writes `state/flush-result.json` before the
+worker endpoint becomes `FLUSHED`. The strict result records every table file's
+path, size, and SHA-256. The controller verifies that the imported baseline is
+unchanged, classifies every remaining file as delta, removes the CQL credential,
+and can reconcile a `RUNNING` manifest when the worker/result already committed
+`FLUSHED`. Release-level verification and export publication below remain to be
+implemented.
 
 ```shell
 sstable-tools workspace export ./case \
@@ -491,18 +504,14 @@ sstable-tools workspace export ./case \
   --output ./case-output
 ```
 
-Export performs:
+Full export will consume the committed flush result and:
 
-1. stop accepting new native-protocol requests;
-2. drain in-flight requests;
-3. flush the target table and wait for completion;
-4. inventory component sets and identify generations not in the post-import
-   baseline;
-5. run the target release's SSTable verification and a reconciliation scan;
-6. copy complete component sets into a temporary export directory;
-7. write `manifest.json`, `schema.cql`, checksums, runtime identity, and a source
+1. reverify the complete inventory and post-import delta classification;
+2. run the target release's SSTable verification and a reconciliation scan;
+3. copy complete component sets into a temporary export directory;
+4. write `manifest.json`, `schema.cql`, checksums, runtime identity, and a source
    dependency list;
-8. fsync and atomically rename the export directory into place.
+5. fsync and atomically rename the export directory into place.
 
 Export modes are:
 
@@ -572,7 +581,7 @@ in the manifest, while the owner-only high-water state is stored under
 `state/timestamp.properties` and survives stop and crash recovery.
 
 The Cassandra 3.11 checkpoint implements maximum detection, strict worker
-protocol v2 handoff, future-clock warnings, and the durable allocator for both
+protocol v3 handoff, future-clock warnings, and the durable allocator for both
 direct and prepared mutations. Explicit `USING TIMESTAMP` and native-protocol
 timestamps are preserved exactly. Cassandra 3.11's stock cqlsh Python driver
 normally supplies a protocol timestamp, so the allocator correctly treats its
@@ -607,6 +616,9 @@ faithful offline edit.
   log.
 - **Crash after acknowledgement but before flush:** restart and replay, then
   export. The source set remains unchanged.
+- **Crash after worker flush but before manifest update:** status, flush, or
+  recovery verifies the durable full inventory and completes `RUNNING ->
+  FLUSHED`; missing or changed result state fails closed.
 - **Crash during export:** the temporary export is ignored or removed on retry;
   the final output path is absent until atomic publication.
 - **Corrupt input:** validation fails before native transport is enabled.
@@ -620,10 +632,10 @@ faithful offline edit.
 - **Unexpected compaction:** baseline descriptors disappearing is an export
   error unless the user explicitly requested compact-snapshot mode.
 
-The controller takes an exclusive workspace lock. `stop` first disables native
-transport, drains and flushes, then stops the daemon. `destroy` refuses to run
-while a worker is live and never traverses paths outside the canonical workspace
-root.
+The controller takes an exclusive workspace lock. `workspace flush` disables
+native transport and inventories the exact table while the control endpoint
+remains live. `stop` drains and stops the daemon. `destroy` refuses to run while
+a worker is live and never traverses paths outside the canonical workspace root.
 
 ## 13. Control protocol
 
@@ -648,6 +660,13 @@ STOP
 Responses include a stable error code, human message, worker release, and
 optional diagnostic fields. Java stack traces remain in workspace logs and are
 not the controller API.
+
+The Cassandra 3.11 checkpoint currently uses authenticated, line-oriented
+requests over a private loopback TCP endpoint. Protocol v3 implements `STATUS`,
+`FLUSH`, and `STOP`; endpoint and flush-result files provide the strict
+versioned identity and recovery records. The framed JSON/Unix-socket transport
+above remains the target before treating the control protocol as a public,
+cross-release contract.
 
 No source path supplied by a worker is trusted without canonicalization by the
 controller. Authentication material and endpoint files use owner-only

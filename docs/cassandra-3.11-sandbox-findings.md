@@ -111,7 +111,7 @@ evidence of source-cluster consistency.
 
 During import, the matching Cassandra runtime deserializes the `STATS`
 component of every source `Statistics.db` and returns the greatest
-`StatsMetadata.maxTimestamp` through worker protocol v2. The controller records
+`StatsMetadata.maxTimestamp` through worker protocol v3. The controller records
 it as `source.max-timestamp-micros` in the manifest and prints it during import,
 start, and status. When that value remains ahead of the controller clock, the
 tool warns that default wall-clock mutations may not win and tells the operator
@@ -153,6 +153,14 @@ matching process, unreadable identity, non-Linux host, or invalid PID blocks
 recovery. A proven-dead worker recovers as `STOPPED` and may restart; Cassandra
 then replays the private workspace commit log.
 
+`workspace flush` closes native transport, waits for query-guard requests,
+blockingly flushes the imported table, and atomically publishes an owner-only
+full component inventory before endpoint state `FLUSHED`. The controller
+verifies baseline inclusion and delta hashes before committing manifest state.
+If the controller disappears after the worker commits, status, flush, or
+recovery reconciles `RUNNING` to `FLUSHED`. A flushed worker exposes only the
+authenticated control endpoint until stop; its CQL credential is deleted.
+
 ## Automated evidence
 
 The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
@@ -193,15 +201,22 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 10. verify the inserted and updated values are restored by commit-log replay,
     restart without repeating the policy option, and prove the recorded policy
     and timestamp high-water are reused and advanced;
-11. drain the worker to `STOPPED`, prove the native credential was deleted,
-   and verify the production daemon is still queryable before stopping the
-   fixture; and
-12. reject the repository's `mb` fixture because its explicit
+11. issue `workspace flush`, prove native CQL and its credential are removed,
+    wait for all guarded requests, perform a blocking flush of only the target
+    table with auto-compaction disabled, and verify the strict full inventory
+    plus a non-empty post-baseline delta;
+12. inject the controller-crash boundary where the worker/result are `FLUSHED`
+    but the manifest remains `RUNNING`, then prove `workspace status` validates
+    the inventory and completes the transition;
+13. drain the flushed worker to `STOPPED`, prove the native credential remains
+    deleted, and verify the production daemon is still queryable before
+    stopping the fixture; and
+14. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
 
-Unit tests cover strict endpoint/import-result parsing and publication,
+Unit tests cover strict endpoint/import/flush-result parsing and publication,
 authenticated control, native credential parsing and loopback enforcement, the
 fixed role manager, future-source timestamp warnings, private config generation,
 schema capture/CQL splitting, child JVM arguments, lifecycle transitions,
@@ -215,8 +230,10 @@ inventories.
 - Add a compatible future-dated SSTable fixture so CI proves reconciliation
   against a real source cell above wall clock, not only allocator boundaries
   derived from real statistics metadata.
-- Implement flush, baseline/delta classification, export, and post-export
-  validation. The imported baseline is already recorded and reverified.
+- Implement release verification of generated components, atomic delta/snapshot
+  export publication, base-plus-delta reopening, and clean-node import
+  validation. Quiesced table flush, strict full inventory, and baseline/delta
+  classification are implemented.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 
