@@ -48,6 +48,8 @@ import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.ISSTableScanner;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
+import org.apache.cassandra.io.sstable.format.Version;
+import org.apache.cassandra.io.sstable.format.big.BigFormat;
 import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
@@ -57,13 +59,7 @@ import org.apache.cassandra.utils.FBUtilities;
 
 /** Validates immutable source sets, stages copies, and imports them through Cassandra. */
 final class Cassandra311Importer {
-    private static final Set<String> SUPPORTED_VERSIONS = new HashSet<>();
-
-    static {
-        SUPPORTED_VERSIONS.add("ma");
-        SUPPORTED_VERSIONS.add("mb");
-        SUPPORTED_VERSIONS.add("mc");
-    }
+    private static final String EARLIEST_ROW_STORAGE_VERSION = "ma";
 
     private Cassandra311Importer() {
     }
@@ -101,10 +97,9 @@ final class Cassandra311Importer {
                 throw new IllegalStateException("Cassandra did not disable automatic compaction");
             }
 
-            int nextGeneration = nextGeneration(tableDirectory);
             for (int i = 0; i < validated.size(); i++) {
                 importOne(options.workspaceRoot(), cfs, validated.get(i), tableDirectory,
-                        nextGeneration + i, i);
+                        nextGeneration(tableDirectory), i);
             }
             source.verifyUnchanged();
 
@@ -141,17 +136,13 @@ final class Cassandra311Importer {
         List<ValidatedSet> result = new ArrayList<>();
         for (SstableSet set : source.sets()) {
             set.verifyUnchanged();
-            if (!SUPPORTED_VERSIONS.contains(set.formatVersion())
-                    || !"big".equalsIgnoreCase(set.format())) {
-                throw new IllegalArgumentException("Unsupported Cassandra 3.11 SSTable format "
-                        + set.formatVersion() + "-" + set.format());
-            }
+            Version compatibleVersion = requireCompatibleVersion(
+                    set.formatVersion(), set.format());
             Descriptor descriptor = descriptor(set);
             if (!descriptor.isCompatible()
                     || descriptor.formatType != SSTableFormat.Type.BIG
-                    || !set.formatVersion().equals(descriptor.version.toString())) {
-                throw new IllegalArgumentException("Incompatible SSTable descriptor "
-                        + set.descriptor());
+                    || !compatibleVersion.toString().equals(descriptor.version.toString())) {
+                throw unsupportedFormat(set.formatVersion(), set.format());
             }
             Set<Component> components = components(set);
             requireComponent(components, Component.DATA, set);
@@ -185,6 +176,31 @@ final class Cassandra311Importer {
         return result;
     }
 
+    static Version requireCompatibleVersion(String version, String format) {
+        if (!"big".equalsIgnoreCase(format)) {
+            throw unsupportedFormat(version, format);
+        }
+        final Version candidate;
+        try {
+            candidate = BigFormat.instance.getVersion(version);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("Unsupported Cassandra 3.11 SSTable format "
+                    + version + "-" + format, e);
+        }
+        if (candidate == null || !candidate.isCompatible()
+                || version.compareTo(EARLIEST_ROW_STORAGE_VERSION) < 0
+                || version.compareTo(BigFormat.latestVersion.toString()) > 0
+                || !version.equals(candidate.toString())) {
+            throw unsupportedFormat(version, format);
+        }
+        return candidate;
+    }
+
+    private static IllegalArgumentException unsupportedFormat(String version, String format) {
+        return new IllegalArgumentException("Unsupported Cassandra 3.11 SSTable format "
+                + version + "-" + format);
+    }
+
     private static long validateHeader(Descriptor descriptor, CFMetaData metadata)
             throws IOException {
         Map<MetadataType, MetadataComponent> values = descriptor.getMetadataSerializer()
@@ -203,8 +219,10 @@ final class Cassandra311Importer {
         if (header == null
                 || !metadata.getKeyValidator().equals(header.getKeyType())
                 || !metadata.comparator.subtypes().equals(header.getClusteringTypes())
-                || !columnTypes(metadata, true).equals(header.getStaticColumns())
-                || !columnTypes(metadata, false).equals(header.getRegularColumns())) {
+                || !storedColumnsMatch(columnTypes(metadata, true),
+                        header.getStaticColumns())
+                || !storedColumnsMatch(columnTypes(metadata, false),
+                        header.getRegularColumns())) {
             throw new IllegalArgumentException("SSTable serialization header does not exactly "
                     + "match the declared table schema: " + descriptor);
         }
@@ -214,6 +232,17 @@ final class Cassandra311Importer {
                     + descriptor);
         }
         return stats.maxTimestamp;
+    }
+
+    static boolean storedColumnsMatch(Map<ByteBuffer, AbstractType<?>> declared,
+                                      Map<ByteBuffer, AbstractType<?>> stored) {
+        for (Map.Entry<ByteBuffer, AbstractType<?>> column : stored.entrySet()) {
+            AbstractType<?> declaredType = declared.get(column.getKey());
+            if (declaredType == null || !declaredType.equals(column.getValue())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static long maximumSourceTimestamp(List<ValidatedSet> validated) {
@@ -336,18 +365,23 @@ final class Cassandra311Importer {
         }
     }
 
-    private static int nextGeneration(Path directory) throws IOException {
+    static int nextGeneration(Path directory) throws IOException {
         int maximum = 0;
         if (Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
             try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(
-                    directory, "*-Data.db")) {
+                    directory)) {
                 for (Path path : entries) {
+                    String[] parts = path.getFileName().toString().split("-", 4);
+                    if (parts.length != 4) {
+                        continue;
+                    }
                     try {
-                        maximum = Math.max(maximum,
-                                Descriptor.fromFilename(path.toString()).generation);
-                    } catch (RuntimeException ignored) {
-                        throw new IOException("Unexpected SSTable filename in import target: "
-                                + path);
+                        int generation = Integer.parseInt(parts[1]);
+                        if (generation > 0) {
+                            maximum = Math.max(maximum, generation);
+                        }
+                    } catch (NumberFormatException ignored) {
+                        // Non-SSTable files do not reserve a generation.
                     }
                 }
             }

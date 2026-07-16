@@ -334,7 +334,7 @@ its runtime `Version.isCompatible` result is authoritative.
 
 | Target runtime | Accepted input | Default output |
 |---|---|---|
-| Cassandra 3.11 | Big `jb` through `me` | Big `me` |
+| Cassandra 3.11 | Big `ma` through `me` | Big `me` |
 | Cassandra 4.0 | Big `ma` through `nb` | Big `nb` |
 | Cassandra 4.1 | Big `ma` through `nb` | Big `nb` |
 | Cassandra 5.0 | Big `ma` through `oa`; BTI `da` | Big `oa` or BTI `da` |

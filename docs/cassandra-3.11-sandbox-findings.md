@@ -20,7 +20,8 @@ This validates the central architecture proposed in
 `cql-mutation-workspace-design.md`: Cassandra should own CQL mutation and
 storage semantics, with one release-specific worker process per release line.
 It now also validates and imports genuine Cassandra 3.11 Big SSTables before
-native transport is enabled. Export is not implemented yet.
+native transport is enabled, publishes verified exports, and reopens an
+original base plus generated delta in a fresh workspace.
 
 ## Process and classpath contract
 
@@ -224,8 +225,11 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
     idempotently;
 14. drain the exported worker to `STOPPED`, prove the native credential remains
     deleted, and verify the production daemon is still queryable before
-    stopping the fixture; and
-15. reject the repository's `mb` fixture because its explicit
+    stopping the fixture;
+15. import the original `ma` base plus generated latest-format `me` delta into
+    a fresh workspace, re-query all logical values, write timestamps, and TTLs,
+    and prove they match the pre-export state exactly; and
+16. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
@@ -245,10 +249,9 @@ inventories.
 - Add a compatible future-dated SSTable fixture so CI proves reconciliation
   against a real source cell above wall clock, not only allocator boundaries
   derived from real statistics metadata.
-- Implement base-plus-delta reopening and clean-node import validation.
-  Quiesced table flush, strict full inventory, release verification, atomic
-  delta/snapshot publication, and baseline/delta
-  classification are implemented.
+- Implement clean-node import validation and forced-termination coverage at
+  every export boundary. Quiesced flush, release verification, atomic
+  delta/snapshot publication, and base-plus-delta reopening are implemented.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 

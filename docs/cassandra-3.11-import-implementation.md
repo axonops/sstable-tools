@@ -46,19 +46,23 @@ counts, and logical imported row count.
 
 1. Reverify every source component against its captured size and SHA-256.
 2. Install the constrained local schema with native transport still disabled.
-3. Require a compatible Big `ma`, `mb`, or `mc` descriptor and all mandatory
-   components.
+3. Require a row-storage Big descriptor from `ma` through the installed 3.11
+   patch's latest compatible version and all mandatory components.
 4. Deserialize validation and serialization-header metadata.
-5. Compare every explicit validation partitioner, partition-key type,
-   clustering types/order, and exact static/regular column name-to-type maps
-   with the installed table metadata. Cassandra-compatible legacy metadata
-   without a partitioner field proceeds through full digest/read validation.
+5. Compare every explicit validation partitioner, partition-key type, and
+   clustering type/order exactly. Every static/regular column stored in an
+   individual SSTable must have the same name, classification, and type in the
+   declared schema; declared columns absent from that SSTable are valid because
+   Cassandra headers describe the per-SSTable column subset. Compatible
+   metadata without a partitioner field proceeds through full digest/read
+   validation.
 6. Validate the complete data digest, open the SSTable in offline validation
    mode, and consume every partition and row.
 7. Disable automatic compaction and prove that it remains disabled.
 8. Copy every component to workspace-owned staging, `fsync` it, reverify the
-   source, check all destination names for collisions, and atomically publish
-   components into the table directory. Hard links are never used.
+   source, rescan all existing component generations, check all destination
+   names for collisions, and atomically publish components into the table
+   directory. Hard links are never used.
 9. Invoke Cassandra 3.11 `ColumnFamilyStore.loadNewSSTables()`, which assigns a
    live generation and opens the copied set. Exactly one new live SSTable must
    appear per source set.
@@ -84,8 +88,12 @@ retried after recovery. Every rejected import retains native transport as
 disabled and preserves its captured source hashes. A production Cassandra
 daemon using the same installed distribution remains queryable with no worker
 peer. Success paths import the repository's genuine `ma-2-big` and `mc-1-big`
-fixtures. The `ma` path reads its row through stock cqlsh, applies `INSERT` and
-`UPDATE`, kills the worker, restarts it, and verifies private commit-log replay.
+fixtures. The format gate also covers `md` and 3.11.19's latest `me` without a
+stale hardcoded token list. The `ma` path reads its row through stock cqlsh,
+applies `INSERT` and `UPDATE`, kills the worker, restarts it, verifies private
+commit-log replay, exports generated `me` SSTables, and imports the original
+base plus that delta into a fresh workspace. The fresh worker returns identical
+logical values, write timestamps, and TTLs.
 
 ## Manifest baseline
 

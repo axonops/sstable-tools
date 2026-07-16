@@ -144,11 +144,11 @@ workspace artifacts are written below `workers/cassandra-<line>/target/`.
 The shared workspace manifest commands are available in those thin JARs. The
 Cassandra 3.11 artifact also contains schema/header validation, copy-based
 SSTable import, isolated-daemon start, guarded table flush, status, stop, and
-crash recovery.
+crash recovery, release verification, and atomic delta/snapshot export.
 Its native endpoint now requires an ephemeral workspace credential and guards
-direct and prepared CQL statements. Delta/snapshot export, live-source
-rejection, and broader fixture coverage remain under development, so this is
-not yet an operator-ready write workflow.
+direct and prepared CQL statements. Live-source rejection, clean-node import
+validation, export fault injection, and broader fixture coverage remain under
+development, so this is not yet an operator-ready write workflow.
 
 > **DANGER:** Never use SSTable import, mutation, compaction, or export against
 > files owned by a running production Cassandra process. Stop the owning
@@ -233,13 +233,14 @@ overwritten and is adopted after a controller crash only when every path, size,
 and SHA-256 matches the deterministic publication.
 
 The schema bundle and SSTable sources must remain outside the workspace and
-unchanged. The importer recognizes Cassandra 3.11 Big `ma`,
-`mb`, and `mc` descriptors with a complete digest-bearing component set,
-subject to exact schema and partitioner validation. Real successful-import
-coverage currently includes the repository's `ma` and `mc` fixtures. Its `mb`
+unchanged. The importer recognizes Cassandra 3.11 row-storage Big `ma` through
+the installed patch's latest compatible version (`me` in 3.11.19), with a
+complete digest-bearing component set and matching schema and partitioner.
+Real fixture coverage includes `ma` and `mc`; generated `me` delta SSTables are
+re-imported with the `ma` base in a fresh workspace. The repository's `mb`
 fixture declares `LocalPartitioner`, so the integration test proves that it is
-rejected against the sandbox's `Murmur3Partitioner`; a compatible `mb` success
-fixture is still required before claiming full format-range coverage.
+rejected against the sandbox's `Murmur3Partitioner`; compatible `mb` and `md`
+fixtures remain required before claiming full fixture coverage.
 
 The Cassandra 3.11 worker uses a custom native-protocol query handler. It
 allows cqlsh metadata reads, `SELECT` against the imported table, and
@@ -329,8 +330,11 @@ production daemon remains isolated and queryable, reconciles the recorded
 worker PID, removes the stale credential, restarts with a rotated credential,
 verifies workspace commit-log replay and timestamp high-water advancement, and
 then quiesces CQL, flushes and inventories generated table files, exercises
-manifest reconciliation after an interrupted controller transition, and drains
-cleanly without retaining the credential file.
+manifest reconciliation after an interrupted controller transition, runs
+Cassandra's extended verifier, atomically publishes a delta, and drains cleanly
+without retaining the credential file. Finally it imports the original `ma`
+base plus the generated latest-format `me` delta into a fresh workspace and
+proves all values, write timestamps, and TTLs are identical.
 GitHub Actions runs the same profile against a SHA-512-pinned 3.11.19 archive
 and supplies a SHA-256-pinned PyPy 2.7 runtime
 required by that release's `cqlsh` launcher.

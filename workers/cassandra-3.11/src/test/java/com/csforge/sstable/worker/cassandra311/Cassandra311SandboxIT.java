@@ -384,6 +384,8 @@ public class Cassandra311SandboxIT {
                     postRestartMutation.exitCode);
             Assert.assertTrue("Restart reused the after-source timestamp high-water",
                     timestampHighWater(timestampState) > preCrashHighWater);
+            List<String> expectedLogicalState = readLogicalState(cassandraHome,
+                    nativeEndpoint, restartedCredentials);
 
             CommandResult flushed = run(command(controllerJava(), toolJar,
                     "workspace", "flush", workspace.toString()));
@@ -486,6 +488,59 @@ public class Cassandra311SandboxIT {
             Assert.assertFalse(Files.exists(cqlshrc));
             production.assertRunning("Graceful worker stop affected production Cassandra");
             assertProductionIsolated(cqlsh, "after graceful worker stop");
+
+            Path replayWorkspace = temporary.newFolder("delta-replay-workspace").toPath();
+            Path deltaSstables = deltaExport.resolve("sstables");
+            SourceInventory capturedDelta = SourceInventory.capture(
+                    Collections.singletonList(deltaSstables));
+            CommandResult replayCreate = run(command(controllerJava(), toolJar,
+                    "workspace", "create", replayWorkspace.toString(),
+                    "--sstables", source.toString(), "--sstables", deltaSstables.toString(),
+                    "--schema", schema.toString()));
+            Assert.assertEquals(replayCreate.output, 0, replayCreate.exitCode);
+            CommandResult replayImport = run(command(controllerJava(), toolJar,
+                    "--cassandra-home", cassandraHome.toString(),
+                    "--java-home", javaHome.toString(),
+                    "workspace", "import", replayWorkspace.toString()));
+            Assert.assertEquals(replayImport.output + importError(replayWorkspace),
+                    0, replayImport.exitCode);
+            Assert.assertEquals(Long.toString(verification.logicalRows()),
+                    property(replayImport.output, "import.logicalRows"));
+
+            boolean replayWorkerRunning = false;
+            try {
+                CommandResult replayStart = run(command(controllerJava(), toolJar,
+                        "--cassandra-home", cassandraHome.toString(),
+                        "--java-home", javaHome.toString(),
+                        "workspace", "start", replayWorkspace.toString()));
+                Assert.assertEquals(replayStart.output + workerError(replayWorkspace),
+                        0, replayStart.exitCode);
+                replayWorkerRunning = true;
+                String[] replayEndpoint = property(replayStart.output,
+                        "worker.native").split(":", 2);
+                Path replayCqlshrc = Paths.get(property(replayStart.output,
+                        "worker.cqlshrc"));
+                List<String> actualLogicalState = readLogicalState(cassandraHome,
+                        replayEndpoint, readCredentials(replayCqlshrc));
+                Assert.assertEquals("Base plus exported delta changed logical values or cell "
+                        + "timestamps", expectedLogicalState, actualLogicalState);
+
+                CommandResult replayStop = run(command(controllerJava(), toolJar,
+                        "workspace", "stop", replayWorkspace.toString()));
+                Assert.assertEquals(replayStop.output, 0, replayStop.exitCode);
+                replayWorkerRunning = false;
+                Assert.assertEquals(WorkspaceState.STOPPED,
+                        WorkspaceRepository.open(replayWorkspace).load().state());
+            } finally {
+                if (replayWorkerRunning) {
+                    CommandResult replayStop = run(command(controllerJava(), toolJar,
+                            "workspace", "stop", replayWorkspace.toString()));
+                    Assert.assertEquals(replayStop.output, 0, replayStop.exitCode);
+                }
+            }
+            capturedDelta.verifyUnchanged();
+            production.assertRunning("Delta replay affected production Cassandra");
+            assertProductionIsolated(cqlsh, "after base-plus-delta replay");
         } finally {
             try {
                 if (workerRunning && start != null && start.exitCode == 0) {
@@ -582,25 +637,6 @@ public class Cassandra311SandboxIT {
                                                          NativeCredentials credentials,
                                                          long sourceMaxTimestamp)
             throws Exception {
-        Path lib = cassandraHome.resolve("lib");
-        Path driver = singleMatch(lib, "cassandra-driver-internal-only-*.zip");
-        String filename = driver.getFileName().toString();
-        String prefix = "cassandra-driver-internal-only-";
-        String version = filename.substring(prefix.length(), filename.length() - 4);
-
-        List<Path> archives = new ArrayList<>();
-        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(
-                lib, "*.zip")) {
-            for (Path entry : entries) {
-                archives.add(entry);
-            }
-        }
-        archives.sort(Comparator.comparing(Path::toString));
-        StringBuilder pythonPath = new StringBuilder(driver + "/cassandra-driver-" + version);
-        for (Path archive : archives) {
-            pythonPath.append(File.pathSeparatorChar).append(archive);
-        }
-
         String script = "from cassandra.cluster import Cluster\n"
                 + "from cassandra import ConsistencyLevel\n"
                 + "from cassandra.auth import PlainTextAuthProvider\n"
@@ -674,13 +710,74 @@ public class Cassandra311SandboxIT {
                 + "    cluster.shutdown()\n";
         Map<String, String> environment = new TreeMap<>();
         environment.put("PYTHONDONTWRITEBYTECODE", "1");
-        environment.put("PYTHONPATH", pythonPath.toString());
+        environment.put("PYTHONPATH", pythonDriverPath(cassandraHome));
         environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
         environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
         environment.put("SSTABLE_TOOLS_SOURCE_MAX_TS", Long.toString(sourceMaxTimestamp));
         environment.put("SSTABLE_TOOLS_PROTOCOL_TS",
                 Long.toString(sourceMaxTimestamp + 2000L));
         return run(Arrays.asList(python2(), "-c", script, host, port), environment);
+    }
+
+    private static List<String> readLogicalState(Path cassandraHome,
+                                                 String[] endpoint,
+                                                 NativeCredentials credentials)
+            throws Exception {
+        String script = "from cassandra.cluster import Cluster\n"
+                + "from cassandra.auth import PlainTextAuthProvider\n"
+                + "import os, sys\n"
+                + "auth = PlainTextAuthProvider("
+                + "username=os.environ['SSTABLE_TOOLS_TEST_USERNAME'], "
+                + "password=os.environ['SSTABLE_TOOLS_TEST_PASSWORD'])\n"
+                + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]), "
+                + "auth_provider=auth)\n"
+                + "session = cluster.connect()\n"
+                + "rows = session.execute(\"SELECT user_name, password, state, "
+                + "writetime(password) AS password_ts, writetime(state) AS state_ts, "
+                + "ttl(password) AS password_ttl, ttl(state) AS state_ttl "
+                + "FROM blog.users\")\n"
+                + "for row in sorted(rows, key=lambda value: value.user_name):\n"
+                + "    print('STATE|%s|%s|%s|%s|%s|%s|%s' % (row.user_name, "
+                + "row.password, row.state, row.password_ts, row.state_ts, "
+                + "row.password_ttl, row.state_ttl))\n"
+                + "cluster.shutdown()\n";
+        Map<String, String> environment = new TreeMap<>();
+        environment.put("PYTHONDONTWRITEBYTECODE", "1");
+        environment.put("PYTHONPATH", pythonDriverPath(cassandraHome));
+        environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
+        environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
+        CommandResult result = run(Arrays.asList(python2(), "-c", script,
+                endpoint[0], endpoint[1]), environment);
+        Assert.assertEquals(result.output, 0, result.exitCode);
+        List<String> state = new ArrayList<>();
+        for (String line : result.output.split("\\r?\\n")) {
+            if (line.startsWith("STATE|")) {
+                state.add(line);
+            }
+        }
+        Assert.assertEquals(result.output, 4, state.size());
+        return state;
+    }
+
+    private static String pythonDriverPath(Path cassandraHome) throws Exception {
+        Path lib = cassandraHome.resolve("lib");
+        Path driver = singleMatch(lib, "cassandra-driver-internal-only-*.zip");
+        String filename = driver.getFileName().toString();
+        String prefix = "cassandra-driver-internal-only-";
+        String version = filename.substring(prefix.length(), filename.length() - 4);
+        List<Path> archives = new ArrayList<>();
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(
+                lib, "*.zip")) {
+            for (Path entry : entries) {
+                archives.add(entry);
+            }
+        }
+        archives.sort(Comparator.comparing(Path::toString));
+        StringBuilder pythonPath = new StringBuilder(driver + "/cassandra-driver-" + version);
+        for (Path archive : archives) {
+            pythonPath.append(File.pathSeparatorChar).append(archive);
+        }
+        return pythonPath.toString();
     }
 
     private static long timestampHighWater(Path path) throws IOException {
