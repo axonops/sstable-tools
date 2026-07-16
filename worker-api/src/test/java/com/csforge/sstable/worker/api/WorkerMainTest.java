@@ -38,7 +38,7 @@ public class WorkerMainTest {
 
         Assert.assertEquals(0, exitCode);
         Assert.assertTrue(output.toString("UTF-8")
-                .contains("WORKER_READY protocol=1 release=9.9.9"));
+                .contains("WORKER_READY protocol=2 release=9.9.9"));
     }
 
     @Test

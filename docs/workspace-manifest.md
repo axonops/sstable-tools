@@ -128,7 +128,7 @@ controller.
 | `createdAt` | ISO-8601 instant | Initial manifest creation time |
 | `updatedAt` | ISO-8601 instant | Last committed transition time |
 | `sourceInventory` | object | Canonical source descriptors and components |
-| `schemaIdentity` | string map | Bundle hash/source plus imported table identity |
+| `schemaIdentity` | string map | Bundle hash/source, imported table identity, and source timestamp bound |
 | `runtimeIdentity` | string map | Tool, Java, and Cassandra installation identity |
 | `outputIdentity` | string map | Sandbox/import contract and network identity |
 | `baselineInventory` | file array | Checksummed imported descriptor baseline |
@@ -162,6 +162,12 @@ Verification checks type, size, and digest. A mismatch stops create, status, and
 recover with workspace exit code `6`. Cassandra snapshot or backup directories
 are the normal source. Operators are responsible for ensuring any other
 directory is quiescent before it is inventoried.
+
+The release worker reads the maximum timestamp from each validated statistics
+component during import. Worker protocol v2 returns the overall maximum, which
+is persisted under the `schemaIdentity` map key
+`source.max-timestamp-micros`. Import, start, and status compare it with the
+current controller clock and warn while the source remains in the future.
 
 ## Lifecycle and recovery
 

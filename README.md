@@ -212,6 +212,14 @@ silently downgrades `QUORUM`, `ALL`, or another distributed level. Because the
 sandbox keyspace is RF=1, it provides no evidence about source-cluster replica
 acknowledgement, repair, or Paxos behavior.
 
+Import deserializes each source `Statistics.db` with the installed Cassandra
+runtime and records the greatest `StatsMetadata.maxTimestamp` as
+`source.maxTimestampMicros`. Import, start, and status print that value and the
+current controller time. If the source maximum is still in the future, they
+print a warning that default wall-clock writes may not win and identify the
+minimum explicit `USING TIMESTAMP` boundary. Automatic `after-source`
+timestamp allocation remains under development.
+
 The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
 provided/packaged boundary and the build checks that enforce it. GitHub Actions
 runs the complete reactor on Java 17 and tests each adapter on its declared Java
@@ -261,7 +269,8 @@ It first starts a complete production-like daemon on normal ports 7000 and
 format, and destination-collision failures without retaining user data, then
 imports matching `ma` and `mc` fixtures. It starts the thin JAR worker from the
 same installed distribution on private loopback endpoints, reads the imported
-row, proves missing and incorrect credentials are rejected, runs `INSERT` and
+row, records the maximum source timestamp from real Statistics metadata,
+proves missing and incorrect credentials are rejected, runs `INSERT` and
 `UPDATE` with the generated `cqlshrc` and the distribution's `cqlsh`, verifies
 forbidden direct and prepared statements are rejected without data/schema
 changes, exercises direct and prepared paging, accepts `ONE`/`LOCAL_ONE`, and

@@ -2,7 +2,7 @@ package com.csforge.sstable.worker.api;
 
 /** Stable protocol identifiers shared by the controller and release workers. */
 public final class WorkerProtocol {
-    public static final int CURRENT_VERSION = 1;
+    public static final int CURRENT_VERSION = 2;
 
     private WorkerProtocol() {
     }

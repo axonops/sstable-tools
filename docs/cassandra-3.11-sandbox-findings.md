@@ -109,6 +109,15 @@ fail with a policy error. The sandbox keyspace is normalized to RF=1, so a
 distributed acknowledgement level would otherwise be misleading rather than
 evidence of source-cluster consistency.
 
+During import, the matching Cassandra runtime deserializes the `STATS`
+component of every source `Statistics.db` and returns the greatest
+`StatsMetadata.maxTimestamp` through worker protocol v2. The controller records
+it as `source.max-timestamp-micros` in the manifest and prints it during import,
+start, and status. When that value remains ahead of the controller clock, the
+tool warns that default wall-clock mutations may not win and tells the operator
+to use an explicit `USING TIMESTAMP` above the recorded maximum. Automatic
+range-backed `after-source` assignment is not implemented yet.
+
 The sandbox does not load or consult production Cassandra roles. Its custom
 authenticator accepts one fixed `sstable_workspace` identity with a random
 256-bit password generated for each worker start. The owner-only
@@ -149,7 +158,8 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
    and then import it with the matching schema;
 3. verify source hashes, full data digest, serialization header, extended
    Cassandra verification, one logical imported row, disabled auto-compaction,
-   and a baseline inventory while native transport remains disabled;
+   maximum source timestamp, and a baseline inventory while native transport
+   remains disabled;
 4. start the thin JAR against the same SHA-512-pinned 3.11.19 final tarball
    using JDK 8;
 5. verify the worker's native and control endpoints are loopback-only,
@@ -182,15 +192,18 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 
 Unit tests cover strict endpoint/import-result parsing and publication,
 authenticated control, native credential parsing and loopback enforcement, the
-fixed role manager, private config generation, schema capture/CQL splitting,
-child JVM arguments, lifecycle transitions, baseline verification, stale PID
-handling, symlink/path confinement, and source inventories.
+fixed role manager, future-source timestamp warnings, private config generation,
+schema capture/CQL splitting, child JVM arguments, lifecycle transitions,
+baseline verification, stale PID handling, symlink/path confinement, and source
+inventories.
 
 ## Remaining blockers
 
 - Reject live Cassandra data directories and require stable snapshot/backup
   component sets.
-- Add timestamp-policy enforcement to the parsed-statement guard.
+- Add range-backed `after-source` timestamp allocation to the parsed-statement
+  guard. Source maximum detection, manifest recording, and future-clock warnings
+  are implemented.
 - Implement flush, baseline/delta classification, export, and post-export
   validation. The imported baseline is already recorded and reverified.
 - Add real Debian and RPM installation-layout fixtures.

@@ -557,8 +557,9 @@ distributed replica acknowledgement, read repair, or Paxos semantics.
 
 By default, Cassandra assigns the sandbox node's current microsecond timestamp.
 An old source set can contain a future timestamp, in which case an apparently
-successful update may not win. Workspace creation reads the maximum timestamp
-from SSTable statistics and warns when it is ahead of the controller clock.
+successful update may not win. Workspace import reads the maximum timestamp
+from every SSTable statistics component, records it in the manifest, and warns
+at import, start, and status while it remains ahead of the controller clock.
 
 The tool does not silently rewrite user timestamps. The user can supply `USING
 TIMESTAMP`, or opt into `--timestamp-policy after-source`, which configures the
@@ -566,6 +567,12 @@ query guard's timestamp generator to start above both wall clock and the maximum
 source timestamp. The guard injects that timestamp only when neither the CQL
 statement nor the native-protocol request supplies one. The selected policy and
 allocated timestamp range are recorded in the manifest.
+
+The Cassandra 3.11 checkpoint implements maximum detection, strict worker
+protocol v2 handoff, manifest recording, and the future-clock warning. Until
+the range-backed `after-source` allocator is implemented, explicit `USING
+TIMESTAMP` is the only supported way to force a mutation above a future source
+timestamp; the tool never silently rewrites it.
 
 TTL expiry and tombstone visibility are evaluated using the sandbox clock. For
 forensic reproducibility, a later phase may add a supported fixed-time query

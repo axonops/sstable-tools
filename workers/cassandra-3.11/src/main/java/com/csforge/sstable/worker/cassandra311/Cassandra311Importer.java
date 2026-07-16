@@ -50,6 +50,7 @@ import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
+import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
 import org.apache.cassandra.io.sstable.metadata.ValidationMetadata;
 import org.apache.cassandra.io.util.DataIntegrityMetadata;
 import org.apache.cassandra.utils.FBUtilities;
@@ -123,6 +124,7 @@ final class Cassandra311Importer {
                     FBUtilities.getReleaseVersionString(), schema.keyspace(), schema.table(),
                     metadata.cfId, metadata.partitioner.getClass().getCanonicalName(),
                     relativeTable, validated.size(), liveSstables, logicalRows,
+                    maximumSourceTimestamp(validated),
                     cfs.isAutoCompactionDisabled(), false);
         } catch (Exception failure) {
             try {
@@ -157,7 +159,7 @@ final class Cassandra311Importer {
             requireComponent(components, Component.STATS, set);
             requireComponent(components, Component.TOC, set);
             requireComponent(components, descriptor.digestComponent, set);
-            validateHeader(descriptor, metadata);
+            long maxTimestamp = validateHeader(descriptor, metadata);
             try (DataIntegrityMetadata.FileDigestValidator digest =
                          DataIntegrityMetadata.fileDigestValidator(descriptor)) {
                 digest.validate();
@@ -178,16 +180,16 @@ final class Cassandra311Importer {
                 reader.selfRef().release();
             }
             set.verifyUnchanged();
-            result.add(new ValidatedSet(set, descriptor, components));
+            result.add(new ValidatedSet(set, descriptor, components, maxTimestamp));
         }
         return result;
     }
 
-    private static void validateHeader(Descriptor descriptor, CFMetaData metadata)
+    private static long validateHeader(Descriptor descriptor, CFMetaData metadata)
             throws IOException {
         Map<MetadataType, MetadataComponent> values = descriptor.getMetadataSerializer()
                 .deserialize(descriptor, EnumSet.of(
-                        MetadataType.VALIDATION, MetadataType.HEADER));
+                        MetadataType.VALIDATION, MetadataType.STATS, MetadataType.HEADER));
         ValidationMetadata validation = (ValidationMetadata) values.get(
                 MetadataType.VALIDATION);
         String expectedPartitioner = metadata.partitioner.getClass().getCanonicalName();
@@ -206,6 +208,20 @@ final class Cassandra311Importer {
             throw new IllegalArgumentException("SSTable serialization header does not exactly "
                     + "match the declared table schema: " + descriptor);
         }
+        StatsMetadata stats = (StatsMetadata) values.get(MetadataType.STATS);
+        if (stats == null) {
+            throw new IllegalArgumentException("SSTable statistics metadata is missing: "
+                    + descriptor);
+        }
+        return stats.maxTimestamp;
+    }
+
+    private static long maximumSourceTimestamp(List<ValidatedSet> validated) {
+        long maximum = Long.MIN_VALUE;
+        for (ValidatedSet set : validated) {
+            maximum = Math.max(maximum, set.maxTimestamp);
+        }
+        return maximum;
     }
 
     private static Map<ByteBuffer, AbstractType<?>> columnTypes(CFMetaData metadata,
@@ -400,13 +416,16 @@ final class Cassandra311Importer {
         private final SstableSet set;
         private final Descriptor descriptor;
         private final Set<Component> components;
+        private final long maxTimestamp;
 
         private ValidatedSet(SstableSet set,
                              Descriptor descriptor,
-                             Set<Component> components) {
+                             Set<Component> components,
+                             long maxTimestamp) {
             this.set = set;
             this.descriptor = descriptor;
             this.components = components;
+            this.maxTimestamp = maxTimestamp;
         }
     }
 }

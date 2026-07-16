@@ -213,6 +213,12 @@ public class Cassandra311SandboxIT {
                     imported.output.contains("import.table=blog.users"));
             Assert.assertTrue(imported.output,
                     imported.output.contains("import.logicalRows=1"));
+            long sourceMaxTimestamp = Long.parseLong(property(imported.output,
+                    "import.maxTimestampMicros"));
+            Assert.assertTrue(sourceMaxTimestamp > 0);
+            Assert.assertEquals(Long.toString(sourceMaxTimestamp),
+                    WorkspaceRepository.open(workspace).load().schemaIdentity().get(
+                            "source.max-timestamp-micros"));
             production.assertRunning("Worker import affected production Cassandra");
             assertProductionIsolated(cqlsh, "after worker import");
 
@@ -222,6 +228,8 @@ public class Cassandra311SandboxIT {
                     "workspace", "start", workspace.toString()));
             Assert.assertEquals(start.output + workerError(workspace), 0, start.exitCode);
             workerRunning = true;
+            Assert.assertEquals(Long.toString(sourceMaxTimestamp),
+                    property(start.output, "source.maxTimestampMicros"));
             String[] nativeEndpoint = property(start.output, "worker.native").split(":", 2);
             Assert.assertEquals(start.output, 2, nativeEndpoint.length);
             Path cqlshrc = Paths.get(property(start.output, "worker.cqlshrc"));

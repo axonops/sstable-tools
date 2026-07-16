@@ -26,7 +26,8 @@ public final class ImportResult {
     private static final Set<String> FIELDS = new HashSet<>(Arrays.asList(
             "protocol", "workspace.id", "release", "keyspace", "table", "table.id",
             "partitioner", "table.directory", "source.sets", "live.sstables",
-            "logical.rows", "auto.compaction.disabled", "native.transport.started"));
+            "logical.rows", "source.max-timestamp-micros", "auto.compaction.disabled",
+            "native.transport.started"));
 
     private final int protocol;
     private final UUID workspaceId;
@@ -39,6 +40,7 @@ public final class ImportResult {
     private final int sourceSets;
     private final int liveSstables;
     private final long logicalRows;
+    private final long sourceMaxTimestampMicros;
     private final boolean autoCompactionDisabled;
     private final boolean nativeTransportStarted;
 
@@ -53,6 +55,7 @@ public final class ImportResult {
                         int sourceSets,
                         int liveSstables,
                         long logicalRows,
+                        long sourceMaxTimestampMicros,
                         boolean autoCompactionDisabled,
                         boolean nativeTransportStarted) {
         Path relative;
@@ -81,6 +84,7 @@ public final class ImportResult {
         this.sourceSets = sourceSets;
         this.liveSstables = liveSstables;
         this.logicalRows = logicalRows;
+        this.sourceMaxTimestampMicros = sourceMaxTimestampMicros;
         this.autoCompactionDisabled = autoCompactionDisabled;
         this.nativeTransportStarted = nativeTransportStarted;
     }
@@ -140,6 +144,7 @@ public final class ImportResult {
                     required(values, "partitioner"), required(values, "table.directory"),
                     integer(values, "source.sets"), integer(values, "live.sstables"),
                     Long.parseLong(required(values, "logical.rows")),
+                    Long.parseLong(required(values, "source.max-timestamp-micros")),
                     bool(values, "auto.compaction.disabled"),
                     bool(values, "native.transport.started"));
         } catch (IllegalArgumentException e) {
@@ -160,6 +165,8 @@ public final class ImportResult {
         values.setProperty("source.sets", Integer.toString(sourceSets));
         values.setProperty("live.sstables", Integer.toString(liveSstables));
         values.setProperty("logical.rows", Long.toString(logicalRows));
+        values.setProperty("source.max-timestamp-micros",
+                Long.toString(sourceMaxTimestampMicros));
         values.setProperty("auto.compaction.disabled",
                 Boolean.toString(autoCompactionDisabled));
         values.setProperty("native.transport.started", Boolean.toString(nativeTransportStarted));
@@ -249,6 +256,10 @@ public final class ImportResult {
 
     public long logicalRows() {
         return logicalRows;
+    }
+
+    public long sourceMaxTimestampMicros() {
+        return sourceMaxTimestampMicros;
     }
 
     public boolean autoCompactionDisabled() {

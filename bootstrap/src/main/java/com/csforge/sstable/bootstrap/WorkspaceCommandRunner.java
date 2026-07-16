@@ -69,6 +69,7 @@ final class WorkspaceCommandRunner {
             }
             WorkspaceFileInventory.verifyUnchanged(repository.root(),
                     manifest.baselineInventory());
+            requireSourceMaxTimestamp(manifest);
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity());
@@ -173,6 +174,8 @@ final class WorkspaceCommandRunner {
                 schema.put("import.source-sets", Integer.toString(result.sourceSets()));
                 schema.put("import.live-sstables", Integer.toString(result.liveSstables()));
                 schema.put("import.logical-rows", Long.toString(result.logicalRows()));
+                schema.put(SourceTimestampStatus.MANIFEST_KEY,
+                        Long.toString(result.sourceMaxTimestampMicros()));
                 manifest = manifest.withImportResult(schema, baseline)
                         .transitionTo(WorkspaceState.IMPORTED);
                 repository.save(lock, manifest);
@@ -180,6 +183,8 @@ final class WorkspaceCommandRunner {
                 out.println("import.table=" + result.keyspace() + "." + result.table());
                 out.println("import.logicalRows=" + result.logicalRows());
                 out.println("import.liveSstables=" + result.liveSstables());
+                out.println("import.maxTimestampMicros="
+                        + result.sourceMaxTimestampMicros());
             } catch (BootstrapException | WorkspaceException e) {
                 WorkspaceManifest current = repository.load();
                 if (current.state() != WorkspaceState.FAILED_RECOVERABLE) {
@@ -360,7 +365,7 @@ final class WorkspaceCommandRunner {
 
     private static void printStatus(WorkspaceRepository repository,
                                     WorkspaceManifest manifest,
-                                    PrintStream out) {
+                                    PrintStream out) throws WorkspaceException {
         out.println("workspace.path=" + repository.root());
         out.println("workspace.id=" + manifest.workspaceId());
         out.println("workspace.formatVersion=" + manifest.formatVersion());
@@ -379,6 +384,11 @@ final class WorkspaceCommandRunner {
         out.println("source.setCount=" + manifest.sourceInventory().sets().size());
         out.println("source.componentCount=" + manifest.sourceInventory().componentCount());
         out.println("source.integrity=verified");
+        Long sourceMaximum = sourceMaxTimestamp(manifest);
+        if (sourceMaximum != null) {
+            SourceTimestampStatus.print(sourceMaximum,
+                    SourceTimestampStatus.currentTimeMicros(), out);
+        }
     }
 
     private static void printEndpoint(WorkerEndpoint endpoint, PrintStream out) {
@@ -436,7 +446,7 @@ final class WorkspaceCommandRunner {
         output.put("sandbox.network", "loopback-only");
         output.put("native.authentication", "cassandra-3.11-cqlshrc-v1");
         output.put("native.query-guard", "cassandra-3.11-workspace-v2");
-        output.put("import.contract", "cassandra-3.11-refresh-v1");
+        output.put("import.contract", "cassandra-3.11-refresh-v2");
         return output;
     }
 
@@ -447,6 +457,30 @@ final class WorkspaceCommandRunner {
             throw new WorkspaceException("Imported workspace is missing schema " + name);
         }
         return value;
+    }
+
+    private static long requireSourceMaxTimestamp(WorkspaceManifest manifest)
+            throws WorkspaceException {
+        Long value = sourceMaxTimestamp(manifest);
+        if (value == null) {
+            throw new WorkspaceException("Imported workspace source timestamp metadata is "
+                    + "missing");
+        }
+        return value;
+    }
+
+    private static Long sourceMaxTimestamp(WorkspaceManifest manifest)
+            throws WorkspaceException {
+        String value = manifest.schemaIdentity().get(SourceTimestampStatus.MANIFEST_KEY);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new WorkspaceException("Imported workspace source timestamp metadata is "
+                    + "invalid", e);
+        }
     }
 
     private static void verifyBaselineIfPresent(WorkspaceRepository repository,
