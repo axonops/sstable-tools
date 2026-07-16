@@ -387,8 +387,9 @@ public class Cassandra311SandboxIT {
 
     private Path createSchemaBundle(String birthYearType, String tableId)
             throws IOException {
-        Path schema = temporary.newFile("schema-" + birthYearType + "-"
-                + (tableId == null ? "generated" : tableId) + ".cql").toPath();
+        Path schema = Files.createTempFile(temporary.getRoot().toPath(),
+                "schema-" + birthYearType + "-"
+                        + (tableId == null ? "generated" : tableId) + "-", ".cql");
         Files.write(schema, Arrays.asList(
                 "CREATE KEYSPACE blog WITH replication = {'class': "
                         + "'NetworkTopologyStrategy', 'dc1': 3};",
