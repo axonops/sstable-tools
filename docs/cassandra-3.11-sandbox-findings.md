@@ -77,6 +77,36 @@ selection and schema announcements. The adapter installs only local state:
 Readiness and every health check require native transport to be running while
 `Gossiper.isEnabled()` and `MessagingService.isListening()` remain false.
 
+## Native CQL policy boundary
+
+Sandbox startup pins the imported keyspace and table into controller-generated
+JVM properties and requires Cassandra's
+`cassandra.custom_query_handler_class` to name the 3.11
+`WorkspaceQueryHandler`. The adapter refuses to start native transport when the
+handler or target identity is absent. Import-only workers reject those
+properties and never start native transport.
+
+The handler asks Cassandra to parse and prepare each direct or prepared
+statement before classifying it, then delegates only:
+
+- `SELECT` against the one imported table;
+- the `system.local`, `system.peers`, and `system_schema` reads required by
+  stock cqlsh and its bundled driver;
+- `USE`, which changes session state but grants no table access; and
+- non-conditional, non-counter `INSERT` and `UPDATE` against the imported
+  table.
+
+It rejects every batch, `DELETE`, `TRUNCATE`, DDL, conditional mutation,
+counter mutation, system-table write, non-workspace user-table access, and
+unneeded system-table read with a stable `SSTABLE_TOOLS_POLICY` invalid-request
+error. Rejection occurs before delegation to Cassandra's `QueryProcessor`.
+
+The sandbox still uses `AllowAllAuthenticator` and `AllowAllAuthorizer` and
+does not load production Cassandra roles. The query guard, not production RBAC,
+is the current authorization boundary. The endpoint is loopback-only, but
+ephemeral per-workspace native-protocol credentials are still required before
+this becomes an operator-ready write tool.
+
 ## Lifecycle and recovery
 
 The child publishes a strict, atomic endpoint record containing workspace UUID,
@@ -114,14 +144,18 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 6. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
    PyPy 2.7 runtime, disable Python bytecode writes into the Cassandra
    installation, and verify Cassandra 3.11.19/native v4;
-7. read the imported row, then execute `INSERT` and `UPDATE` through native
-   transport;
-8. send `SIGKILL` before flush, verify the production daemon remains queryable
+7. read the imported row, then execute direct and prepared `INSERT`/`UPDATE`
+   operations through native transport;
+8. prove direct `DELETE`, `TRUNCATE`, DDL, batch, conditional update, system
+   write, and unneeded system read requests fail at the policy boundary, prove
+   a prepared `DELETE` fails during prepare, and re-query rows and schema to
+   show no forbidden change occurred;
+9. send `SIGKILL` before flush, verify the production daemon remains queryable
    with no peers, detect worker failure, reconcile the PID, and restart;
-9. verify the inserted and updated values are restored by commit-log replay;
-10. drain the worker to `STOPPED` and verify the production daemon is still
+10. verify the inserted and updated values are restored by commit-log replay;
+11. drain the worker to `STOPPED` and verify the production daemon is still
    queryable before stopping the fixture; and
-11. reject the repository's `mb` fixture because its explicit
+12. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
@@ -135,9 +169,8 @@ handling, symlink/path confinement, and source inventories.
 
 - Reject live Cassandra data directories and require stable snapshot/backup
   component sets.
-- Install a parsed-statement query guard. The prototype currently permits DDL
-  so its test can create a fixture table; the product must allow only the
-  documented read, `INSERT`, and `UPDATE` subset.
+- Add ephemeral per-workspace native-protocol credentials and timestamp-policy
+  enforcement to the parsed-statement guard.
 - Implement flush, baseline/delta classification, export, and post-export
   validation. The imported baseline is already recorded and reverified.
 - Add real Debian and RPM installation-layout fixtures.
@@ -147,4 +180,4 @@ The Cassandra 3.11 vertical prototype covers issue #5's acceptance scope and
 the core import, schema/partitioner rejection, and destination-collision paths
 from issue #6. Issue #6 remains open for compatible `mb`, collection/tuple/UDT,
 compact/dense-table, and broader multi-SSTable fixtures. Issues #7 through #10
-own query guarding, flush/export, and the other release adapters.
+own remaining query-guard policy, flush/export, and the other release adapters.

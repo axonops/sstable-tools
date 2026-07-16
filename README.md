@@ -144,8 +144,10 @@ workspace artifacts are written below `workers/cassandra-<line>/target/`.
 The shared workspace manifest commands are available in those thin JARs. The
 Cassandra 3.11 artifact also contains schema/header validation, copy-based
 SSTable import, isolated-daemon start, status, stop, and crash recovery.
-Statement guarding, explicit flush/delta export, and broader fixture coverage
-remain under development, so this is not yet an operator-ready write workflow.
+Its native endpoint now guards direct and prepared CQL statements, but
+ephemeral workspace authentication, timestamp policy, explicit flush/delta
+export, and broader fixture coverage remain under development, so this is not
+yet an operator-ready write workflow.
 
 > **DANGER:** Never use SSTable import, mutation, compaction, or export against
 > files owned by a running production Cassandra process. Stop the owning
@@ -181,6 +183,16 @@ coverage currently includes the repository's `ma` and `mc` fixtures. Its `mb`
 fixture declares `LocalPartitioner`, so the integration test proves that it is
 rejected against the sandbox's `Murmur3Partitioner`; a compatible `mb` success
 fixture is still required before claiming full format-range coverage.
+
+The Cassandra 3.11 worker uses a custom native-protocol query handler. It
+allows cqlsh metadata reads, `SELECT` against the imported table, and
+non-conditional `INSERT`/`UPDATE` against that table. It rejects `DELETE`,
+`TRUNCATE`, DDL, batches, LWT, counters, other user tables, system writes, and
+unneeded system reads before Cassandra executes them. Production roles are not
+loaded: the sandbox currently uses Cassandra's allow-all authentication and
+authorization behind this statement guard. Treat the dynamically allocated
+loopback endpoint as local sensitive access until per-workspace credentials are
+implemented.
 
 The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
 provided/packaged boundary and the build checks that enforce it. GitHub Actions
@@ -231,11 +243,13 @@ It first starts a complete production-like daemon on normal ports 7000 and
 format, and destination-collision failures without retaining user data, then
 imports matching `ma` and `mc` fixtures. It starts the thin JAR worker from the
 same installed distribution on private loopback endpoints, reads the imported
-row, runs `INSERT` and `UPDATE` with the distribution's `cqlsh`, forces worker
-termination, verifies the production daemon remains isolated and queryable,
-reconciles the recorded worker PID, restarts, verifies workspace commit-log
-replay, and drains cleanly. GitHub Actions runs the same profile against a
-SHA-512-pinned 3.11.19 archive and supplies a SHA-256-pinned PyPy 2.7 runtime
+row, runs `INSERT` and `UPDATE` with the distribution's `cqlsh`, verifies
+forbidden direct and prepared statements are rejected without data/schema
+changes, forces worker termination, verifies the production daemon remains
+isolated and queryable, reconciles the recorded worker PID, restarts, verifies
+workspace commit-log replay, and drains cleanly. GitHub Actions runs the same
+profile against a SHA-512-pinned 3.11.19 archive and supplies a SHA-256-pinned
+PyPy 2.7 runtime
 required by that release's `cqlsh` launcher.
 
 Compatibility is deliberately conservative until broader installed-package

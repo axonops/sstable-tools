@@ -147,6 +147,7 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
                 || System.getProperty("com.sun.management.jmxremote.port") != null) {
             throw new IllegalStateException("JMX must be disabled for the isolated worker");
         }
+        requireQueryGuard(startNativeTransport);
         String configured = System.getProperty("cassandra.config");
         if (configured == null) {
             throw new IllegalStateException("cassandra.config is required");
@@ -159,6 +160,23 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
             }
         } catch (IOException | IllegalArgumentException e) {
             throw new IllegalStateException("Invalid cassandra.config " + configured, e);
+        }
+    }
+
+    private static void requireQueryGuard(boolean startNativeTransport) {
+        String handler = System.getProperty(WorkspaceQueryHandler.HANDLER_PROPERTY);
+        String keyspace = System.getProperty(WorkspaceQueryHandler.KEYSPACE_PROPERTY);
+        String table = System.getProperty(WorkspaceQueryHandler.TABLE_PROPERTY);
+        if (startNativeTransport) {
+            if (!WorkspaceQueryHandler.class.getName().equals(handler)
+                    || keyspace == null || keyspace.isEmpty()
+                    || table == null || table.isEmpty()) {
+                throw new IllegalStateException("Native transport requires the workspace query "
+                        + "guard and an imported table target");
+            }
+        } else if (handler != null || keyspace != null || table != null) {
+            throw new IllegalStateException("Import workers must not expose a native query "
+                    + "handler target");
         }
     }
 

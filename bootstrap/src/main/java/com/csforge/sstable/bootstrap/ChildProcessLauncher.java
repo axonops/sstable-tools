@@ -72,8 +72,11 @@ public final class ChildProcessLauncher {
     public WorkerEndpoint startSandbox(CassandraInstallation installation,
                                        Path workspace,
                                        UUID workspaceId,
-                                       int nativePort) throws BootstrapException {
-        List<String> command = sandboxCommand(installation, workspace, workspaceId, nativePort);
+                                       int nativePort,
+                                       String keyspace,
+                                       String table) throws BootstrapException {
+        List<String> command = sandboxCommand(installation, workspace, workspaceId, nativePort,
+                keyspace, table);
         ProcessBuilder builder = new ProcessBuilder(command);
         Path logs = prepareOwnedDirectory(workspace, "logs");
         Path runtime = prepareOwnedDirectory(workspace, "runtime");
@@ -212,9 +215,16 @@ public final class ChildProcessLauncher {
     List<String> sandboxCommand(CassandraInstallation installation,
                                 Path workspace,
                                 UUID workspaceId,
-                                int nativePort) throws BootstrapException {
+                                int nativePort,
+                                String keyspace,
+                                String table) throws BootstrapException {
         Path configuration = workspace.resolve(Cassandra311SandboxConfig.CONFIG_PATH);
         List<String> command = workerCommand(installation, workspace, configuration, true);
+        command.add("-Dcassandra.custom_query_handler_class="
+                + "com.csforge.sstable.worker.cassandra311.WorkspaceQueryHandler");
+        command.add("-Dsstable.tools.workspace.keyspace=" + requireTarget(keyspace,
+                "keyspace"));
+        command.add("-Dsstable.tools.workspace.table=" + requireTarget(table, "table"));
         command.add(WORKER_MAIN);
         command.add("--sandbox");
         command.add("--expected-version");
@@ -226,6 +236,14 @@ public final class ChildProcessLauncher {
         command.add("--native-port");
         command.add(Integer.toString(nativePort));
         return Collections.unmodifiableList(command);
+    }
+
+    private static String requireTarget(String value, String name) throws BootstrapException {
+        if (value == null || value.isEmpty() || value.indexOf('\0') >= 0) {
+            throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
+                    "Imported workspace " + name + " is missing or invalid");
+        }
+        return value;
     }
 
     List<String> importCommand(CassandraInstallation installation,

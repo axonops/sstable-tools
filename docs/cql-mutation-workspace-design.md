@@ -522,6 +522,13 @@ the memtable and eventually a new SSTable; unchanged cells remain in the base
 SSTables. Reads merge both sets and choose winners using Cassandra's normal
 reconciliation rules.
 
+The implemented Cassandra 3.11 checkpoint installs this guard through
+`cassandra.custom_query_handler_class`. It parses both direct and prepared
+requests with Cassandra before classification and uses a stable
+`SSTABLE_TOOLS_POLICY` invalid-request error for rejections. Production RBAC is
+not copied into the sandbox; ephemeral per-workspace authentication remains a
+required issue #7 deliverable.
+
 ### 11.2 Timestamp and TTL behavior
 
 By default, Cassandra assigns the sandbox node's current microsecond timestamp.

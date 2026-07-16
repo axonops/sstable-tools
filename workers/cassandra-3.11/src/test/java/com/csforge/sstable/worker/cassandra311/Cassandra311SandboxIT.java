@@ -5,6 +5,7 @@ import com.csforge.sstable.workspace.SourceInventory;
 import com.csforge.sstable.workspace.WorkspaceRepository;
 import com.csforge.sstable.workspace.WorkspaceState;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -13,7 +14,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
@@ -244,6 +248,30 @@ public class Cassandra311SandboxIT {
                             + "WHERE user_name = 'frodo';"));
             Assert.assertEquals(mutate.output, 0, mutate.exitCode);
 
+            assertPolicyRejected(cqlsh, nativeEndpoint,
+                    "DELETE FROM blog.users WHERE user_name = 'sam';");
+            assertPolicyRejected(cqlsh, nativeEndpoint,
+                    "TRUNCATE blog.users;");
+            assertPolicyRejected(cqlsh, nativeEndpoint,
+                    "CREATE TABLE blog.forbidden (id text PRIMARY KEY);");
+            assertPolicyRejected(cqlsh, nativeEndpoint,
+                    "BEGIN BATCH INSERT INTO blog.users "
+                            + "(user_name, password) VALUES ('batch', 'forbidden'); "
+                            + "APPLY BATCH;");
+            assertPolicyRejected(cqlsh, nativeEndpoint,
+                    "UPDATE blog.users SET password = 'conditional' "
+                            + "WHERE user_name = 'frodo' IF password = 'after';");
+            assertPolicyRejected(cqlsh, nativeEndpoint,
+                    "UPDATE system.local SET cluster_name = 'compromised' "
+                            + "WHERE key = 'local';");
+            assertPolicyRejected(cqlsh, nativeEndpoint,
+                    "SELECT * FROM system.batchlog;");
+
+            CommandResult prepared = runPreparedPolicyCheck(cassandraHome,
+                    nativeEndpoint[0], nativeEndpoint[1]);
+            Assert.assertEquals(prepared.output, 0, prepared.exitCode);
+            assertGuardedState(cqlsh, nativeEndpoint);
+
             CommandResult status = run(command(controllerJava(), toolJar,
                     "workspace", "status", workspace.toString()));
             Assert.assertEquals(status.output, 0, status.exitCode);
@@ -294,7 +322,7 @@ public class Cassandra311SandboxIT {
                     cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
                     "SELECT user_name, password FROM blog.users;"));
             Assert.assertEquals(replayed.output, 0, replayed.exitCode);
-            Assert.assertTrue(replayed.output, replayed.output.contains("after"));
+            Assert.assertTrue(replayed.output, replayed.output.contains("prepared"));
             Assert.assertTrue(replayed.output, replayed.output.contains("inserted"));
             Assert.assertTrue(replayed.output, replayed.output.contains("2 rows"));
 
@@ -362,6 +390,108 @@ public class Cassandra311SandboxIT {
         Assert.assertNotEquals(Cassandra311ProductionFixture.NATIVE_PORT,
                 endpoint.controlPort());
         Assert.assertNotEquals(endpoint.nativePort(), endpoint.controlPort());
+    }
+
+    private static void assertPolicyRejected(Path cqlsh,
+                                             String[] endpoint,
+                                             String cql) throws Exception {
+        CommandResult rejected = runCqlsh(Arrays.asList(cqlsh.toString(), endpoint[0],
+                endpoint[1], "-e", cql));
+        Assert.assertNotEquals("Forbidden CQL unexpectedly succeeded:\n" + cql + "\n"
+                + rejected.output, 0, rejected.exitCode);
+        Assert.assertTrue(rejected.output, rejected.output.contains("SSTABLE_TOOLS_POLICY"));
+    }
+
+    private static void assertGuardedState(Path cqlsh, String[] endpoint) throws Exception {
+        CommandResult rows = runCqlsh(Arrays.asList(cqlsh.toString(), endpoint[0], endpoint[1],
+                "-e", "SELECT user_name, password FROM blog.users;"));
+        Assert.assertEquals(rows.output, 0, rows.exitCode);
+        Assert.assertTrue(rows.output, rows.output.contains("frodo"));
+        Assert.assertTrue(rows.output, rows.output.contains("prepared"));
+        Assert.assertTrue(rows.output, rows.output.contains("sam"));
+        Assert.assertFalse(rows.output, rows.output.contains("batch"));
+        Assert.assertTrue(rows.output, rows.output.contains("2 rows"));
+
+        CommandResult schema = runCqlsh(Arrays.asList(cqlsh.toString(), endpoint[0],
+                endpoint[1], "-e", "SELECT table_name FROM system_schema.tables "
+                        + "WHERE keyspace_name = 'blog';"));
+        Assert.assertEquals(schema.output, 0, schema.exitCode);
+        Assert.assertTrue(schema.output, schema.output.contains("users"));
+        Assert.assertFalse(schema.output, schema.output.contains("forbidden"));
+        Assert.assertTrue(schema.output, schema.output.contains("1 rows"));
+    }
+
+    private static CommandResult runPreparedPolicyCheck(Path cassandraHome,
+                                                         String host,
+                                                         String port) throws Exception {
+        Path lib = cassandraHome.resolve("lib");
+        Path driver = singleMatch(lib, "cassandra-driver-internal-only-*.zip");
+        String filename = driver.getFileName().toString();
+        String prefix = "cassandra-driver-internal-only-";
+        String version = filename.substring(prefix.length(), filename.length() - 4);
+
+        List<Path> archives = new ArrayList<>();
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(
+                lib, "*.zip")) {
+            for (Path entry : entries) {
+                archives.add(entry);
+            }
+        }
+        archives.sort(Comparator.comparing(Path::toString));
+        StringBuilder pythonPath = new StringBuilder(driver + "/cassandra-driver-" + version);
+        for (Path archive : archives) {
+            pythonPath.append(File.pathSeparatorChar).append(archive);
+        }
+
+        String script = "from cassandra.cluster import Cluster\n"
+                + "import sys\n"
+                + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]))\n"
+                + "session = cluster.connect()\n"
+                + "allowed = session.prepare("
+                + "\"UPDATE blog.users SET password = ? WHERE user_name = ?\")\n"
+                + "session.execute(allowed, ('prepared', 'frodo'))\n"
+                + "try:\n"
+                + "    session.prepare(\"DELETE FROM blog.users WHERE user_name = ?\")\n"
+                + "    raise AssertionError('forbidden prepared DELETE succeeded')\n"
+                + "except Exception as error:\n"
+                + "    if 'SSTABLE_TOOLS_POLICY' not in str(error):\n"
+                + "        raise\n"
+                + "finally:\n"
+                + "    cluster.shutdown()\n";
+        Map<String, String> environment = new TreeMap<>();
+        environment.put("PYTHONDONTWRITEBYTECODE", "1");
+        environment.put("PYTHONPATH", pythonPath.toString());
+        return run(Arrays.asList(python2(), "-c", script, host, port), environment);
+    }
+
+    private static Path singleMatch(Path directory, String glob) throws IOException {
+        List<Path> matches = new ArrayList<>();
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(
+                directory, glob)) {
+            for (Path entry : entries) {
+                matches.add(entry);
+            }
+        }
+        if (matches.size() != 1) {
+            throw new IOException("Expected one " + glob + " below " + directory
+                    + " but found " + matches);
+        }
+        return matches.get(0);
+    }
+
+    private static String python2() throws Exception {
+        for (String candidate : Arrays.asList("python", "python2.7", "pypy2.7", "pypy2")) {
+            try {
+                CommandResult version = run(Arrays.asList(candidate, "-c",
+                        "import sys; sys.exit(0 if sys.version_info[:2] == (2, 7) else 1)"));
+                if (version.exitCode == 0) {
+                    return candidate;
+                }
+            } catch (IOException unavailable) {
+                // Try the next common Python 2.7 executable name.
+            }
+        }
+        throw new IOException("A Python 2.7 interpreter is required for prepared CQL tests");
     }
 
     private Path createSstableSource(Path fixtureDirectory) throws IOException {

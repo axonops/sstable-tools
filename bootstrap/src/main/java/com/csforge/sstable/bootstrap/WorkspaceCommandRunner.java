@@ -83,7 +83,9 @@ final class WorkspaceCommandRunner {
             WorkerEndpoint endpoint = null;
             try {
                 endpoint = new ChildProcessLauncher().startSandbox(installation,
-                        repository.root(), manifest.workspaceId(), nativePort);
+                        repository.root(), manifest.workspaceId(), nativePort,
+                        requiredImportedSchema(manifest, "keyspace"),
+                        requiredImportedSchema(manifest, "table"));
                 new WorkerControlClient().status(repository, manifest.workspaceId());
                 manifest.sourceInventory().verifyUnchanged();
                 WorkspaceFileInventory.verifyUnchanged(repository.root(),
@@ -415,8 +417,18 @@ final class WorkspaceCommandRunner {
         Map<String, String> output = new LinkedHashMap<>();
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
+        output.put("native.query-guard", "cassandra-3.11-workspace-v1");
         output.put("import.contract", "cassandra-3.11-refresh-v1");
         return output;
+    }
+
+    private static String requiredImportedSchema(WorkspaceManifest manifest, String name)
+            throws WorkspaceException {
+        String value = manifest.schemaIdentity().get(name);
+        if (value == null || value.isEmpty()) {
+            throw new WorkspaceException("Imported workspace is missing schema " + name);
+        }
+        return value;
     }
 
     private static void verifyBaselineIfPresent(WorkspaceRepository repository,
