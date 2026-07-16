@@ -95,9 +95,10 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 1. start a complete production-like Cassandra daemon on loopback storage port
    7000 and native port 9042, with gossip and internode messaging enabled and
    every mutable path redirected to a private fixture root;
-2. verify that production is queryable and has no peers, reject a genuine `ma`
-   fixture against a mismatched schema without retaining table data, exercise
-   collision cleanup and retry, and then import it with the matching schema;
+2. verify that production is queryable and has no peers, reject genuine `ma`
+   fixture copies for schema, digest, required-index, and unsupported-format
+   failures without retaining table data, exercise collision cleanup and retry,
+   and then import it with the matching schema;
 3. verify source hashes, full data digest, serialization header, extended
    Cassandra verification, one logical imported row, disabled auto-compaction,
    and a baseline inventory while native transport remains disabled;
@@ -139,7 +140,6 @@ handling, symlink/path confinement, and source inventories.
 
 The Cassandra 3.11 vertical prototype covers issue #5's acceptance scope and
 the core import, schema/partitioner rejection, and destination-collision paths
-from issue #6. Issue #6 remains open for compatible `mb`, checksum,
-missing-component, unsupported-format, collection/UDT, and compact-table
-fixtures. Issues #7 through #10 own query guarding, flush/export, and the other
-release adapters.
+from issue #6. Issue #6 remains open for compatible `mb`, collection/tuple/UDT,
+compact/dense-table, and broader multi-SSTable fixtures. Issues #7 through #10
+own query guarding, flush/export, and the other release adapters.

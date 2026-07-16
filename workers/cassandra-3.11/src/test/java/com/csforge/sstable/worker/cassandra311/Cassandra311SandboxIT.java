@@ -74,6 +74,44 @@ public class Cassandra311SandboxIT {
             capturedSource.verifyUnchanged();
             production.assertRunning("Rejected worker import affected production Cassandra");
 
+            Path corruptSource = createSstableSource(fixtureDirectory,
+                    "corrupt-source", "ma-2-big-");
+            Path corruptData = corruptSource.resolve("ma-2-big-Data.db");
+            byte[] corruptBytes = Files.readAllBytes(corruptData);
+            corruptBytes[corruptBytes.length / 2] ^= 0x01;
+            Files.write(corruptData, corruptBytes);
+            SourceInventory capturedCorrupt = SourceInventory.capture(
+                    Collections.singletonList(corruptSource));
+            assertRejectedImport(toolJar, cassandraHome, javaHome,
+                    "corrupt-workspace", corruptSource, capturedCorrupt,
+                    createSchemaBundle("bigint"), "Corrupted SSTable :");
+
+            Path missingIndexSource = createSstableSource(fixtureDirectory,
+                    "missing-index-source", "ma-2-big-");
+            Path missingIndexToc = missingIndexSource.resolve("ma-2-big-TOC.txt");
+            java.util.List<String> components = Files.readAllLines(
+                    missingIndexToc, StandardCharsets.UTF_8);
+            Assert.assertTrue("Fixture TOC does not declare Index.db",
+                    components.remove("Index.db"));
+            Files.write(missingIndexToc, components, StandardCharsets.UTF_8);
+            Files.delete(missingIndexSource.resolve("ma-2-big-Index.db"));
+            SourceInventory capturedMissingIndex = SourceInventory.capture(
+                    Collections.singletonList(missingIndexSource));
+            assertRejectedImport(toolJar, cassandraHome, javaHome,
+                    "missing-index-workspace", missingIndexSource, capturedMissingIndex,
+                    createSchemaBundle("bigint"), "missing required component Index.db");
+
+            Path unsupportedSource = createSstableSource(fixtureDirectory,
+                    "unsupported-source", "ma-2-big-");
+            renameDescriptor(unsupportedSource, "ma-2-big-", "zz-2-big-");
+            SourceInventory capturedUnsupported = SourceInventory.capture(
+                    Collections.singletonList(unsupportedSource));
+            assertRejectedImport(toolJar, cassandraHome, javaHome,
+                    "unsupported-workspace", unsupportedSource, capturedUnsupported,
+                    createSchemaBundle("bigint"),
+                    "Unsupported Cassandra 3.11 SSTable format zz-big");
+            production.assertRunning("Failure-matrix imports affected production Cassandra");
+
             String collisionTableId = "11111111-1111-1111-1111-111111111111";
             Path collisionWorkspace = temporary.newFolder("collision-workspace").toPath();
             Path collisionSchema = createSchemaBundle("bigint", collisionTableId);
@@ -363,6 +401,57 @@ public class Cassandra311SandboxIT {
                 ")" + (tableId == null ? ";" : " WITH id = '" + tableId + "';")),
                 StandardCharsets.UTF_8);
         return schema;
+    }
+
+    private void assertRejectedImport(Path toolJar,
+                                      Path cassandraHome,
+                                      Path javaHome,
+                                      String workspaceName,
+                                      Path source,
+                                      SourceInventory captured,
+                                      Path schema,
+                                      String expectedError) throws Exception {
+        Path workspace = temporary.newFolder(workspaceName).toPath();
+        CommandResult create = run(command(controllerJava(), toolJar,
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString(), "--schema", schema.toString()));
+        Assert.assertEquals(create.output, 0, create.exitCode);
+
+        CommandResult imported = run(command(controllerJava(), toolJar,
+                "--cassandra-home", cassandraHome.toString(),
+                "--java-home", javaHome.toString(),
+                "workspace", "import", workspace.toString()));
+
+        Assert.assertNotEquals(imported.output, 0, imported.exitCode);
+        Assert.assertEquals(WorkspaceState.FAILED_RECOVERABLE,
+                WorkspaceRepository.open(workspace).load().state());
+        Assert.assertEquals("Rejected import left user data components", 0,
+                countDataComponents(workspace.resolve("data/blog")));
+        Assert.assertTrue(importError(workspace),
+                importError(workspace).contains(expectedError));
+        Assert.assertTrue(new String(Files.readAllBytes(
+                workspace.resolve("runtime/cassandra.yaml")), StandardCharsets.UTF_8)
+                .contains("start_native_transport: false"));
+        Assert.assertFalse(Files.exists(workspace.resolve("state/worker.properties")));
+        captured.verifyUnchanged();
+    }
+
+    private static void renameDescriptor(Path source,
+                                         String previousPrefix,
+                                         String nextPrefix) throws IOException {
+        Map<Path, Path> renames = new TreeMap<>();
+        try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(source)) {
+            for (Path entry : entries) {
+                String name = entry.getFileName().toString();
+                if (name.startsWith(previousPrefix)) {
+                    renames.put(entry, source.resolve(nextPrefix
+                            + name.substring(previousPrefix.length())));
+                }
+            }
+        }
+        for (Map.Entry<Path, Path> rename : renames.entrySet()) {
+            Files.move(rename.getKey(), rename.getValue());
+        }
     }
 
     private Path createCompositeSchemaBundle() throws IOException {

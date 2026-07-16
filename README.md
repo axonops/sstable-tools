@@ -221,10 +221,11 @@ mvn clean verify -pl workers/cassandra-3.11 -am \
 ```
 
 It first starts a complete production-like daemon on normal ports 7000 and
-9042, rejects a schema-mismatched real SSTable fixture, imports a matching
-`ma` fixture, and starts the thin JAR worker from the same installed
-distribution on private loopback endpoints. The test reads the imported row,
-runs `INSERT` and `UPDATE` with the distribution's `cqlsh`, forces worker
+9042, rejects schema, partitioner, digest, required-component, unsupported
+format, and destination-collision failures without retaining user data, then
+imports matching `ma` and `mc` fixtures. It starts the thin JAR worker from the
+same installed distribution on private loopback endpoints, reads the imported
+row, runs `INSERT` and `UPDATE` with the distribution's `cqlsh`, forces worker
 termination, verifies the production daemon remains isolated and queryable,
 reconciles the recorded worker PID, restarts, verifies workspace commit-log
 replay, and drains cleanly. GitHub Actions runs the same profile against a

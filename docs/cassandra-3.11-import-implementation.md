@@ -77,14 +77,15 @@ directory; Cassandra system-schema files remain available for an idempotent
 retry. The controller records `FAILED_RECOVERABLE` before rechecking source and
 schema integrity.
 
-The real integration profile proves that an on-disk type mismatch and an
-explicit partitioner mismatch leave no user `Data.db`, and that a destination
-collision leaves no partial table directory and can be retried after recovery.
-Source hashes remain unchanged, and a production Cassandra daemon using the
-same installed distribution remains queryable with no worker peer. Success
-paths import the repository's genuine `ma-2-big` and `mc-1-big` fixtures. The
-`ma` path reads its row through stock cqlsh, applies `INSERT` and `UPDATE`, kills
-the worker, restarts it, and verifies private commit-log replay.
+The real integration profile proves that on-disk type, partitioner, digest,
+required-index, and unsupported-format failures leave no user `Data.db`, and
+that a destination collision leaves no partial table directory and can be
+retried after recovery. Every rejected import retains native transport as
+disabled and preserves its captured source hashes. A production Cassandra
+daemon using the same installed distribution remains queryable with no worker
+peer. Success paths import the repository's genuine `ma-2-big` and `mc-1-big`
+fixtures. The `ma` path reads its row through stock cqlsh, applies `INSERT` and
+`UPDATE`, kills the worker, restarts it, and verifies private commit-log replay.
 
 ## Manifest baseline
 
