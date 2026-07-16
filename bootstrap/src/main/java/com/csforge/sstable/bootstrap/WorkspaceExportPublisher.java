@@ -41,6 +41,7 @@ import java.util.UUID;
 /** Builds and atomically publishes a verified workspace SSTable export. */
 final class WorkspaceExportPublisher {
     private static final String MANIFEST_NAME = "export-manifest.json";
+    private static final String PUBLICATION_MARKER = ".sstable-tools-export";
     private static final String SCHEMA_NAME = "schema.cql";
     private static final String SSTABLE_DIRECTORY = "sstables";
     private static final Gson WRITER = new GsonBuilder()
@@ -83,7 +84,12 @@ final class WorkspaceExportPublisher {
                     + "verification evidence");
         }
 
+        byte[] marker = publicationMarker(exportId, manifest, flush, mode);
         List<ManifestFile> payload = expectedPayload(repository, selected);
+        payload.add(new ManifestFile(PUBLICATION_MARKER, marker.length,
+                Hashing.sha256(marker)));
+        Collections.sort(payload,
+                (left, right) -> left.relativePath().compareTo(right.relativePath()));
         byte[] exportManifest = exportManifest(manifest, flush, verification, mode,
                 exportId, payload);
         List<ManifestFile> publishedFiles = new ArrayList<>(payload);
@@ -96,7 +102,7 @@ final class WorkspaceExportPublisher {
             verifyPublished(output, record);
             return record;
         }
-        publishNew(repository, selected, output, exportManifest, record);
+        publishNew(repository, selected, output, marker, exportManifest, record);
         return record;
     }
 
@@ -166,6 +172,18 @@ final class WorkspaceExportPublisher {
         String identity = manifest.workspaceId() + "\n" + flush.sha256() + "\n"
                 + mode.value() + "\n" + output;
         return UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static byte[] publicationMarker(UUID exportId,
+                                            WorkspaceManifest manifest,
+                                            WorkspaceFlushResult flush,
+                                            ExportMode mode) {
+        String content = "formatVersion=1\n"
+                + "exportId=" + exportId + "\n"
+                + "workspaceId=" + manifest.workspaceId() + "\n"
+                + "flushSha256=" + flush.sha256() + "\n"
+                + "mode=" + mode.value() + "\n";
+        return content.getBytes(StandardCharsets.US_ASCII);
     }
 
     private static DescriptorInventory validateDescriptorSets(
@@ -358,6 +376,7 @@ final class WorkspaceExportPublisher {
     private static void publishNew(WorkspaceRepository repository,
                                    List<ManifestFile> selected,
                                    Path output,
+                                   byte[] markerBytes,
                                    byte[] manifestBytes,
                                    ExportRecord record) throws WorkspaceException {
         Path temporary = output.getParent().resolve("." + output.getFileName() + "."
@@ -365,27 +384,32 @@ final class WorkspaceExportPublisher {
         boolean created = false;
         try {
             if (Files.exists(temporary, LinkOption.NOFOLLOW_LINKS)) {
-                throw new WorkspaceException("Owned export staging path already exists: "
-                        + temporary);
+                deleteStaleOwnedStaging(temporary, markerBytes, record);
             }
             Files.createDirectory(temporary);
             created = true;
             restrictDirectory(temporary);
+            writeFile(temporary.resolve(PUBLICATION_MARKER), markerBytes,
+                    find(record.files(), PUBLICATION_MARKER));
+            forceDirectory(temporary);
             Path sstables = temporary.resolve(SSTABLE_DIRECTORY);
             Files.createDirectory(sstables);
             restrictDirectory(sstables);
 
             copyFile(repository.resolveInside(SchemaBundle.WORKSPACE_PATH),
                     temporary.resolve(SCHEMA_NAME), find(record.files(), SCHEMA_NAME));
+            ExportFailpoint.hit("after-first-copy");
             for (ManifestFile source : selected) {
                 String targetName = SSTABLE_DIRECTORY + "/" + fileName(source.relativePath());
                 copyFile(repository.resolveInside(source.relativePath()),
                         temporary.resolve(targetName), find(record.files(), targetName));
             }
+            ExportFailpoint.hit("after-files-copied");
             writeFile(temporary.resolve(MANIFEST_NAME), manifestBytes,
                     find(record.files(), MANIFEST_NAME));
             forceDirectory(sstables);
             forceDirectory(temporary);
+            ExportFailpoint.hit("after-export-manifest");
             try {
                 Files.move(temporary, output, StandardCopyOption.ATOMIC_MOVE);
                 created = false;
@@ -397,6 +421,7 @@ final class WorkspaceExportPublisher {
                 return;
             }
             forceDirectory(output.getParent());
+            ExportFailpoint.hit("after-rename");
             verifyPublished(output, record);
         } catch (IOException e) {
             throw new WorkspaceException("Cannot publish export " + output, e);
@@ -415,6 +440,65 @@ final class WorkspaceExportPublisher {
             }
         }
         throw new WorkspaceException("Export inventory is missing " + name);
+    }
+
+    private static void deleteStaleOwnedStaging(Path root,
+                                                byte[] markerBytes,
+                                                ExportRecord record)
+            throws WorkspaceException {
+        if (Files.isSymbolicLink(root)
+                || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceException("Export staging path is not a safe directory: "
+                    + root);
+        }
+        requireOwnerOnly(root);
+        Path marker = root.resolve(PUBLICATION_MARKER);
+        requireIdentity(marker, markerBytes.length, Hashing.sha256(markerBytes));
+        Set<String> allowedFiles = new HashSet<>();
+        for (ManifestFile file : record.files()) {
+            allowedFiles.add(file.relativePath());
+        }
+        List<Path> paths = new ArrayList<>();
+        try (java.util.stream.Stream<Path> stream = Files.walk(root)) {
+            stream.forEach(paths::add);
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot inspect stale export staging " + root, e);
+        }
+        for (Path path : paths) {
+            if (path.equals(root)) {
+                continue;
+            }
+            if (Files.isSymbolicLink(path)) {
+                throw new WorkspaceException("Stale export staging contains a symlink: "
+                        + path);
+            }
+            String relative = root.relativize(path).toString().replace('\\', '/');
+            if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                if (!SSTABLE_DIRECTORY.equals(relative)) {
+                    throw new WorkspaceException("Stale export staging contains an unexpected "
+                            + "directory: " + path);
+                }
+                requireOwnerOnly(path);
+            } else if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                if (!allowedFiles.contains(relative)) {
+                    throw new WorkspaceException("Stale export staging contains an unexpected "
+                            + "file: " + path);
+                }
+                requireOwnerOnly(path);
+            } else {
+                throw new WorkspaceException("Stale export staging contains an unsafe entry: "
+                        + path);
+            }
+        }
+        paths.sort(Collections.reverseOrder());
+        try {
+            for (Path path : paths) {
+                Files.deleteIfExists(path);
+            }
+            forceDirectory(root.getParent());
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot remove stale export staging " + root, e);
+        }
     }
 
     private static void copyFile(Path source, Path target, ManifestFile expected)

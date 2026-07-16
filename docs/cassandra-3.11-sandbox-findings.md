@@ -170,7 +170,10 @@ bound to the flush hash. The controller publishes complete TOC component sets,
 schema, and a deterministic export manifest through an fsynced atomic directory
 rename. Delta mode excludes the baseline and declares its exact source hash
 dependencies; snapshot mode includes all flushed descriptors. Existing output
-is never overwritten.
+is never overwritten. Each publication includes an inventoried
+`.sstable-tools-export` ownership marker. Retry deletes a deterministic staging
+directory only after validating that marker, rejecting symlinks and unexpected
+entries, and requiring owner-only permissions throughout the partial tree.
 
 ## Automated evidence
 
@@ -219,20 +222,25 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 12. inject the controller-crash boundary where the worker/result are `FLUSHED`
     but the manifest remains `RUNNING`, then prove `workspace status` validates
     the inventory and completes the transition;
-13. run Cassandra extended verification and logical reconciliation, atomically
+13. force the export controller to halt after verification, the first copied
+    file, all payload files, the export manifest fsync, the publication rename,
+    and the workspace-manifest save; after each halt, rerun the identical
+    export, require an exact valid publication, and prove no staging directory
+    remains;
+14. run Cassandra extended verification and logical reconciliation, atomically
     publish a delta export, verify every recorded path, size, and SHA-256, prove
     no baseline component was copied, and replay the export command
     idempotently;
-14. drain the exported worker to `STOPPED`, prove the native credential remains
+15. drain the exported worker to `STOPPED`, prove the native credential remains
     deleted, and verify the production daemon is still queryable before
     stopping the fixture;
-15. import the original `ma` base plus generated latest-format `me` delta into
+16. import the original `ma` base plus generated latest-format `me` delta into
     a fresh workspace, re-query all logical values, write timestamps, and TTLs,
     and prove they match the pre-export state exactly;
-16. use the installed distribution's stock `sstableloader` to stream that base
+17. use the installed distribution's stock `sstableloader` to stream that base
     and delta into the clean gossip/internode-enabled Cassandra fixture, then
     prove normal native reads return the same values and cell metadata; and
-17. reject the repository's `mb` fixture because its explicit
+18. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
@@ -252,16 +260,12 @@ inventories.
 - Add a compatible future-dated SSTable fixture so CI proves reconciliation
   against a real source cell above wall clock, not only allocator boundaries
   derived from real statistics metadata.
-- Implement forced-termination coverage at every export boundary. Quiesced
-  flush, release verification, atomic delta/snapshot publication,
-  base-plus-delta reopening, and stock-loader clean-node validation are
-  implemented.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 
-The Cassandra 3.11 vertical prototype covers issue #5's acceptance scope and
-the core import, schema/partitioner rejection, and destination-collision paths
-from issue #6. Issue #6 remains open for compatible `mb`, collection/tuple/UDT,
-compact/dense-table, and broader multi-SSTable fixtures. Issues #7 through #10
-own remaining timestamp/query policy, flush/export, and the other release
-adapters.
+The Cassandra 3.11 vertical prototype covers the acceptance scope of issues #5
+and #8 and the core import, schema/partitioner rejection, and
+destination-collision paths from issue #6. Issue #6 remains open for compatible
+`mb`, collection/tuple/UDT, compact/dense-table, and broader multi-SSTable
+fixtures. Issues #7, #9, and #10 own remaining timestamp/query policy and the
+other release adapters.

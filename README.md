@@ -146,9 +146,9 @@ Cassandra 3.11 artifact also contains schema/header validation, copy-based
 SSTable import, isolated-daemon start, guarded table flush, status, stop, and
 crash recovery, release verification, and atomic delta/snapshot export.
 Its native endpoint now requires an ephemeral workspace credential and guards
-direct and prepared CQL statements. Live-source rejection, clean-node import
-validation, export fault injection, and broader fixture coverage remain under
-development, so this is not yet an operator-ready write workflow.
+direct and prepared CQL statements. Live-source rejection and broader fixture
+coverage remain under development, so this is not yet an operator-ready write
+workflow.
 
 > **DANGER:** Never use SSTable import, mutation, compaction, or export against
 > files owned by a running production Cassandra process. Stop the owning
@@ -226,11 +226,14 @@ SSTable verification and a logical row-count scan. It records owner-only,
 flush-bound evidence in `state/verification-result.properties`, validates
 complete TOC-declared descriptor sets, copies and fsyncs into a private sibling
 directory, and publishes with an atomic directory rename. The output contains
+the inventoried ownership marker `.sstable-tools-export`,
 `export-manifest.json`, `schema.cql`, and `sstables/`. Delta manifests list the
 exact source component hashes required alongside the generated SSTables;
 snapshot mode includes the entire flushed table. Existing output is never
 overwritten and is adopted after a controller crash only when every path, size,
-and SHA-256 matches the deterministic publication.
+and SHA-256 matches the deterministic publication. A retry removes a partial
+staging directory only when its owner-only marker has the exact expected
+workspace, flush, mode, and export identity.
 
 The schema bundle and SSTable sources must remain outside the workspace and
 unchanged. The importer recognizes Cassandra 3.11 row-storage Big `ma` through

@@ -208,16 +208,16 @@ writes owner-only `state/verification-result.properties`. The evidence is bound
 to the SHA-256 of the complete flush result.
 
 The controller accepts only complete TOC-declared descriptor component sets.
-It publishes `export-manifest.json`, `schema.cql`, and `sstables/` through a
-mode-0700 temporary sibling, fsyncs files and directories, and requires an
-atomic non-replacing directory rename. `delta` contains only descriptors added
-after the immutable baseline and records every required source component;
-`snapshot` contains the complete flushed inventory. A deterministic export ID
-and byte-stable manifest allow a retry to adopt an already-published directory
-only when its exact path, size, and SHA-256 inventory matches. The workspace
-manifest records that inventory and canonical output path before entering
-`EXPORTED`; publication never writes into or overlaps the workspace or source
-directories.
+It publishes the inventoried `.sstable-tools-export` ownership marker,
+`export-manifest.json`, `schema.cql`, and `sstables/` through a mode-0700
+temporary sibling, fsyncs files and directories, and requires an atomic
+non-replacing directory rename. `delta` contains only descriptors added after
+the immutable baseline and records every required source component; `snapshot`
+contains the complete flushed inventory. A deterministic export ID and
+byte-stable manifest allow a retry to adopt an already-published directory only
+when its exact path, size, and SHA-256 inventory matches. The workspace manifest
+records that inventory and canonical output path before entering `EXPORTED`;
+publication never writes into or overlaps the workspace or source directories.
 
 ## Lifecycle and recovery
 
@@ -266,6 +266,10 @@ for a later mutation session.
 If publication completes but the controller exits before recording it, the
 manifest remains recoverable from `FLUSHED`; rerunning the same export command
 recomputes its deterministic identity and validates the existing directory.
+If the controller exits earlier, retry removes the deterministic staging tree
+only when its marker has the exact expected workspace, flush, mode, and export
+identity; all entries are owner-only, non-symlink, and on the expected path
+allowlist. Otherwise recovery fails closed without deleting the tree.
 An `EXPORTED` workspace and a failed workspace whose last stable state was
 `EXPORTED` must validate the flush-bound verification evidence and every
 recorded export hash before status or recovery succeeds.

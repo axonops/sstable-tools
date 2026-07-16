@@ -466,6 +466,7 @@ final class WorkspaceCommandRunner {
                         endpoint.release());
                 WorkspaceVerificationResult verification = requireVerificationResult(
                         repository, manifest, flush);
+                ExportFailpoint.hit("after-verification");
                 ExportRecord record = publisher.publish(repository, manifest, flush,
                         verification, arguments.exportMode(), arguments.outputPath());
                 manifest.sourceInventory().verifyUnchanged();
@@ -473,6 +474,7 @@ final class WorkspaceCommandRunner {
                 verifyBaselineIfPresent(repository, manifest);
                 manifest = manifest.withExport(record).transitionTo(WorkspaceState.EXPORTED);
                 repository.save(lock, manifest);
+                ExportFailpoint.hit("after-manifest-save");
                 printStatus(repository, manifest, out);
                 printEndpoint(endpoint, out);
                 printExport(record, out);

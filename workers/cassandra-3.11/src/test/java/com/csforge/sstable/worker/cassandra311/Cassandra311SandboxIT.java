@@ -429,6 +429,48 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals("FLUSHED",
                     property(flushedStatus.output, "worker.status"));
 
+            byte[] flushedManifestBytes = Files.readAllBytes(manifestPath);
+            for (String failpoint : Arrays.asList(
+                    "after-verification",
+                    "after-first-copy",
+                    "after-files-copied",
+                    "after-export-manifest",
+                    "after-rename",
+                    "after-manifest-save")) {
+                Path faultOutput = temporary.getRoot().toPath().resolve(
+                        "fault-export-" + failpoint);
+                CommandResult interruptedExport = run(exportFailpointCommand(
+                        controllerJava(), toolJar, failpoint, workspace, faultOutput));
+                Assert.assertEquals("Export failpoint did not halt at " + failpoint + ":\n"
+                        + interruptedExport.output, 97, interruptedExport.exitCode);
+
+                boolean publicationRenamed = "after-rename".equals(failpoint)
+                        || "after-manifest-save".equals(failpoint);
+                Assert.assertEquals("Unexpected publication visibility after " + failpoint,
+                        publicationRenamed, Files.isDirectory(faultOutput));
+                WorkspaceState interruptedState = "after-manifest-save".equals(failpoint)
+                        ? WorkspaceState.EXPORTED : WorkspaceState.FLUSHED;
+                Assert.assertEquals("Unexpected workspace state after " + failpoint,
+                        interruptedState, WorkspaceRepository.open(workspace).load().state());
+
+                CommandResult recoveredExport = run(command(controllerJava(), toolJar,
+                        "workspace", "export", workspace.toString(), "--mode", "delta",
+                        "--output", faultOutput.toString()));
+                Assert.assertEquals("Export retry failed after " + failpoint + ":\n"
+                        + recoveredExport.output + workerError(workspace),
+                        0, recoveredExport.exitCode);
+                Assert.assertEquals("EXPORTED",
+                        property(recoveredExport.output, "workspace.state"));
+                Assert.assertTrue("Recovered export is missing after " + failpoint,
+                        Files.isDirectory(faultOutput));
+                Assert.assertEquals("Export retry left staging state after " + failpoint,
+                        0, countExportStaging(faultOutput));
+
+                Files.write(manifestPath, flushedManifestBytes);
+                Assert.assertEquals(WorkspaceState.FLUSHED,
+                        WorkspaceRepository.open(workspace).load().state());
+            }
+
             Path deltaExport = temporary.getRoot().toPath().resolve("delta-export");
             CommandResult exported = run(command(controllerJava(), toolJar,
                     "workspace", "export", workspace.toString(), "--mode", "delta",
@@ -1083,6 +1125,35 @@ public class Cassandra311SandboxIT {
         command.add(jar.toString());
         command.addAll(Arrays.asList(arguments));
         return command;
+    }
+
+    private static List<String> exportFailpointCommand(String java,
+                                                       Path jar,
+                                                       String failpoint,
+                                                       Path workspace,
+                                                       Path output) {
+        List<String> command = new ArrayList<>();
+        command.add(java);
+        command.add("-Dsstable.tools.test.enable-export-failpoints=true");
+        command.add("-Dsstable.tools.test.export-failpoint=" + failpoint);
+        command.add("-jar");
+        command.add(jar.toString());
+        command.addAll(Arrays.asList("workspace", "export", workspace.toString(),
+                "--mode", "delta", "--output", output.toString()));
+        return command;
+    }
+
+    private static long countExportStaging(Path output) throws IOException {
+        Path parent = output.getParent();
+        String glob = "." + output.getFileName() + ".*.tmp";
+        long count = 0;
+        try (java.nio.file.DirectoryStream<Path> entries =
+                     Files.newDirectoryStream(parent, glob)) {
+            for (Path ignored : entries) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static CommandResult run(java.util.List<String> command) throws Exception {

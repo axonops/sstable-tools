@@ -39,7 +39,9 @@ public class WorkspaceExportPublisherTest {
         ExportRecord delta = publisher.publish(fixture.repository, fixture.manifest,
                 fixture.flush, fixture.verification, ExportMode.DELTA, deltaOutput);
         Assert.assertEquals("delta", delta.outputFormat());
-        Assert.assertEquals(6, delta.files().size());
+        Assert.assertEquals(7, delta.files().size());
+        Assert.assertTrue(Files.isRegularFile(
+                deltaOutput.resolve(".sstable-tools-export")));
         Assert.assertTrue(Files.isRegularFile(deltaOutput.resolve("export-manifest.json")));
         Assert.assertTrue(Files.isRegularFile(
                 deltaOutput.resolve("sstables/mc-2-big-Data.db")));
@@ -53,7 +55,9 @@ public class WorkspaceExportPublisherTest {
         Path snapshotOutput = temporary.getRoot().toPath().resolve("snapshot-export");
         ExportRecord snapshot = publisher.publish(fixture.repository, fixture.manifest,
                 fixture.flush, fixture.verification, ExportMode.SNAPSHOT, snapshotOutput);
-        Assert.assertEquals(10, snapshot.files().size());
+        Assert.assertEquals(11, snapshot.files().size());
+        Assert.assertTrue(Files.isRegularFile(
+                snapshotOutput.resolve(".sstable-tools-export")));
         Assert.assertTrue(Files.isRegularFile(
                 snapshotOutput.resolve("sstables/mc-1-big-Data.db")));
         String snapshotManifest = new String(Files.readAllBytes(
@@ -73,6 +77,19 @@ public class WorkspaceExportPublisherTest {
         assertPublishFailure(publisher, fixture, output, "does not match");
         assertPublishFailure(publisher, fixture,
                 fixture.repository.root().resolve("exports/unsafe"), "overlaps the workspace");
+
+        Path stagedOutput = temporary.getRoot().toPath().resolve("staged-export");
+        ExportRecord stagedRecord = publisher.publish(fixture.repository, fixture.manifest,
+                fixture.flush, fixture.verification, ExportMode.DELTA, stagedOutput);
+        Path staging = stagedOutput.getParent().resolve("." + stagedOutput.getFileName()
+                + "." + stagedRecord.exportId() + ".tmp");
+        Files.move(stagedOutput, staging);
+        Path unexpected = staging.resolve("do-not-delete");
+        Files.write(unexpected, new byte[]{42});
+
+        assertPublishFailure(publisher, fixture, stagedOutput, "unexpected file");
+        Assert.assertTrue("Unsafe staging tree was deleted", Files.exists(staging));
+        Assert.assertTrue("Unexpected staging content was deleted", Files.exists(unexpected));
     }
 
     private static void assertPublishFailure(WorkspaceExportPublisher publisher,

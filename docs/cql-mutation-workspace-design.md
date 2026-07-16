@@ -509,8 +509,9 @@ The implemented Cassandra 3.11 export consumes the committed flush result and:
 1. reverify the complete inventory and post-import delta classification;
 2. run the target release's SSTable verification and a reconciliation scan;
 3. copy complete component sets into a temporary export directory;
-4. write `export-manifest.json`, `schema.cql`, checksums, runtime identity, and
-   a source dependency list;
+4. write an inventoried `.sstable-tools-export` ownership marker,
+   `export-manifest.json`, `schema.cql`, checksums, runtime identity, and a
+   source dependency list;
 5. fsync and atomically rename the export directory into place.
 
 Export modes are:
@@ -537,7 +538,9 @@ durably binds the result to the flush hash. Controller-owned publication then
 requires complete TOC component sets, an existing canonical destination
 parent, owner-only staging, fsync, and an atomic non-replacing rename. A retry
 can reconcile only a byte-identical deterministic export and never overwrites
-an existing destination.
+an existing destination. A deterministic partial staging tree is removed only
+after its exact ownership marker, allowed paths, non-symlink structure, and
+owner-only permissions validate.
 
 ## 11. Mutation semantics
 
@@ -630,8 +633,11 @@ faithful offline edit.
 - **Crash after worker flush but before manifest update:** status, flush, or
   recovery verifies the durable full inventory and completes `RUNNING ->
   FLUSHED`; missing or changed result state fails closed.
-- **Crash during export:** the temporary export is ignored or removed on retry;
-  the final output path is absent until atomic publication.
+- **Crash during export:** retry validates the deterministic ownership marker
+  before removing a partial staging tree. If atomic publication already
+  completed, retry adopts the final directory only when every recorded path,
+  size, and hash matches; arbitrary staging or destination content is never
+  deleted or overwritten.
 - **Corrupt input:** validation fails before native transport is enabled.
 - **Corrupt generated component:** export fails and retains the workspace for
   diagnosis.
@@ -784,6 +790,13 @@ Kill the worker at each lifecycle boundary, including during import, after write
 acknowledgement, during flush, and during export. Every state must either resume
 idempotently or produce a diagnostic recovery command. Add disk-full, port
 collision, stale PID, runtime mismatch, and malformed manifest tests.
+
+The Cassandra 3.11 profile now hard-stops the export controller after release
+verification, the first copy, all copies, the export-manifest fsync, the atomic
+rename, and the workspace-manifest save. Every retry must publish or adopt the
+same exact export and leave no staging directory. Import, write, and flush
+boundaries remain separate lifecycle coverage work where not already listed in
+the release findings.
 
 ### 15.4 Differential tests
 
