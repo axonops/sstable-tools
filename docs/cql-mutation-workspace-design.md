@@ -124,6 +124,12 @@ The implementation must maintain these invariants:
    exported SSTable.
 8. **Explicit compatibility:** write mode always records the tool artifact hash,
    installed Cassandra release and JAR hashes, Java runtime, and output format.
+9. **Visible operator warning:** before source capture, import, mutation,
+   compaction, or export, the CLI warns that files owned by a running production
+   Cassandra process must never be used. Operators must stop the owning process
+   or use a completed snapshot or backup copied outside every live data
+   directory. The warning is defense in depth and does not replace live-source
+   detection and rejection.
 
 ## 7. Proposed architecture
 

@@ -147,6 +147,12 @@ SSTable import, isolated-daemon start, status, stop, and crash recovery.
 Statement guarding, explicit flush/delta export, and broader fixture coverage
 remain under development, so this is not yet an operator-ready write workflow.
 
+> **DANGER:** Never use SSTable import, mutation, compaction, or export against
+> files owned by a running production Cassandra process. Stop the owning
+> Cassandra process, or use a completed snapshot or backup copied outside every
+> live Cassandra data directory. The isolated Cassandra worker started by this
+> tool is expected and writes only beneath its private workspace.
+
 The current Cassandra 3.11 workflow is:
 
 ```shell

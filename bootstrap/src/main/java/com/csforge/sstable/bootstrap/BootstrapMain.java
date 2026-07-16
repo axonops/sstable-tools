@@ -36,6 +36,9 @@ public final class BootstrapMain {
                         adapter.getProperty("adapter.cassandra-version", "unbound"));
                 return 0;
             }
+            if (requiresSstableWriteWarning(arguments.action())) {
+                printSstableWriteWarning(err);
+            }
             if (isCassandraFreeWorkspaceAction(arguments.action())) {
                 new WorkspaceCommandRunner().run(arguments, out);
                 return 0;
@@ -85,6 +88,22 @@ public final class BootstrapMain {
                 || action == BootstrapArguments.Action.WORKSPACE_STATUS
                 || action == BootstrapArguments.Action.WORKSPACE_STOP
                 || action == BootstrapArguments.Action.WORKSPACE_RECOVER;
+    }
+
+    private static boolean requiresSstableWriteWarning(BootstrapArguments.Action action) {
+        return action == BootstrapArguments.Action.WORKSPACE_CREATE
+                || action == BootstrapArguments.Action.WORKSPACE_IMPORT
+                || action == BootstrapArguments.Action.WORKSPACE_START;
+    }
+
+    private static void printSstableWriteWarning(PrintStream err) {
+        err.println("WARNING: DANGEROUS SSTABLE WRITE WORKFLOW");
+        err.println("Never use SSTable import, mutation, compaction, or export against files");
+        err.println("owned by a running production Cassandra process.");
+        err.println("Stop the owning Cassandra process, or use a completed snapshot or backup");
+        err.println("copied outside every live Cassandra data directory.");
+        err.println("The isolated workspace worker started by this tool is expected and writes");
+        err.println("only beneath the private workspace.");
     }
 
     private static String implementationVersion() {
@@ -138,6 +157,11 @@ public final class BootstrapMain {
         out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
         out.println("  workspace stop <path>    Drain and stop a running workspace sandbox");
         out.println("  workspace recover <path> Recover a failed workspace to its last stable state");
+        out.println();
+        out.println("Safety warning:");
+        out.println("  Never run SSTable write operations against files owned by a running");
+        out.println("  production Cassandra process. Stop it, or use a completed snapshot or");
+        out.println("  backup copied outside every live Cassandra data directory.");
         out.println();
         out.println("Workspace commands planned for later implementation:");
         out.println("  workspace cqlsh|export|destroy");

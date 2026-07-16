@@ -31,6 +31,8 @@ public class BootstrapMainTest {
         Assert.assertEquals(0, exitCode);
         Assert.assertTrue(output.toString("UTF-8").contains("--cassandra-home"));
         Assert.assertTrue(output.toString("UTF-8").contains("runtime preflight"));
+        Assert.assertTrue(output.toString("UTF-8")
+                .contains("Never run SSTable write operations"));
     }
 
     @Test
@@ -81,6 +83,25 @@ public class BootstrapMainTest {
         Assert.assertEquals(0, secondCreateExitCode);
         Assert.assertTrue(secondCreate.toString("UTF-8")
                 .contains("workspace.state=VALIDATED"));
+    }
+
+    @Test
+    public void createPrintsProductionDataSafetyWarning() throws Exception {
+        Path source = createSstableSource("warning-source", "mc-8-big");
+        Path workspace = temporary.newFolder("warning-workspace").toPath();
+        ByteArrayOutputStream error = new ByteArrayOutputStream();
+
+        int exitCode = BootstrapMain.run(new String[]{
+                        "workspace", "create", workspace.toString(),
+                        "--sstables", source.toString()
+                }, discard(), new PrintStream(error, true, "UTF-8"));
+
+        String warning = error.toString("UTF-8");
+        Assert.assertEquals(0, exitCode);
+        Assert.assertTrue(warning.contains("DANGEROUS SSTABLE WRITE WORKFLOW"));
+        Assert.assertTrue(warning.contains("running production Cassandra process"));
+        Assert.assertTrue(warning.contains("copied outside every live Cassandra data directory"));
+        Assert.assertTrue(warning.contains("isolated workspace worker"));
     }
 
     @Test
