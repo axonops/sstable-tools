@@ -47,6 +47,7 @@ final class Cassandra311SandboxConfig {
             throw new WorkspaceException("Invalid Cassandra 3.11 import endpoint input");
         }
         repository.deleteOwnedFile(lock, CQLSHRC_PATH);
+        repository.deleteOwnedFile(lock, WorkspaceTimestampState.WORKSPACE_PATH);
         writeConfiguration(repository, lock, workspaceId, nativePort, false);
     }
 

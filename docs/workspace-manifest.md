@@ -29,7 +29,7 @@ java -jar sstable-tools-cassandra-3.11-<version>.jar \
 
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
   --cassandra-home /opt/apache-cassandra-3.11.19 \
-  workspace start ./case
+  workspace start ./case --timestamp-policy after-source
 
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace status ./case
@@ -169,6 +169,22 @@ is persisted under the `schemaIdentity` map key
 `source.max-timestamp-micros`. Import, start, and status compare it with the
 current controller clock and warn while the source remains in the future.
 
+The first start records `wall-clock` or `after-source` under
+`schemaIdentity["timestamp.policy"]`; later starts reuse that choice when the
+option is omitted and reject a conflicting explicit option. `wall-clock` keeps
+Cassandra's normal assignment. `after-source` initializes the owner-only
+`state/timestamp.properties` high-water above the imported maximum. Before a
+timestamp-free mutation executes, the release worker durably advances it to
+`max(previous + 1, wall clock)` using write, file `fsync`, atomic replacement,
+and directory `fsync`. The file is retained across graceful stop and proven-dead
+recovery. Import removes stale timestamp state because a new source maximum
+must establish the initial bound.
+
+An explicit CQL `USING TIMESTAMP` or native-protocol timestamp bypasses the
+allocator and is preserved exactly. In particular, stock Cassandra 3.11 cqlsh
+normally sends a protocol timestamp. `workspace status` reports the policy and
+the current durable high-water when present.
+
 ## Lifecycle and recovery
 
 The legal forward transitions are:
@@ -209,6 +225,8 @@ Each Cassandra 3.11 start replaces `state/cqlshrc` with a new random 256-bit
 password for the fixed `sstable_workspace` identity. Graceful stop and
 proven-dead worker recovery delete that file. Recovery retains it only when the
 authenticated control channel proves the original worker remains live.
+Timestamp high-water state is separate from this ephemeral credential and is
+retained so allocated values cannot be reused after restart.
 
 ## Failure and security properties
 

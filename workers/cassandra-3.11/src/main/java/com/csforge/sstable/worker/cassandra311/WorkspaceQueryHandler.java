@@ -20,6 +20,7 @@ import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.MD5Digest;
 
@@ -28,15 +29,33 @@ public final class WorkspaceQueryHandler implements QueryHandler {
     static final String HANDLER_PROPERTY = "cassandra.custom_query_handler_class";
     static final String KEYSPACE_PROPERTY = "sstable.tools.workspace.keyspace";
     static final String TABLE_PROPERTY = "sstable.tools.workspace.table";
+    static final String WORKSPACE_ID_PROPERTY = "sstable.tools.workspace.id";
+    static final String TIMESTAMP_POLICY_PROPERTY =
+            "sstable.tools.workspace.timestamp-policy";
+    static final String SOURCE_MAX_TIMESTAMP_PROPERTY =
+            "sstable.tools.workspace.source-max-timestamp-micros";
     static final String POLICY_PREFIX = "SSTABLE_TOOLS_POLICY: ";
 
     private final QueryHandler delegate = QueryProcessor.instance;
     private final String keyspace;
     private final String table;
+    private final WorkspaceTimestampAllocator timestampAllocator;
 
     public WorkspaceQueryHandler() {
         keyspace = requiredProperty(KEYSPACE_PROPERTY);
         table = requiredProperty(TABLE_PROPERTY);
+        String policy = requiredProperty(TIMESTAMP_POLICY_PROPERTY);
+        long sourceMaximum = requiredLongProperty(SOURCE_MAX_TIMESTAMP_PROPERTY);
+        if ("after-source".equals(policy)) {
+            timestampAllocator = WorkspaceTimestampAllocator.open(
+                    java.nio.file.Paths.get(requiredProperty("cassandra.storagedir")),
+                    java.util.UUID.fromString(requiredProperty(WORKSPACE_ID_PROPERTY)),
+                    sourceMaximum);
+        } else if ("wall-clock".equals(policy)) {
+            timestampAllocator = null;
+        } else {
+            throw new IllegalStateException("Unsupported workspace timestamp policy " + policy);
+        }
     }
 
     @Override
@@ -49,7 +68,8 @@ public final class WorkspaceQueryHandler implements QueryHandler {
         ParsedStatement.Prepared parsed = QueryProcessor.parseStatement(query, state);
         requireAllowed(parsed.statement);
         requireLocalConsistency(options);
-        return delegate.process(query, state, options, customPayload, queryStartNanoTime);
+        return delegate.process(query, timestampState(parsed.statement, state, options),
+                options, customPayload, queryStartNanoTime);
     }
 
     @Override
@@ -81,8 +101,8 @@ public final class WorkspaceQueryHandler implements QueryHandler {
             throws RequestExecutionException, RequestValidationException {
         requireAllowed(statement);
         requireLocalConsistency(options);
-        return delegate.processPrepared(statement, state, options, customPayload,
-                queryStartNanoTime);
+        return delegate.processPrepared(statement, timestampState(statement, state, options),
+                options, customPayload, queryStartNanoTime);
     }
 
     @Override
@@ -132,6 +152,31 @@ public final class WorkspaceQueryHandler implements QueryHandler {
         return keyspace.equals(metadata.ksName) && table.equals(metadata.cfName);
     }
 
+    private QueryState timestampState(CQLStatement statement,
+                                      QueryState state,
+                                      QueryOptions options)
+            throws InvalidRequestException {
+        if (timestampAllocator == null || !(statement instanceof ModificationStatement)) {
+            return state;
+        }
+        ModificationStatement modification = (ModificationStatement) statement;
+        if (!usesDefaultTimestamp(modification, state.getClientState(), options)) {
+            return state;
+        }
+        return new AllocatingQueryState(state.getClientState(), timestampAllocator);
+    }
+
+    private static boolean usesDefaultTimestamp(ModificationStatement statement,
+                                                ClientState clientState,
+                                                QueryOptions options)
+            throws InvalidRequestException {
+        long first = statement.getTimestamp(options.getTimestamp(
+                new FixedTimestampQueryState(clientState, 0L)), options);
+        long second = statement.getTimestamp(options.getTimestamp(
+                new FixedTimestampQueryState(clientState, 1L)), options);
+        return first != second;
+    }
+
     private static void requireLocalConsistency(QueryOptions options)
             throws InvalidRequestException {
         ConsistencyLevel consistency = options.getConsistency();
@@ -159,5 +204,43 @@ public final class WorkspaceQueryHandler implements QueryHandler {
             throw new IllegalStateException(name + " is required by the workspace query guard");
         }
         return value;
+    }
+
+    private static long requiredLongProperty(String name) {
+        String value = requiredProperty(name);
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalStateException(name + " must be a long", e);
+        }
+    }
+
+    private static final class FixedTimestampQueryState extends QueryState {
+        private final long timestamp;
+
+        private FixedTimestampQueryState(ClientState clientState, long timestamp) {
+            super(clientState);
+            this.timestamp = timestamp;
+        }
+
+        @Override
+        public long getTimestamp() {
+            return timestamp;
+        }
+    }
+
+    private static final class AllocatingQueryState extends QueryState {
+        private final WorkspaceTimestampAllocator allocator;
+
+        private AllocatingQueryState(ClientState clientState,
+                                     WorkspaceTimestampAllocator allocator) {
+            super(clientState);
+            this.allocator = allocator;
+        }
+
+        @Override
+        public long getTimestamp() {
+            return allocator.next();
+        }
     }
 }

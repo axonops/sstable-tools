@@ -26,24 +26,31 @@ final class BootstrapArguments {
     private final Path workspacePath;
     private final List<Path> sourceDirectories;
     private final Path schemaPath;
+    private final TimestampPolicy timestampPolicy;
+    private final boolean timestampPolicySpecified;
 
     private BootstrapArguments(Action action,
                                RuntimeOptions runtimeOptions,
                                Path workspacePath,
                                List<Path> sourceDirectories,
-                               Path schemaPath) {
+                               Path schemaPath,
+                               TimestampPolicy timestampPolicy,
+                               boolean timestampPolicySpecified) {
         this.action = action;
         this.runtimeOptions = runtimeOptions;
         this.workspacePath = workspacePath;
         this.sourceDirectories = Collections.unmodifiableList(
                 new ArrayList<>(sourceDirectories));
         this.schemaPath = schemaPath;
+        this.timestampPolicy = timestampPolicy;
+        this.timestampPolicySpecified = timestampPolicySpecified;
     }
 
     static BootstrapArguments parse(String[] args) throws BootstrapException {
         if (args.length == 0) {
             return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
-                    null, Collections.<Path>emptyList(), null);
+                    null, Collections.<Path>emptyList(), null, TimestampPolicy.WALL_CLOCK,
+                    false);
         }
 
         Path cassandraHome = null;
@@ -51,6 +58,8 @@ final class BootstrapArguments {
         Path javaHome = null;
         List<Path> sourceDirectories = new ArrayList<>();
         Path schemaPath = null;
+        TimestampPolicy timestampPolicy = TimestampPolicy.WALL_CLOCK;
+        boolean timestampPolicySpecified = false;
         List<String> command = new ArrayList<>();
 
         for (int index = 0; index < args.length; index++) {
@@ -58,12 +67,14 @@ final class BootstrapArguments {
             if ("--help".equals(argument) || "-h".equals(argument)) {
                 return new BootstrapArguments(Action.HELP,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                        null, sourceDirectories, schemaPath);
+                        null, sourceDirectories, schemaPath, timestampPolicy,
+                        timestampPolicySpecified);
             }
             if ("--version".equals(argument)) {
                 return new BootstrapArguments(Action.VERSION,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                        null, sourceDirectories, schemaPath);
+                        null, sourceDirectories, schemaPath, timestampPolicy,
+                        timestampPolicySpecified);
             }
             if ("--cassandra-home".equals(argument)) {
                 cassandraHome = pathValue(args, ++index, argument);
@@ -75,6 +86,12 @@ final class BootstrapArguments {
                 sourceDirectories.add(pathValue(args, ++index, argument));
             } else if ("--schema".equals(argument)) {
                 schemaPath = pathValue(args, ++index, argument);
+            } else if ("--timestamp-policy".equals(argument)) {
+                if (timestampPolicySpecified || ++index >= args.length) {
+                    throw usage("--timestamp-policy requires one value");
+                }
+                timestampPolicy = TimestampPolicy.parse(args[index]);
+                timestampPolicySpecified = true;
             } else if (argument.startsWith("--")) {
                 throw usage("Unknown option: " + argument);
             } else {
@@ -138,9 +155,13 @@ final class BootstrapArguments {
         if (action != Action.WORKSPACE_CREATE && schemaPath != null) {
             throw usage("--schema is only valid with workspace create");
         }
+        if (action != Action.WORKSPACE_START && timestampPolicySpecified) {
+            throw usage("--timestamp-policy is only valid with workspace start");
+        }
         return new BootstrapArguments(action,
                 new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                workspacePath, sourceDirectories, schemaPath);
+                workspacePath, sourceDirectories, schemaPath, timestampPolicy,
+                timestampPolicySpecified);
     }
 
     private static Path pathValue(String[] args, int index, String option)
@@ -188,5 +209,13 @@ final class BootstrapArguments {
 
     Path schemaPath() {
         return schemaPath;
+    }
+
+    TimestampPolicy timestampPolicy() {
+        return timestampPolicy;
+    }
+
+    boolean timestampPolicySpecified() {
+        return timestampPolicySpecified;
     }
 }

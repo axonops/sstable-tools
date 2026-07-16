@@ -59,7 +59,7 @@ public class ChildProcessLauncherTest {
         List<String> command = new ChildProcessLauncher(false).sandboxCommand(
                 installation, workspace,
                 UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"), 19042,
-                "blog", "users");
+                "blog", "users", TimestampPolicy.AFTER_SOURCE, 123456789L);
 
         Assert.assertTrue(command.contains("-Dcassandra.start_gossip=false"));
         Assert.assertTrue(command.contains("-Dcassandra.join_ring=false"));
@@ -71,6 +71,10 @@ public class ChildProcessLauncherTest {
                 + "com.csforge.sstable.worker.cassandra311.WorkspaceQueryHandler"));
         Assert.assertTrue(command.contains("-Dsstable.tools.workspace.keyspace=blog"));
         Assert.assertTrue(command.contains("-Dsstable.tools.workspace.table=users"));
+        Assert.assertTrue(command.contains("-Dsstable.tools.workspace.timestamp-policy="
+                + "after-source"));
+        Assert.assertTrue(command.contains("-Dsstable.tools.workspace."
+                + "source-max-timestamp-micros=123456789"));
         Assert.assertTrue(command.contains("-javaagent:" + jamm));
         Assert.assertTrue(command.contains("--native-port"));
         Assert.assertTrue(command.contains("19042"));

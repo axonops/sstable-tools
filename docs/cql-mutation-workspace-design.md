@@ -563,16 +563,23 @@ at import, start, and status while it remains ahead of the controller clock.
 
 The tool does not silently rewrite user timestamps. The user can supply `USING
 TIMESTAMP`, or opt into `--timestamp-policy after-source`, which configures the
-query guard's timestamp generator to start above both wall clock and the maximum
-source timestamp. The guard injects that timestamp only when neither the CQL
-statement nor the native-protocol request supplies one. The selected policy and
-allocated timestamp range are recorded in the manifest.
+query guard's timestamp generator to advance above both wall clock and the
+maximum source timestamp. The guard allocates a timestamp only when neither the
+CQL statement nor the native-protocol request supplies one. It writes and
+`fsync`s the new high-water mark before Cassandra executes the mutation, so a
+crash may leave a gap but cannot cause reuse. The selected policy is recorded
+in the manifest, while the owner-only high-water state is stored under
+`state/timestamp.properties` and survives stop and crash recovery.
 
 The Cassandra 3.11 checkpoint implements maximum detection, strict worker
-protocol v2 handoff, manifest recording, and the future-clock warning. Until
-the range-backed `after-source` allocator is implemented, explicit `USING
-TIMESTAMP` is the only supported way to force a mutation above a future source
-timestamp; the tool never silently rewrites it.
+protocol v2 handoff, future-clock warnings, and the durable allocator for both
+direct and prepared mutations. Explicit `USING TIMESTAMP` and native-protocol
+timestamps are preserved exactly. Cassandra 3.11's stock cqlsh Python driver
+normally supplies a protocol timestamp, so the allocator correctly treats its
+ordinary mutations as explicit client-timestamp requests. An operator using
+stock cqlsh against a future-dated source must therefore use `USING TIMESTAMP`
+above the reported maximum. Other clients can opt into allocation by omitting
+both forms of timestamp.
 
 TTL expiry and tombstone visibility are evaluated using the sandbox clock. For
 forensic reproducibility, a later phase may add a supported fixed-time query

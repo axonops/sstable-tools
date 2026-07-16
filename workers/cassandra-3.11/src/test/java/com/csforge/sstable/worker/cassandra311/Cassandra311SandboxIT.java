@@ -225,11 +225,13 @@ public class Cassandra311SandboxIT {
             start = run(command(controllerJava(), toolJar,
                     "--cassandra-home", cassandraHome.toString(),
                     "--java-home", javaHome.toString(),
-                    "workspace", "start", workspace.toString()));
+                    "workspace", "start", workspace.toString(),
+                    "--timestamp-policy", "after-source"));
             Assert.assertEquals(start.output + workerError(workspace), 0, start.exitCode);
             workerRunning = true;
             Assert.assertEquals(Long.toString(sourceMaxTimestamp),
                     property(start.output, "source.maxTimestampMicros"));
+            Assert.assertEquals("after-source", property(start.output, "timestamp.policy"));
             String[] nativeEndpoint = property(start.output, "worker.native").split(":", 2);
             Assert.assertEquals(start.output, 2, nativeEndpoint.length);
             Path cqlshrc = Paths.get(property(start.output, "worker.cqlshrc"));
@@ -267,6 +269,22 @@ public class Cassandra311SandboxIT {
                             + "UPDATE blog.users SET password = 'after' "
                             + "WHERE user_name = 'frodo';"));
             Assert.assertEquals(mutate.output, 0, mutate.exitCode);
+            Path timestampState = workspace.resolve("state/timestamp.properties");
+            long firstHighWater = timestampHighWater(timestampState);
+            Assert.assertEquals("Stock cqlsh protocol timestamp was overwritten",
+                    sourceMaxTimestamp, firstHighWater);
+
+            long explicitCqlTimestamp = sourceMaxTimestamp + 1000L;
+            CommandResult explicitCql = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint,
+                    cqlshrc, "INSERT INTO blog.users (user_name, password) "
+                            + "VALUES ('explicit_cql', 'exact') USING TIMESTAMP "
+                            + explicitCqlTimestamp + "; SELECT writetime(password) "
+                            + "FROM blog.users WHERE user_name = 'explicit_cql';"));
+            Assert.assertEquals(explicitCql.output, 0, explicitCql.exitCode);
+            Assert.assertTrue(explicitCql.output,
+                    explicitCql.output.contains(Long.toString(explicitCqlTimestamp)));
+            Assert.assertEquals("Explicit CQL timestamp advanced automatic high-water",
+                    firstHighWater, timestampHighWater(timestampState));
 
             assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "DELETE FROM blog.users WHERE user_name = 'sam';");
@@ -288,8 +306,11 @@ public class Cassandra311SandboxIT {
                     "SELECT * FROM system.batchlog;");
 
             CommandResult prepared = runPreparedPolicyCheck(cassandraHome,
-                    nativeEndpoint[0], nativeEndpoint[1], credentials);
+                    nativeEndpoint[0], nativeEndpoint[1], credentials,
+                    sourceMaxTimestamp);
             Assert.assertEquals(prepared.output, 0, prepared.exitCode);
+            long preCrashHighWater = timestampHighWater(timestampState);
+            Assert.assertTrue(preCrashHighWater > firstHighWater);
             assertGuardedState(cqlsh, nativeEndpoint, cqlshrc);
 
             CommandResult status = run(command(controllerJava(), toolJar,
@@ -335,6 +356,7 @@ public class Cassandra311SandboxIT {
                     "workspace", "start", workspace.toString()));
             Assert.assertEquals(start.output + workerError(workspace), 0, start.exitCode);
             workerRunning = true;
+            Assert.assertEquals("after-source", property(start.output, "timestamp.policy"));
             nativeEndpoint = property(start.output, "worker.native").split(":", 2);
             cqlshrc = Paths.get(property(start.output, "worker.cqlshrc"));
             NativeCredentials restartedCredentials = readCredentials(cqlshrc);
@@ -347,7 +369,15 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(replayed.output, 0, replayed.exitCode);
             Assert.assertTrue(replayed.output, replayed.output.contains("prepared"));
             Assert.assertTrue(replayed.output, replayed.output.contains("inserted"));
-            Assert.assertTrue(replayed.output, replayed.output.contains("2 rows"));
+            Assert.assertTrue(replayed.output, replayed.output.contains("explicit_cql"));
+            Assert.assertTrue(replayed.output, replayed.output.contains("protocol_ts"));
+            CommandResult postRestartMutation = runPreparedPolicyCheck(cassandraHome,
+                    nativeEndpoint[0], nativeEndpoint[1], restartedCredentials,
+                    sourceMaxTimestamp);
+            Assert.assertEquals(postRestartMutation.output, 0,
+                    postRestartMutation.exitCode);
+            Assert.assertTrue("Restart reused the after-source timestamp high-water",
+                    timestampHighWater(timestampState) > preCrashHighWater);
 
             CommandResult stop = run(command(controllerJava(), toolJar,
                     "workspace", "stop", workspace.toString()));
@@ -436,7 +466,7 @@ public class Cassandra311SandboxIT {
         Assert.assertTrue(rows.output, rows.output.contains("prepared"));
         Assert.assertTrue(rows.output, rows.output.contains("sam"));
         Assert.assertFalse(rows.output, rows.output.contains("batch"));
-        Assert.assertTrue(rows.output, rows.output.contains("2 rows"));
+        Assert.assertTrue(rows.output, rows.output.contains("4 rows"));
 
         CommandResult schema = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc,
                 "SELECT table_name FROM system_schema.tables "
@@ -450,7 +480,8 @@ public class Cassandra311SandboxIT {
     private static CommandResult runPreparedPolicyCheck(Path cassandraHome,
                                                          String host,
                                                          String port,
-                                                         NativeCredentials credentials)
+                                                         NativeCredentials credentials,
+                                                         long sourceMaxTimestamp)
             throws Exception {
         Path lib = cassandraHome.resolve("lib");
         Path driver = singleMatch(lib, "cassandra-driver-internal-only-*.zip");
@@ -482,6 +513,7 @@ public class Cassandra311SandboxIT {
                 + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]), "
                 + "auth_provider=auth)\n"
                 + "session = cluster.connect()\n"
+                + "session.use_client_timestamp = False\n"
                 + "local_read = SimpleStatement("
                 + "\"SELECT user_name FROM blog.users WHERE user_name = 'frodo'\", "
                 + "consistency_level=ConsistencyLevel.LOCAL_ONE)\n"
@@ -508,17 +540,31 @@ public class Cassandra311SandboxIT {
                 + "local_write = allowed.bind(('prepared', 'frodo'))\n"
                 + "local_write.consistency_level = ConsistencyLevel.LOCAL_ONE\n"
                 + "session.execute(local_write)\n"
+                + "session.execute(\"UPDATE blog.users SET state = 'OR' "
+                + "WHERE user_name = 'sam'\")\n"
+                + "written = next(iter(session.execute(\"SELECT writetime(password) AS ts "
+                + "FROM blog.users WHERE user_name = 'frodo'\")))\n"
+                + "assert written.ts > int(os.environ['SSTABLE_TOOLS_SOURCE_MAX_TS'])\n"
+                + "protocol_ts = int(os.environ['SSTABLE_TOOLS_PROTOCOL_TS'])\n"
+                + "cluster.timestamp_generator = lambda: protocol_ts\n"
+                + "session.use_client_timestamp = True\n"
+                + "session.execute(\"INSERT INTO blog.users (user_name, password) "
+                + "VALUES ('protocol_ts', 'exact')\")\n"
+                + "session.use_client_timestamp = False\n"
+                + "protocol_row = next(iter(session.execute(\"SELECT writetime(password) AS ts "
+                + "FROM blog.users WHERE user_name = 'protocol_ts'\")))\n"
+                + "assert protocol_row.ts == protocol_ts\n"
                 + "paged_direct = SimpleStatement("
                 + "\"SELECT user_name FROM blog.users\", fetch_size=1, "
                 + "consistency_level=ConsistencyLevel.ONE)\n"
                 + "assert sorted(row.user_name for row in session.execute(paged_direct)) "
-                + "== ['frodo', 'sam']\n"
+                + "== ['explicit_cql', 'frodo', 'protocol_ts', 'sam']\n"
                 + "paged_prepared = session.prepare("
                 + "\"SELECT user_name FROM blog.users\")\n"
                 + "paged_prepared.fetch_size = 1\n"
                 + "paged_rows = session.execute(paged_prepared.bind(()))\n"
                 + "assert sorted(row.user_name for row in paged_rows) "
-                + "== ['frodo', 'sam']\n"
+                + "== ['explicit_cql', 'frodo', 'protocol_ts', 'sam']\n"
                 + "try:\n"
                 + "    session.prepare(\"DELETE FROM blog.users WHERE user_name = ?\")\n"
                 + "    raise AssertionError('forbidden prepared DELETE succeeded')\n"
@@ -532,7 +578,19 @@ public class Cassandra311SandboxIT {
         environment.put("PYTHONPATH", pythonPath.toString());
         environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
         environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
+        environment.put("SSTABLE_TOOLS_SOURCE_MAX_TS", Long.toString(sourceMaxTimestamp));
+        environment.put("SSTABLE_TOOLS_PROTOCOL_TS",
+                Long.toString(sourceMaxTimestamp + 2000L));
         return run(Arrays.asList(python2(), "-c", script, host, port), environment);
+    }
+
+    private static long timestampHighWater(Path path) throws IOException {
+        for (String line : Files.readAllLines(path, StandardCharsets.US_ASCII)) {
+            if (line.startsWith("high-water-micros=")) {
+                return Long.parseLong(line.substring("high-water-micros=".length()));
+            }
+        }
+        throw new IOException("Missing timestamp high-water in " + path);
     }
 
     private Path createCqlshrc(String password) throws IOException {

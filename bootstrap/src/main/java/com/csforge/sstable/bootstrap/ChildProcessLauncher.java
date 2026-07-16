@@ -74,9 +74,11 @@ public final class ChildProcessLauncher {
                                        UUID workspaceId,
                                        int nativePort,
                                        String keyspace,
-                                       String table) throws BootstrapException {
+                                       String table,
+                                       TimestampPolicy timestampPolicy,
+                                       long sourceMaximumMicros) throws BootstrapException {
         List<String> command = sandboxCommand(installation, workspace, workspaceId, nativePort,
-                keyspace, table);
+                keyspace, table, timestampPolicy, sourceMaximumMicros);
         ProcessBuilder builder = new ProcessBuilder(command);
         Path logs = prepareOwnedDirectory(workspace, "logs");
         Path runtime = prepareOwnedDirectory(workspace, "runtime");
@@ -217,7 +219,9 @@ public final class ChildProcessLauncher {
                                 UUID workspaceId,
                                 int nativePort,
                                 String keyspace,
-                                String table) throws BootstrapException {
+                                String table,
+                                TimestampPolicy timestampPolicy,
+                                long sourceMaximumMicros) throws BootstrapException {
         Path configuration = workspace.resolve(Cassandra311SandboxConfig.CONFIG_PATH);
         List<String> command = workerCommand(installation, workspace, configuration, true);
         command.add("-Dcassandra.custom_query_handler_class="
@@ -225,6 +229,11 @@ public final class ChildProcessLauncher {
         command.add("-Dsstable.tools.workspace.keyspace=" + requireTarget(keyspace,
                 "keyspace"));
         command.add("-Dsstable.tools.workspace.table=" + requireTarget(table, "table"));
+        command.add("-Dsstable.tools.workspace.id=" + workspaceId);
+        command.add("-Dsstable.tools.workspace.timestamp-policy="
+                + timestampPolicy.value());
+        command.add("-Dsstable.tools.workspace.source-max-timestamp-micros="
+                + sourceMaximumMicros);
         command.add(WORKER_MAIN);
         command.add("--sandbox");
         command.add("--expected-version");

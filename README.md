@@ -145,9 +145,9 @@ The shared workspace manifest commands are available in those thin JARs. The
 Cassandra 3.11 artifact also contains schema/header validation, copy-based
 SSTable import, isolated-daemon start, status, stop, and crash recovery.
 Its native endpoint now requires an ephemeral workspace credential and guards
-direct and prepared CQL statements. Timestamp policy, explicit flush/delta
-export, live-source rejection, and broader fixture coverage remain under
-development, so this is not yet an operator-ready write workflow.
+direct and prepared CQL statements. Explicit flush/delta export, live-source
+rejection, and broader fixture coverage remain under development, so this is
+not yet an operator-ready write workflow.
 
 > **DANGER:** Never use SSTable import, mutation, compaction, or export against
 > files owned by a running production Cassandra process. Stop the owning
@@ -171,8 +171,15 @@ java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
 java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
   --cassandra-home /opt/apache-cassandra-3.11.19 \
   --java-home /usr/lib/jvm/java-8-openjdk \
-  workspace start ./case
+  workspace start ./case --timestamp-policy after-source
 ```
+
+`wall-clock` is the default timestamp policy. `after-source` durably assigns a
+timestamp greater than both the imported source maximum and the controller
+clock when a mutation supplies neither `USING TIMESTAMP` nor a native-protocol
+timestamp. The policy is fixed by the first start and reused when later starts
+omit the option. `workspace status` reports the selected policy and, for
+`after-source`, its durable high-water mark.
 
 `workspace start` and a live `workspace status` print `worker.native`,
 `worker.username`, and `worker.cqlshrc`. Pass the generated owner-only
@@ -184,6 +191,13 @@ appear in the process arguments:
   --cqlshrc /absolute/path/from/worker.cqlshrc \
   127.0.0.1 PORT_FROM_worker.native
 ```
+
+Cassandra 3.11's stock cqlsh Python driver normally attaches a protocol
+timestamp to mutations. The guard preserves that timestamp, so `after-source`
+does not replace ordinary stock-cqlsh timestamps. When the imported maximum is
+in the future, use an explicit `USING TIMESTAMP` greater than
+`source.maxTimestampMicros`. Direct and prepared clients that omit both forms
+of timestamp use the durable `after-source` allocator.
 
 The schema bundle and SSTable sources must remain outside the workspace and
 unchanged. The importer recognizes Cassandra 3.11 Big `ma`,
@@ -217,8 +231,9 @@ runtime and records the greatest `StatsMetadata.maxTimestamp` as
 `source.maxTimestampMicros`. Import, start, and status print that value and the
 current controller time. If the source maximum is still in the future, they
 print a warning that default wall-clock writes may not win and identify the
-minimum explicit `USING TIMESTAMP` boundary. Automatic `after-source`
-timestamp allocation remains under development.
+minimum explicit `USING TIMESTAMP` boundary. The optional `after-source` policy
+durably allocates above that bound only for clients that omit both CQL and
+native-protocol timestamps; explicit timestamps are never rewritten.
 
 The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
 provided/packaged boundary and the build checks that enforce it. GitHub Actions
@@ -273,12 +288,14 @@ row, records the maximum source timestamp from real Statistics metadata,
 proves missing and incorrect credentials are rejected, runs `INSERT` and
 `UPDATE` with the generated `cqlshrc` and the distribution's `cqlsh`, verifies
 forbidden direct and prepared statements are rejected without data/schema
-changes, exercises direct and prepared paging, accepts `ONE`/`LOCAL_ONE`, and
-rejects `QUORUM`/`ALL`. It then forces worker termination, verifies the
+changes, exercises direct and prepared paging, accepts `ONE`/`LOCAL_ONE`,
+rejects `QUORUM`/`ALL`, verifies exact explicit CQL/native timestamps, and
+exercises durable `after-source` allocation from clients with client timestamp
+generation disabled. It then forces worker termination, verifies the
 production daemon remains isolated and queryable, reconciles the recorded
 worker PID, removes the stale credential, restarts with a rotated credential,
-verifies workspace commit-log replay, and drains cleanly without retaining the
-credential file.
+verifies workspace commit-log replay and timestamp high-water advancement, and
+drains cleanly without retaining the credential file.
 GitHub Actions runs the same profile against a SHA-512-pinned 3.11.19 archive
 and supplies a SHA-256-pinned PyPy 2.7 runtime
 required by that release's `cqlsh` launcher.

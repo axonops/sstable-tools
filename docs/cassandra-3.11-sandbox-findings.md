@@ -115,8 +115,16 @@ component of every source `Statistics.db` and returns the greatest
 it as `source.max-timestamp-micros` in the manifest and prints it during import,
 start, and status. When that value remains ahead of the controller clock, the
 tool warns that default wall-clock mutations may not win and tells the operator
-to use an explicit `USING TIMESTAMP` above the recorded maximum. Automatic
-range-backed `after-source` assignment is not implemented yet.
+to use an explicit `USING TIMESTAMP` above the recorded maximum.
+
+The optional `--timestamp-policy after-source` policy persists a high-water
+mark above both the source maximum and wall clock before each direct or prepared
+mutation that omits both CQL and native-protocol timestamps. The selected
+policy is immutable after first start, and the high-water survives stop, crash
+recovery, and restart. Explicit timestamps remain unchanged. Stock Cassandra
+3.11 cqlsh normally attaches a protocol timestamp, so its ordinary mutations
+do not use the allocator; use explicit `USING TIMESTAMP` for a future-dated
+source when operating through stock cqlsh.
 
 The sandbox does not load or consult production Cassandra roles. Its custom
 authenticator accepts one fixed `sstable_workspace` identity with a random
@@ -172,8 +180,9 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
    3.11.19/native v4;
 7. read the imported row, execute direct and prepared `INSERT`/`UPDATE`
    operations through native transport, prove direct and prepared paging with
-   a page size of one, accept `ONE`/`LOCAL_ONE`, and reject `QUORUM`/`ALL`
-   before execution;
+   a page size of one, accept `ONE`/`LOCAL_ONE`, reject `QUORUM`/`ALL` before
+   execution, preserve explicit CQL and protocol timestamps exactly, and
+   advance the durable `after-source` high-water for timestamp-free clients;
 8. prove direct `DELETE`, `TRUNCATE`, DDL, batch, conditional update, system
    write, and unneeded system read requests fail at the policy boundary, prove
    a prepared `DELETE` fails during prepare, and re-query rows and schema to
@@ -181,7 +190,9 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 9. send `SIGKILL` before flush, verify the production daemon remains queryable
    with no peers, detect worker failure, reconcile the PID, delete the stale
    native credential, and restart with a different password;
-10. verify the inserted and updated values are restored by commit-log replay;
+10. verify the inserted and updated values are restored by commit-log replay,
+    restart without repeating the policy option, and prove the recorded policy
+    and timestamp high-water are reused and advanced;
 11. drain the worker to `STOPPED`, prove the native credential was deleted,
    and verify the production daemon is still queryable before stopping the
    fixture; and
@@ -201,9 +212,9 @@ inventories.
 
 - Reject live Cassandra data directories and require stable snapshot/backup
   component sets.
-- Add range-backed `after-source` timestamp allocation to the parsed-statement
-  guard. Source maximum detection, manifest recording, and future-clock warnings
-  are implemented.
+- Add a compatible future-dated SSTable fixture so CI proves reconciliation
+  against a real source cell above wall clock, not only allocator boundaries
+  derived from real statistics metadata.
 - Implement flush, baseline/delta classification, export, and post-export
   validation. The imported baseline is already recorded and reverified.
 - Add real Debian and RPM installation-layout fixtures.

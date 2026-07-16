@@ -143,6 +143,7 @@ public final class BootstrapMain {
         out.println("  --java-home <path>       Compatible Java installation to use");
         out.println("  --sstables <path>        Stable SSTable directory (repeatable for create)");
         out.println("  --schema <path>          UTF-8 CQL schema bundle for workspace import");
+        out.println("  --timestamp-policy <p>  wall-clock or after-source (workspace start)");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();

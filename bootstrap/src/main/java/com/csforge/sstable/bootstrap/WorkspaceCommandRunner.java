@@ -22,6 +22,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,10 +70,21 @@ final class WorkspaceCommandRunner {
             }
             WorkspaceFileInventory.verifyUnchanged(repository.root(),
                     manifest.baselineInventory());
-            requireSourceMaxTimestamp(manifest);
+            long sourceMaximumMicros = requireSourceMaxTimestamp(manifest);
+            boolean timestampPolicyRecorded = manifest.schemaIdentity().containsKey(
+                    TimestampPolicy.MANIFEST_KEY);
+            TimestampPolicy timestampPolicy = requireTimestampPolicy(
+                    manifest, arguments.timestampPolicy(),
+                    arguments.timestampPolicySpecified());
+            if (!timestampPolicyRecorded) {
+                manifest = manifest.withSchemaIdentity(Collections.singletonMap(
+                        TimestampPolicy.MANIFEST_KEY, timestampPolicy.value()));
+            }
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity());
+            WorkspaceTimestampState.prepare(repository, lock, manifest.workspaceId(),
+                    timestampPolicy, sourceMaximumMicros, !timestampPolicyRecorded);
             repository.save(lock, manifest);
 
             int nativePort = allocateLoopbackPort();
@@ -87,7 +99,8 @@ final class WorkspaceCommandRunner {
                 endpoint = new ChildProcessLauncher().startSandbox(installation,
                         repository.root(), manifest.workspaceId(), nativePort,
                         requiredImportedSchema(manifest, "keyspace"),
-                        requiredImportedSchema(manifest, "table"));
+                        requiredImportedSchema(manifest, "table"), timestampPolicy,
+                        sourceMaximumMicros);
                 new WorkerControlClient().status(repository, manifest.workspaceId());
                 manifest.sourceInventory().verifyUnchanged();
                 WorkspaceFileInventory.verifyUnchanged(repository.root(),
@@ -389,6 +402,16 @@ final class WorkspaceCommandRunner {
             SourceTimestampStatus.print(sourceMaximum,
                     SourceTimestampStatus.currentTimeMicros(), out);
         }
+        String timestampPolicy = manifest.schemaIdentity().get(TimestampPolicy.MANIFEST_KEY);
+        if (timestampPolicy != null) {
+            out.println("timestamp.policy=" + timestampPolicy);
+            TimestampPolicy policy = parseTimestampPolicy(timestampPolicy);
+            Long highWater = WorkspaceTimestampState.validatedHighWater(repository,
+                    manifest.workspaceId(), policy, requireSourceMaxTimestamp(manifest));
+            if (highWater != null) {
+                out.println("timestamp.highWaterMicros=" + highWater);
+            }
+        }
     }
 
     private static void printEndpoint(WorkerEndpoint endpoint, PrintStream out) {
@@ -445,7 +468,7 @@ final class WorkspaceCommandRunner {
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
         output.put("native.authentication", "cassandra-3.11-cqlshrc-v1");
-        output.put("native.query-guard", "cassandra-3.11-workspace-v2");
+        output.put("native.query-guard", "cassandra-3.11-workspace-v3");
         output.put("import.contract", "cassandra-3.11-refresh-v2");
         return output;
     }
@@ -481,6 +504,34 @@ final class WorkspaceCommandRunner {
             throw new WorkspaceException("Imported workspace source timestamp metadata is "
                     + "invalid", e);
         }
+    }
+
+    private static TimestampPolicy requireTimestampPolicy(WorkspaceManifest manifest,
+                                                          TimestampPolicy requested,
+                                                          boolean explicitlyRequested)
+            throws WorkspaceException {
+        String recorded = manifest.schemaIdentity().get(TimestampPolicy.MANIFEST_KEY);
+        if (recorded == null) {
+            return requested;
+        }
+        TimestampPolicy policy = parseTimestampPolicy(recorded);
+        if (explicitlyRequested && policy != requested) {
+            throw new WorkspaceException("Workspace timestamp policy is " + recorded
+                    + "; restart with --timestamp-policy " + recorded);
+        }
+        return policy;
+    }
+
+    private static TimestampPolicy parseTimestampPolicy(String recorded)
+            throws WorkspaceException {
+        final TimestampPolicy policy;
+        try {
+            policy = TimestampPolicy.valueOf(recorded.replace('-', '_').toUpperCase(
+                    java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new WorkspaceException("Workspace timestamp policy is invalid", e);
+        }
+        return policy;
     }
 
     private static void verifyBaselineIfPresent(WorkspaceRepository repository,

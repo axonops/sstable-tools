@@ -167,14 +167,23 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
         String handler = System.getProperty(WorkspaceQueryHandler.HANDLER_PROPERTY);
         String keyspace = System.getProperty(WorkspaceQueryHandler.KEYSPACE_PROPERTY);
         String table = System.getProperty(WorkspaceQueryHandler.TABLE_PROPERTY);
+        String workspaceId = System.getProperty(WorkspaceQueryHandler.WORKSPACE_ID_PROPERTY);
+        String timestampPolicy = System.getProperty(
+                WorkspaceQueryHandler.TIMESTAMP_POLICY_PROPERTY);
+        String sourceMaximum = System.getProperty(
+                WorkspaceQueryHandler.SOURCE_MAX_TIMESTAMP_PROPERTY);
         if (startNativeTransport) {
             if (!WorkspaceQueryHandler.class.getName().equals(handler)
                     || keyspace == null || keyspace.isEmpty()
-                    || table == null || table.isEmpty()) {
+                    || table == null || table.isEmpty()
+                    || workspaceId == null || workspaceId.isEmpty()
+                    || timestampPolicy == null || timestampPolicy.isEmpty()
+                    || sourceMaximum == null || sourceMaximum.isEmpty()) {
                 throw new IllegalStateException("Native transport requires the workspace query "
-                        + "guard and an imported table target");
+                        + "guard, timestamp policy, and an imported table target");
             }
-        } else if (handler != null || keyspace != null || table != null) {
+        } else if (handler != null || keyspace != null || table != null
+                || workspaceId != null || timestampPolicy != null || sourceMaximum != null) {
             throw new IllegalStateException("Import workers must not expose a native query "
                     + "handler target");
         }

@@ -35,4 +35,30 @@ public class BootstrapArgumentsTest {
             Assert.assertTrue(e.getMessage().contains("only valid with workspace create"));
         }
     }
+
+    @Test
+    public void parsesOnlySupportedStartTimestampPolicies() throws Exception {
+        BootstrapArguments afterSource = BootstrapArguments.parse(new String[]{
+                "workspace", "start", "workspace", "--timestamp-policy", "after-source"
+        });
+        Assert.assertEquals(TimestampPolicy.AFTER_SOURCE, afterSource.timestampPolicy());
+
+        try {
+            BootstrapArguments.parse(new String[]{
+                    "workspace", "status", "workspace", "--timestamp-policy", "wall-clock"
+            });
+            Assert.fail("Expected timestamp policy outside start to fail");
+        } catch (BootstrapException e) {
+            Assert.assertTrue(e.getMessage().contains("only valid with workspace start"));
+        }
+
+        try {
+            BootstrapArguments.parse(new String[]{
+                    "workspace", "start", "workspace", "--timestamp-policy", "unsafe"
+            });
+            Assert.fail("Expected unknown timestamp policy to fail");
+        } catch (BootstrapException e) {
+            Assert.assertTrue(e.getMessage().contains("wall-clock or after-source"));
+        }
+    }
 }
