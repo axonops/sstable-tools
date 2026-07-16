@@ -65,6 +65,7 @@ public class ChildProcessLauncherTest {
         Assert.assertTrue(command.contains("-Dcassandra.load_ring_state=false"));
         Assert.assertTrue(command.contains("-Dcassandra.start_rpc=false"));
         Assert.assertTrue(command.contains("-Dcassandra.start_native_transport=true"));
+        Assert.assertTrue(command.contains("-XX:+DisableAttachMechanism"));
         Assert.assertTrue(command.contains("-javaagent:" + jamm));
         Assert.assertTrue(command.contains("--native-port"));
         Assert.assertTrue(command.contains("19042"));
@@ -100,6 +101,7 @@ public class ChildProcessLauncherTest {
         Assert.assertTrue(command.contains("-Dcassandra.join_ring=false"));
         Assert.assertTrue(command.contains("-Dcassandra.load_ring_state=false"));
         Assert.assertTrue(command.contains("-Dcassandra.start_rpc=false"));
+        Assert.assertTrue(command.contains("-XX:+DisableAttachMechanism"));
     }
 
     private static Path locationOf(Class<?> type) throws Exception {

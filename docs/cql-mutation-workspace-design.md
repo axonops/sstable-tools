@@ -251,7 +251,9 @@ version, Java version, and hashes of Cassandra JARs relevant to the adapter.
 
 The worker starts a real, isolated single-node Cassandra instance with:
 
-- loopback listen, RPC, and JMX addresses;
+- loopback-only native CQL and authenticated control addresses;
+- Thrift RPC, internode messaging, and JMX connectors absent, with JVM attach
+  disabled for the release worker;
 - an automatically allocated native-protocol port;
 - private data, saved-cache, hints, commit-log, log, and system directories;
 - a single-node topology and replication factor one;

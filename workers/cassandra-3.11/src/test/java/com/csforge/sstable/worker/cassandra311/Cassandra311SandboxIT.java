@@ -253,6 +253,13 @@ public class Cassandra311SandboxIT {
             WorkerEndpoint firstEndpoint = WorkerEndpoint.read(
                     workspace.resolve("state/worker.properties"));
             assertWorkerEndpoint(firstEndpoint, nativeEndpoint);
+            Path jcmd = javaHome.resolve("bin/jcmd");
+            Assert.assertTrue("Selected Cassandra JDK has no jcmd: " + jcmd,
+                    Files.isRegularFile(jcmd));
+            CommandResult attach = run(Arrays.asList(jcmd.toString(),
+                    Long.toString(firstEndpoint.pid()), "VM.version"));
+            Assert.assertNotEquals("JVM attach unexpectedly reached the workspace worker:\n"
+                    + attach.output, 0, attach.exitCode);
             CommandResult kill = run(Arrays.asList("/bin/kill", "-KILL",
                     Long.toString(firstEndpoint.pid())));
             Assert.assertEquals(kill.output, 0, kill.exitCode);

@@ -253,6 +253,7 @@ public final class ChildProcessLauncher {
         command.add(installation.java().executable().toString());
         command.add("-Xms512m");
         command.add("-Xmx512m");
+        command.add("-XX:+DisableAttachMechanism");
         command.add("-javaagent:" + findJamm(installation));
         command.add("-Dcassandra.config=" + configuration.toUri());
         command.add("-Dcassandra.storagedir=" + workspace);

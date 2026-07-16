@@ -56,9 +56,13 @@ java.io.tmpdir=<workspace>/runtime/tmp
 The YAML binds native and RPC addresses to `127.0.0.1`, uses an allocated native
 port, disables Thrift, CDC, hinted handoff, snapshots, and backups, and directs
 data, commit log, hints, caches, CDC, logs, and temporary files below the
-workspace. JMX properties are absent. The adapter validates every address and
-mutable path after `DatabaseDescriptor.daemonInitialization()` and aborts on a
-symlink or path escape.
+workspace. JMX connector properties are absent and rejected if injected. The
+worker JVM also uses `-XX:+DisableAttachMechanism`, preventing ordinary
+same-user JVM attach tools from dynamically starting a local management agent.
+Cassandra still registers in-process MBeans, but no JMX connector exposes them.
+The adapter validates every address and mutable path after
+`DatabaseDescriptor.daemonInitialization()` and aborts on a symlink or path
+escape.
 
 Cassandra 3.11 returns early from `StorageService.initServer()` when gossip is
 disabled. That prevents `MessagingService.listen()` and all seed contact, but
@@ -105,7 +109,8 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 4. start the thin JAR against the same SHA-512-pinned 3.11.19 final tarball
    using JDK 8;
 5. verify the worker's native and control endpoints are loopback-only,
-   dynamically allocated, and distinct from the production ports;
+   dynamically allocated, and distinct from the production ports, then prove
+   that the selected JDK's `jcmd` cannot attach to the worker;
 6. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
    PyPy 2.7 runtime, disable Python bytecode writes into the Cassandra
    installation, and verify Cassandra 3.11.19/native v4;
