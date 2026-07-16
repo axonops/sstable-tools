@@ -417,7 +417,7 @@ final class WorkspaceCommandRunner {
         Map<String, String> output = new LinkedHashMap<>();
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
-        output.put("native.query-guard", "cassandra-3.11-workspace-v1");
+        output.put("native.query-guard", "cassandra-3.11-workspace-v2");
         output.put("import.contract", "cassandra-3.11-refresh-v1");
         return output;
     }

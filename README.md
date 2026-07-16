@@ -194,6 +194,12 @@ authorization behind this statement guard. Treat the dynamically allocated
 loopback endpoint as local sensitive access until per-workspace credentials are
 implemented.
 
+Native requests must use consistency `ONE` or `LOCAL_ONE`. The guard preserves
+the requested value and rejects every other consistency level; it never
+silently downgrades `QUORUM`, `ALL`, or another distributed level. Because the
+sandbox keyspace is RF=1, it provides no evidence about source-cluster replica
+acknowledgement, repair, or Paxos behavior.
+
 The [thin JAR dependency record](docs/packaging-dependencies.md) documents the
 provided/packaged boundary and the build checks that enforce it. GitHub Actions
 runs the complete reactor on Java 17 and tests each adapter on its declared Java
@@ -245,11 +251,12 @@ imports matching `ma` and `mc` fixtures. It starts the thin JAR worker from the
 same installed distribution on private loopback endpoints, reads the imported
 row, runs `INSERT` and `UPDATE` with the distribution's `cqlsh`, verifies
 forbidden direct and prepared statements are rejected without data/schema
-changes, forces worker termination, verifies the production daemon remains
-isolated and queryable, reconciles the recorded worker PID, restarts, verifies
-workspace commit-log replay, and drains cleanly. GitHub Actions runs the same
-profile against a SHA-512-pinned 3.11.19 archive and supplies a SHA-256-pinned
-PyPy 2.7 runtime
+changes, exercises direct and prepared paging, accepts `ONE`/`LOCAL_ONE`, and
+rejects `QUORUM`/`ALL`. It then forces worker termination, verifies the
+production daemon remains isolated and queryable, reconciles the recorded
+worker PID, restarts, verifies workspace commit-log replay, and drains cleanly.
+GitHub Actions runs the same profile against a SHA-512-pinned 3.11.19 archive
+and supplies a SHA-256-pinned PyPy 2.7 runtime
 required by that release's `cqlsh` launcher.
 
 Compatibility is deliberately conservative until broader installed-package

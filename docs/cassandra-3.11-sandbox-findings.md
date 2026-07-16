@@ -101,6 +101,14 @@ counter mutation, system-table write, non-workspace user-table access, and
 unneeded system-table read with a stable `SSTABLE_TOOLS_POLICY` invalid-request
 error. Rejection occurs before delegation to Cassandra's `QueryProcessor`.
 
+The handler also inspects the native request's consistency level immediately
+before delegation. It accepts only `ONE` and `LOCAL_ONE` for reads and writes.
+It does not ignore or translate the client value. `ANY`, `TWO`, `THREE`,
+`QUORUM`, `LOCAL_QUORUM`, `EACH_QUORUM`, `ALL`, `SERIAL`, and `LOCAL_SERIAL`
+fail with a policy error. The sandbox keyspace is normalized to RF=1, so a
+distributed acknowledgement level would otherwise be misleading rather than
+evidence of source-cluster consistency.
+
 The sandbox still uses `AllowAllAuthenticator` and `AllowAllAuthorizer` and
 does not load production Cassandra roles. The query guard, not production RBAC,
 is the current authorization boundary. The endpoint is loopback-only, but
@@ -144,8 +152,10 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 6. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
    PyPy 2.7 runtime, disable Python bytecode writes into the Cassandra
    installation, and verify Cassandra 3.11.19/native v4;
-7. read the imported row, then execute direct and prepared `INSERT`/`UPDATE`
-   operations through native transport;
+7. read the imported row, execute direct and prepared `INSERT`/`UPDATE`
+   operations through native transport, prove direct and prepared paging with
+   a page size of one, accept `ONE`/`LOCAL_ONE`, and reject `QUORUM`/`ALL`
+   before execution;
 8. prove direct `DELETE`, `TRUNCATE`, DDL, batch, conditional update, system
    write, and unneeded system read requests fail at the policy boundary, prove
    a prepared `DELETE` fails during prepare, and re-query rows and schema to

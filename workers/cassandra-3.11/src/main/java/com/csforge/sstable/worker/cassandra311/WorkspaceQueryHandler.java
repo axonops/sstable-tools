@@ -15,6 +15,7 @@ import org.apache.cassandra.cql3.statements.ParsedStatement;
 import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.cql3.statements.UpdateStatement;
 import org.apache.cassandra.cql3.statements.UseStatement;
+import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
@@ -47,6 +48,7 @@ public final class WorkspaceQueryHandler implements QueryHandler {
             throws RequestExecutionException, RequestValidationException {
         ParsedStatement.Prepared parsed = QueryProcessor.parseStatement(query, state);
         requireAllowed(parsed.statement);
+        requireLocalConsistency(options);
         return delegate.process(query, state, options, customPayload, queryStartNanoTime);
     }
 
@@ -78,6 +80,7 @@ public final class WorkspaceQueryHandler implements QueryHandler {
                                          long queryStartNanoTime)
             throws RequestExecutionException, RequestValidationException {
         requireAllowed(statement);
+        requireLocalConsistency(options);
         return delegate.processPrepared(statement, state, options, customPayload,
                 queryStartNanoTime);
     }
@@ -127,6 +130,16 @@ public final class WorkspaceQueryHandler implements QueryHandler {
 
     private boolean isWorkspaceTable(CFMetaData metadata) {
         return keyspace.equals(metadata.ksName) && table.equals(metadata.cfName);
+    }
+
+    private static void requireLocalConsistency(QueryOptions options)
+            throws InvalidRequestException {
+        ConsistencyLevel consistency = options.getConsistency();
+        if (consistency != ConsistencyLevel.ONE
+                && consistency != ConsistencyLevel.LOCAL_ONE) {
+            throw rejected("consistency level " + consistency
+                    + " is disabled; use ONE or LOCAL_ONE");
+        }
     }
 
     private static boolean isRequiredSystemRead(CFMetaData metadata) {

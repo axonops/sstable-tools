@@ -529,6 +529,12 @@ requests with Cassandra before classification and uses a stable
 not copied into the sandbox; ephemeral per-workspace authentication remains a
 required issue #7 deliverable.
 
+The Cassandra 3.11 guard preserves the native request consistency value and
+accepts only `ONE` or `LOCAL_ONE`. It rejects every other level rather than
+silently reducing it to the sandbox's single replica. This workspace provides
+local read/write and commit-log durability behavior; it cannot reproduce
+distributed replica acknowledgement, read repair, or Paxos semantics.
+
 ### 11.2 Timestamp and TTL behavior
 
 By default, Cassandra assigns the sandbox node's current microsecond timestamp.
