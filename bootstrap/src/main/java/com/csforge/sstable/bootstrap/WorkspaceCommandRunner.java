@@ -75,9 +75,10 @@ final class WorkspaceCommandRunner {
             repository.save(lock, manifest);
 
             int nativePort = allocateLoopbackPort();
-            String token = controlToken();
+            String token = randomSecret();
+            String nativePassword = randomSecret();
             Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
-                    nativePort, token);
+                    nativePort, token, nativePassword);
             repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.ENDPOINT_PATH);
 
             WorkerEndpoint endpoint = null;
@@ -94,6 +95,7 @@ final class WorkspaceCommandRunner {
                 repository.save(lock, manifest);
                 printStatus(repository, manifest, out);
                 printEndpoint(endpoint, out);
+                printNativeAuthentication(repository, out);
             } catch (BootstrapException | WorkspaceException e) {
                 if (endpoint != null) {
                     try {
@@ -103,6 +105,8 @@ final class WorkspaceCommandRunner {
                     }
                 }
                 try {
+                    repository.deleteOwnedFile(lock,
+                            Cassandra311SandboxConfig.CQLSHRC_PATH);
                     WorkspaceManifest current = repository.load();
                     if (current.state() != WorkspaceState.FAILED_RECOVERABLE) {
                         repository.save(lock, current.fail("Sandbox start failed: "
@@ -264,6 +268,7 @@ final class WorkspaceCommandRunner {
             printStatus(repository, manifest, out);
             if (endpoint != null) {
                 printEndpoint(endpoint, out);
+                printNativeAuthentication(repository, out);
             }
         }
     }
@@ -277,6 +282,7 @@ final class WorkspaceCommandRunner {
             verifySchemaIfPresent(repository, manifest);
             verifyBaselineIfPresent(repository, manifest);
             if (manifest.state() == WorkspaceState.STOPPED) {
+                repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
                 printStatus(repository, manifest, out);
                 return;
             }
@@ -290,6 +296,7 @@ final class WorkspaceCommandRunner {
             try {
                 endpoint = new WorkerControlClient().stop(repository,
                         manifest.workspaceId());
+                repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
                 manifest.sourceInventory().verifyUnchanged();
                 verifyBaselineIfPresent(repository, manifest);
             } catch (WorkspaceException e) {
@@ -327,16 +334,19 @@ final class WorkspaceCommandRunner {
                         repository.save(lock, manifest);
                         printStatus(repository, manifest, out);
                         printEndpoint(running, out);
+                        printNativeAuthentication(repository, out);
                         return;
                     } catch (WorkspaceException unreachable) {
                         new WorkerProcessProbe().requireMatchingWorkerStopped(endpoint,
                                 manifest.workspaceId(), repository.root());
                     }
                     manifest = manifest.recoverTo(WorkspaceState.STOPPED);
+                    repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
                     repository.save(lock, manifest);
                 } else if (recoveryTarget == WorkspaceState.NEW
                         || recoveryTarget == WorkspaceState.VALIDATED) {
                     manifest = manifest.recover();
+                    repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
                     repository.save(lock, manifest);
                 } else {
                     throw new WorkspaceException("Recovery from " + recoveryTarget
@@ -380,6 +390,13 @@ final class WorkspaceCommandRunner {
                 + endpoint.controlPort());
     }
 
+    private static void printNativeAuthentication(WorkspaceRepository repository,
+                                                  PrintStream out) {
+        out.println("worker.username=" + Cassandra311SandboxConfig.NATIVE_USERNAME);
+        out.println("worker.cqlshrc="
+                + repository.root().resolve(Cassandra311SandboxConfig.CQLSHRC_PATH));
+    }
+
     private static String singleLine(String value) {
         return value.replace('\r', ' ').replace('\n', ' ');
     }
@@ -417,6 +434,7 @@ final class WorkspaceCommandRunner {
         Map<String, String> output = new LinkedHashMap<>();
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
+        output.put("native.authentication", "cassandra-3.11-cqlshrc-v1");
         output.put("native.query-guard", "cassandra-3.11-workspace-v2");
         output.put("import.contract", "cassandra-3.11-refresh-v1");
         return output;
@@ -516,7 +534,7 @@ final class WorkspaceCommandRunner {
         }
     }
 
-    private static String controlToken() {
+    private static String randomSecret() {
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
         StringBuilder token = new StringBuilder(64);

@@ -35,6 +35,9 @@ java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace status ./case
 
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
+  workspace stop ./case
+
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace recover ./case
 ```
 
@@ -53,8 +56,11 @@ New delta files are allowed; changing or removing a baseline file fails closed.
 
 The bootstrap does not discover or load Cassandra for create, status, stop, or
 recover. Import and start launch a release-specific child JVM against the
-selected installation. `cqlsh`, explicit flush, export, and destroy remain
-later implementation stages.
+selected installation. Cassandra 3.11 start and live status output include the
+loopback native endpoint, fixed username, and owner-only `state/cqlshrc` path
+needed by the installation's stock cqlsh. A convenience `workspace cqlsh`
+wrapper, explicit flush, export, and destroy remain later implementation
+stages.
 
 ## Owned layout
 
@@ -193,6 +199,11 @@ identity fails closed. Other worker-owned recovery remains unimplemented. A
 worker exit code alone is never sufficient evidence that a transition
 completed.
 
+Each Cassandra 3.11 start replaces `state/cqlshrc` with a new random 256-bit
+password for the fixed `sstable_workspace` identity. Graceful stop and
+proven-dead worker recovery delete that file. Recovery retains it only when the
+authenticated control channel proves the original worker remains live.
+
 ## Failure and security properties
 
 - A source identity mismatch blocks further mutation work.
@@ -203,6 +214,8 @@ completed.
 - A crash before atomic replacement preserves the previous complete manifest.
 - A crash after replacement exposes the complete successor manifest.
 - The source inventory never authorizes writes to the source paths.
+- Native CQL requires a per-start credential and a loopback client; production
+  Cassandra RBAC is neither imported nor consulted.
 
 This is a local integrity and crash-consistency boundary. It is not a signature
 scheme and does not defend against an attacker who can replace both source data

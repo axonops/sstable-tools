@@ -224,53 +224,65 @@ public class Cassandra311SandboxIT {
             workerRunning = true;
             String[] nativeEndpoint = property(start.output, "worker.native").split(":", 2);
             Assert.assertEquals(start.output, 2, nativeEndpoint.length);
+            Path cqlshrc = Paths.get(property(start.output, "worker.cqlshrc"));
+            Assert.assertEquals(workspace.resolve("state/cqlshrc"), cqlshrc);
+            NativeCredentials credentials = readCredentials(cqlshrc);
+            Assert.assertEquals("sstable_workspace", credentials.username);
 
-            CommandResult version = runCqlsh(Arrays.asList(
+            CommandResult unauthenticated = runCqlsh(Arrays.asList(
                     cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
                     "SHOW VERSION"));
+            Assert.assertNotEquals(unauthenticated.output, 0, unauthenticated.exitCode);
+            Path wrongCqlshrc = createCqlshrc("wrong-password");
+            CommandResult wrongPassword = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint,
+                    wrongCqlshrc, "SHOW VERSION"));
+            Assert.assertNotEquals(wrongPassword.output, 0, wrongPassword.exitCode);
+            Assert.assertTrue(wrongPassword.output,
+                    wrongPassword.output.contains("incorrect"));
+
+            CommandResult version = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint,
+                    cqlshrc, "SHOW VERSION"));
             Assert.assertEquals(version.output, 0, version.exitCode);
             Assert.assertTrue(version.output, version.output.contains("Cassandra 3.11.19"));
             Assert.assertTrue(version.output, version.output.contains("Native protocol v4"));
 
-            CommandResult sourceRow = runCqlsh(Arrays.asList(
-                    cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
+            CommandResult sourceRow = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint, cqlshrc,
                     "SELECT user_name, password, state FROM blog.users "
                             + "WHERE user_name = 'frodo';"));
             Assert.assertEquals(sourceRow.output, 0, sourceRow.exitCode);
             Assert.assertTrue(sourceRow.output, sourceRow.output.contains("frodo"));
             Assert.assertTrue(sourceRow.output, sourceRow.output.contains("pass@"));
 
-            CommandResult mutate = runCqlsh(Arrays.asList(
-                    cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
+            CommandResult mutate = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint, cqlshrc,
                     "INSERT INTO blog.users (user_name, password, gender, state, birth_year) "
                             + "VALUES ('sam', 'inserted', 'male', 'CA', 1980); "
                             + "UPDATE blog.users SET password = 'after' "
                             + "WHERE user_name = 'frodo';"));
             Assert.assertEquals(mutate.output, 0, mutate.exitCode);
 
-            assertPolicyRejected(cqlsh, nativeEndpoint,
+            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "DELETE FROM blog.users WHERE user_name = 'sam';");
-            assertPolicyRejected(cqlsh, nativeEndpoint,
+            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "TRUNCATE blog.users;");
-            assertPolicyRejected(cqlsh, nativeEndpoint,
+            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "CREATE TABLE blog.forbidden (id text PRIMARY KEY);");
-            assertPolicyRejected(cqlsh, nativeEndpoint,
+            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "BEGIN BATCH INSERT INTO blog.users "
                             + "(user_name, password) VALUES ('batch', 'forbidden'); "
                             + "APPLY BATCH;");
-            assertPolicyRejected(cqlsh, nativeEndpoint,
+            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "UPDATE blog.users SET password = 'conditional' "
                             + "WHERE user_name = 'frodo' IF password = 'after';");
-            assertPolicyRejected(cqlsh, nativeEndpoint,
+            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "UPDATE system.local SET cluster_name = 'compromised' "
                             + "WHERE key = 'local';");
-            assertPolicyRejected(cqlsh, nativeEndpoint,
+            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
                     "SELECT * FROM system.batchlog;");
 
             CommandResult prepared = runPreparedPolicyCheck(cassandraHome,
-                    nativeEndpoint[0], nativeEndpoint[1]);
+                    nativeEndpoint[0], nativeEndpoint[1], credentials);
             Assert.assertEquals(prepared.output, 0, prepared.exitCode);
-            assertGuardedState(cqlsh, nativeEndpoint);
+            assertGuardedState(cqlsh, nativeEndpoint, cqlshrc);
 
             CommandResult status = run(command(controllerJava(), toolJar,
                     "workspace", "status", workspace.toString()));
@@ -307,6 +319,7 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(recover.output, 0, recover.exitCode);
             Assert.assertTrue(recover.output,
                     recover.output.contains("workspace.state=STOPPED"));
+            Assert.assertFalse(Files.exists(cqlshrc));
 
             start = run(command(controllerJava(), toolJar,
                     "--cassandra-home", cassandraHome.toString(),
@@ -315,11 +328,13 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(start.output + workerError(workspace), 0, start.exitCode);
             workerRunning = true;
             nativeEndpoint = property(start.output, "worker.native").split(":", 2);
+            cqlshrc = Paths.get(property(start.output, "worker.cqlshrc"));
+            NativeCredentials restartedCredentials = readCredentials(cqlshrc);
+            Assert.assertNotEquals(credentials.password, restartedCredentials.password);
             WorkerEndpoint restartedEndpoint = WorkerEndpoint.read(
                     workspace.resolve("state/worker.properties"));
             assertWorkerEndpoint(restartedEndpoint, nativeEndpoint);
-            CommandResult replayed = runCqlsh(Arrays.asList(
-                    cqlsh.toString(), nativeEndpoint[0], nativeEndpoint[1], "-e",
+            CommandResult replayed = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint, cqlshrc,
                     "SELECT user_name, password FROM blog.users;"));
             Assert.assertEquals(replayed.output, 0, replayed.exitCode);
             Assert.assertTrue(replayed.output, replayed.output.contains("prepared"));
@@ -331,6 +346,7 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(stop.output, 0, stop.exitCode);
             Assert.assertTrue(stop.output, stop.output.contains("workspace.state=STOPPED"));
             workerRunning = false;
+            Assert.assertFalse(Files.exists(cqlshrc));
             production.assertRunning("Graceful worker stop affected production Cassandra");
             assertProductionIsolated(cqlsh, "after graceful worker stop");
         } finally {
@@ -394,17 +410,19 @@ public class Cassandra311SandboxIT {
 
     private static void assertPolicyRejected(Path cqlsh,
                                              String[] endpoint,
+                                             Path cqlshrc,
                                              String cql) throws Exception {
-        CommandResult rejected = runCqlsh(Arrays.asList(cqlsh.toString(), endpoint[0],
-                endpoint[1], "-e", cql));
+        CommandResult rejected = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc, cql));
         Assert.assertNotEquals("Forbidden CQL unexpectedly succeeded:\n" + cql + "\n"
                 + rejected.output, 0, rejected.exitCode);
         Assert.assertTrue(rejected.output, rejected.output.contains("SSTABLE_TOOLS_POLICY"));
     }
 
-    private static void assertGuardedState(Path cqlsh, String[] endpoint) throws Exception {
-        CommandResult rows = runCqlsh(Arrays.asList(cqlsh.toString(), endpoint[0], endpoint[1],
-                "-e", "SELECT user_name, password FROM blog.users;"));
+    private static void assertGuardedState(Path cqlsh,
+                                           String[] endpoint,
+                                           Path cqlshrc) throws Exception {
+        CommandResult rows = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc,
+                "SELECT user_name, password FROM blog.users;"));
         Assert.assertEquals(rows.output, 0, rows.exitCode);
         Assert.assertTrue(rows.output, rows.output.contains("frodo"));
         Assert.assertTrue(rows.output, rows.output.contains("prepared"));
@@ -412,8 +430,8 @@ public class Cassandra311SandboxIT {
         Assert.assertFalse(rows.output, rows.output.contains("batch"));
         Assert.assertTrue(rows.output, rows.output.contains("2 rows"));
 
-        CommandResult schema = runCqlsh(Arrays.asList(cqlsh.toString(), endpoint[0],
-                endpoint[1], "-e", "SELECT table_name FROM system_schema.tables "
+        CommandResult schema = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc,
+                "SELECT table_name FROM system_schema.tables "
                         + "WHERE keyspace_name = 'blog';"));
         Assert.assertEquals(schema.output, 0, schema.exitCode);
         Assert.assertTrue(schema.output, schema.output.contains("users"));
@@ -423,7 +441,9 @@ public class Cassandra311SandboxIT {
 
     private static CommandResult runPreparedPolicyCheck(Path cassandraHome,
                                                          String host,
-                                                         String port) throws Exception {
+                                                         String port,
+                                                         NativeCredentials credentials)
+            throws Exception {
         Path lib = cassandraHome.resolve("lib");
         Path driver = singleMatch(lib, "cassandra-driver-internal-only-*.zip");
         String filename = driver.getFileName().toString();
@@ -445,9 +465,14 @@ public class Cassandra311SandboxIT {
 
         String script = "from cassandra.cluster import Cluster\n"
                 + "from cassandra import ConsistencyLevel\n"
+                + "from cassandra.auth import PlainTextAuthProvider\n"
                 + "from cassandra.query import SimpleStatement\n"
-                + "import sys\n"
-                + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]))\n"
+                + "import os, sys\n"
+                + "auth = PlainTextAuthProvider("
+                + "username=os.environ['SSTABLE_TOOLS_TEST_USERNAME'], "
+                + "password=os.environ['SSTABLE_TOOLS_TEST_PASSWORD'])\n"
+                + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]), "
+                + "auth_provider=auth)\n"
                 + "session = cluster.connect()\n"
                 + "local_read = SimpleStatement("
                 + "\"SELECT user_name FROM blog.users WHERE user_name = 'frodo'\", "
@@ -497,7 +522,42 @@ public class Cassandra311SandboxIT {
         Map<String, String> environment = new TreeMap<>();
         environment.put("PYTHONDONTWRITEBYTECODE", "1");
         environment.put("PYTHONPATH", pythonPath.toString());
+        environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
+        environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
         return run(Arrays.asList(python2(), "-c", script, host, port), environment);
+    }
+
+    private Path createCqlshrc(String password) throws IOException {
+        Path path = Files.createTempFile(temporary.getRoot().toPath(), "wrong-cqlshrc-", ".ini");
+        Files.write(path, Arrays.asList("[authentication]",
+                "username = sstable_workspace", "password = " + password),
+                StandardCharsets.US_ASCII);
+        return path;
+    }
+
+    private static NativeCredentials readCredentials(Path path) throws IOException {
+        String username = null;
+        String password = null;
+        for (String line : Files.readAllLines(path, StandardCharsets.US_ASCII)) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("username = ")) {
+                username = trimmed.substring("username = ".length());
+            } else if (trimmed.startsWith("password = ")) {
+                password = trimmed.substring("password = ".length());
+            }
+        }
+        if (username == null || password == null) {
+            throw new IOException("Invalid generated cqlshrc " + path);
+        }
+        return new NativeCredentials(username, password);
+    }
+
+    private static List<String> cqlshCommand(Path cqlsh,
+                                             String[] endpoint,
+                                             Path cqlshrc,
+                                             String cql) {
+        return Arrays.asList(cqlsh.toString(), "--cqlshrc", cqlshrc.toString(),
+                endpoint[0], endpoint[1], "-e", cql);
     }
 
     private static Path singleMatch(Path directory, String glob) throws IOException {
@@ -816,6 +876,16 @@ public class Cassandra311SandboxIT {
         private CommandResult(int exitCode, String output) {
             this.exitCode = exitCode;
             this.output = output;
+        }
+    }
+
+    private static final class NativeCredentials {
+        private final String username;
+        private final String password;
+
+        private NativeCredentials(String username, String password) {
+            this.username = username;
+            this.password = password;
         }
     }
 }

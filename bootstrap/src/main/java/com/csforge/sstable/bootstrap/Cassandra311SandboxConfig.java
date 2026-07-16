@@ -11,7 +11,9 @@ import java.util.UUID;
 final class Cassandra311SandboxConfig {
     static final String CONFIG_PATH = "runtime/cassandra.yaml";
     static final String CONTROL_TOKEN_PATH = "state/control.token";
+    static final String CQLSHRC_PATH = "state/cqlshrc";
     static final String ENDPOINT_PATH = "state/worker.properties";
+    static final String NATIVE_USERNAME = "sstable_workspace";
 
     private Cassandra311SandboxConfig() {
     }
@@ -20,14 +22,21 @@ final class Cassandra311SandboxConfig {
                       WorkspaceLock lock,
                       UUID workspaceId,
                       int nativePort,
-                      String controlToken) throws WorkspaceException {
+                      String controlToken,
+                      String nativePassword) throws WorkspaceException {
         if (nativePort < 1 || nativePort > 65535
-                || controlToken == null || !controlToken.matches("[0-9a-f]{64}")) {
+                || controlToken == null || !controlToken.matches("[0-9a-f]{64}")
+                || nativePassword == null || !nativePassword.matches("[0-9a-f]{64}")) {
             throw new WorkspaceException("Invalid Cassandra 3.11 sandbox endpoint inputs");
         }
         writeConfiguration(repository, lock, workspaceId, nativePort, true);
         repository.writeOwnedFile(lock, CONTROL_TOKEN_PATH,
                 (controlToken + "\n").getBytes(StandardCharsets.US_ASCII));
+        String cqlshrc = "[authentication]\n"
+                + "username = " + NATIVE_USERNAME + "\n"
+                + "password = " + nativePassword + "\n";
+        repository.writeOwnedFile(lock, CQLSHRC_PATH,
+                cqlshrc.getBytes(StandardCharsets.US_ASCII));
     }
 
     static void writeImport(WorkspaceRepository repository,
@@ -37,6 +46,7 @@ final class Cassandra311SandboxConfig {
         if (nativePort < 1 || nativePort > 65535) {
             throw new WorkspaceException("Invalid Cassandra 3.11 import endpoint input");
         }
+        repository.deleteOwnedFile(lock, CQLSHRC_PATH);
         writeConfiguration(repository, lock, workspaceId, nativePort, false);
     }
 
@@ -47,10 +57,16 @@ final class Cassandra311SandboxConfig {
                                            boolean startNativeTransport)
             throws WorkspaceException {
         Path root = repository.root();
+        String authenticator = startNativeTransport
+                ? "com.csforge.sstable.worker.cassandra311.WorkspaceAuthenticator"
+                : "AllowAllAuthenticator";
+        String roleManager = startNativeTransport
+                ? "com.csforge.sstable.worker.cassandra311.WorkspaceRoleManager"
+                : "CassandraRoleManager";
         String yaml = "cluster_name: 'sstable-tools-" + workspaceId + "'\n"
-                + "authenticator: AllowAllAuthenticator\n"
+                + "authenticator: " + authenticator + "\n"
                 + "authorizer: AllowAllAuthorizer\n"
-                + "role_manager: CassandraRoleManager\n"
+                + "role_manager: " + roleManager + "\n"
                 + "internode_authenticator: "
                 + "org.apache.cassandra.auth.AllowAllInternodeAuthenticator\n"
                 + "partitioner: org.apache.cassandra.dht.Murmur3Partitioner\n"

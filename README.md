@@ -144,10 +144,10 @@ workspace artifacts are written below `workers/cassandra-<line>/target/`.
 The shared workspace manifest commands are available in those thin JARs. The
 Cassandra 3.11 artifact also contains schema/header validation, copy-based
 SSTable import, isolated-daemon start, status, stop, and crash recovery.
-Its native endpoint now guards direct and prepared CQL statements, but
-ephemeral workspace authentication, timestamp policy, explicit flush/delta
-export, and broader fixture coverage remain under development, so this is not
-yet an operator-ready write workflow.
+Its native endpoint now requires an ephemeral workspace credential and guards
+direct and prepared CQL statements. Timestamp policy, explicit flush/delta
+export, live-source rejection, and broader fixture coverage remain under
+development, so this is not yet an operator-ready write workflow.
 
 > **DANGER:** Never use SSTable import, mutation, compaction, or export against
 > files owned by a running production Cassandra process. Stop the owning
@@ -174,9 +174,19 @@ java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
   workspace start ./case
 ```
 
-`workspace start` prints the private native endpoint for the installation's
-unmodified `cqlsh`. The schema bundle and SSTable sources must remain outside
-the workspace and unchanged. The importer recognizes Cassandra 3.11 Big `ma`,
+`workspace start` and a live `workspace status` print `worker.native`,
+`worker.username`, and `worker.cqlshrc`. Pass the generated owner-only
+configuration to the installation's unmodified `cqlsh`; the password does not
+appear in the process arguments:
+
+```shell
+/opt/apache-cassandra-3.11.19/bin/cqlsh \
+  --cqlshrc /absolute/path/from/worker.cqlshrc \
+  127.0.0.1 PORT_FROM_worker.native
+```
+
+The schema bundle and SSTable sources must remain outside the workspace and
+unchanged. The importer recognizes Cassandra 3.11 Big `ma`,
 `mb`, and `mc` descriptors with a complete digest-bearing component set,
 subject to exact schema and partitioner validation. Real successful-import
 coverage currently includes the repository's `ma` and `mc` fixtures. Its `mb`
@@ -189,10 +199,12 @@ allows cqlsh metadata reads, `SELECT` against the imported table, and
 non-conditional `INSERT`/`UPDATE` against that table. It rejects `DELETE`,
 `TRUNCATE`, DDL, batches, LWT, counters, other user tables, system writes, and
 unneeded system reads before Cassandra executes them. Production roles are not
-loaded: the sandbox currently uses Cassandra's allow-all authentication and
-authorization behind this statement guard. Treat the dynamically allocated
-loopback endpoint as local sensitive access until per-workspace credentials are
-implemented.
+loaded. A workspace authenticator and fixed in-memory role manager accept only
+the `sstable_workspace` identity with a random 256-bit password from
+`state/cqlshrc`, and only from loopback. The password rotates on every start;
+the file is removed after a graceful stop or dead-worker recovery. Cassandra's
+`AllowAllAuthorizer` remains configured because the parsed-statement guard, not
+production RBAC, is the authorization boundary.
 
 Native requests must use consistency `ONE` or `LOCAL_ONE`. The guard preserves
 the requested value and rejects every other consistency level; it never
@@ -249,12 +261,15 @@ It first starts a complete production-like daemon on normal ports 7000 and
 format, and destination-collision failures without retaining user data, then
 imports matching `ma` and `mc` fixtures. It starts the thin JAR worker from the
 same installed distribution on private loopback endpoints, reads the imported
-row, runs `INSERT` and `UPDATE` with the distribution's `cqlsh`, verifies
+row, proves missing and incorrect credentials are rejected, runs `INSERT` and
+`UPDATE` with the generated `cqlshrc` and the distribution's `cqlsh`, verifies
 forbidden direct and prepared statements are rejected without data/schema
 changes, exercises direct and prepared paging, accepts `ONE`/`LOCAL_ONE`, and
 rejects `QUORUM`/`ALL`. It then forces worker termination, verifies the
 production daemon remains isolated and queryable, reconciles the recorded
-worker PID, restarts, verifies workspace commit-log replay, and drains cleanly.
+worker PID, removes the stale credential, restarts with a rotated credential,
+verifies workspace commit-log replay, and drains cleanly without retaining the
+credential file.
 GitHub Actions runs the same profile against a SHA-512-pinned 3.11.19 archive
 and supplies a SHA-256-pinned PyPy 2.7 runtime
 required by that release's `cqlsh` launcher.

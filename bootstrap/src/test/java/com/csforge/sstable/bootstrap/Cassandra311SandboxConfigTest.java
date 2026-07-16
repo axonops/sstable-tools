@@ -18,6 +18,8 @@ import org.junit.rules.TemporaryFolder;
 public class Cassandra311SandboxConfigTest {
     private static final String TOKEN =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    private static final String PASSWORD =
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
     @Rule
     public final TemporaryFolder temporary = new TemporaryFolder();
@@ -37,7 +39,7 @@ public class Cassandra311SandboxConfigTest {
         try (WorkspaceLock lock = repository.acquire()) {
             repository.initialize(lock, manifest);
             Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
-                    19042, TOKEN);
+                    19042, TOKEN, PASSWORD);
         }
 
         String yaml = new String(Files.readAllBytes(
@@ -45,6 +47,10 @@ public class Cassandra311SandboxConfigTest {
         Assert.assertTrue(yaml.contains("listen_address: 127.0.0.1"));
         Assert.assertTrue(yaml.contains("start_rpc: false"));
         Assert.assertTrue(yaml.contains("start_native_transport: true"));
+        Assert.assertTrue(yaml.contains("authenticator: "
+                + "com.csforge.sstable.worker.cassandra311.WorkspaceAuthenticator"));
+        Assert.assertTrue(yaml.contains("role_manager: "
+                + "com.csforge.sstable.worker.cassandra311.WorkspaceRoleManager"));
         Assert.assertTrue(yaml.contains("internode_authenticator: "
                 + "org.apache.cassandra.auth.AllowAllInternodeAuthenticator"));
         Assert.assertTrue(yaml.contains("native_transport_port: 19042"));
@@ -54,6 +60,11 @@ public class Cassandra311SandboxConfigTest {
         Assert.assertEquals(TOKEN + "\n", new String(Files.readAllBytes(
                 root.resolve(Cassandra311SandboxConfig.CONTROL_TOKEN_PATH)),
                 StandardCharsets.US_ASCII));
+        Assert.assertEquals("[authentication]\nusername = sstable_workspace\npassword = "
+                        + PASSWORD + "\n",
+                new String(Files.readAllBytes(root.resolve(
+                        Cassandra311SandboxConfig.CQLSHRC_PATH)),
+                        StandardCharsets.US_ASCII));
     }
 
     @Test
@@ -77,7 +88,11 @@ public class Cassandra311SandboxConfigTest {
         String yaml = new String(Files.readAllBytes(
                 root.resolve(Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
         Assert.assertTrue(yaml.contains("start_native_transport: false"));
+        Assert.assertTrue(yaml.contains("authenticator: AllowAllAuthenticator"));
+        Assert.assertTrue(yaml.contains("role_manager: CassandraRoleManager"));
         Assert.assertFalse(Files.exists(root.resolve(
                 Cassandra311SandboxConfig.CONTROL_TOKEN_PATH)));
+        Assert.assertFalse(Files.exists(root.resolve(
+                Cassandra311SandboxConfig.CQLSHRC_PATH)));
     }
 }

@@ -5,7 +5,7 @@
   use until the blockers below are complete
 - **Validated runtime:** Apache Cassandra 3.11.19 final distribution, JDK 8,
   native protocol v4
-- **Last updated:** 2026-07-15
+- **Last updated:** 2026-07-16
 
 ## Result
 
@@ -109,11 +109,14 @@ fail with a policy error. The sandbox keyspace is normalized to RF=1, so a
 distributed acknowledgement level would otherwise be misleading rather than
 evidence of source-cluster consistency.
 
-The sandbox still uses `AllowAllAuthenticator` and `AllowAllAuthorizer` and
-does not load production Cassandra roles. The query guard, not production RBAC,
-is the current authorization boundary. The endpoint is loopback-only, but
-ephemeral per-workspace native-protocol credentials are still required before
-this becomes an operator-ready write tool.
+The sandbox does not load or consult production Cassandra roles. Its custom
+authenticator accepts one fixed `sstable_workspace` identity with a random
+256-bit password generated for each worker start. The owner-only
+`state/cqlshrc` carries that credential to stock cqlsh without placing the
+password in command arguments. Authentication is limited to loopback clients,
+and a fixed in-memory role manager grants login to only that non-superuser
+identity. Cassandra's `AllowAllAuthorizer` remains configured: the parsed
+statement guard, not production RBAC, is the authorization boundary.
 
 ## Lifecycle and recovery
 
@@ -121,7 +124,10 @@ The child publishes a strict, atomic endpoint record containing workspace UUID,
 PID, Cassandra release, loopback native/control endpoints, status, and times.
 The control socket accepts `STATUS` and `STOP` only with a random 256-bit token
 stored as a mode-0600 workspace file. Graceful stop closes native transport and
-drains Cassandra before publishing `STOPPED`.
+drains Cassandra before publishing `STOPPED`. Start and live status output also
+publish the native username and canonical `cqlshrc` path. The native password
+rotates on restart, and graceful stop or dead-worker recovery deletes its
+credential file.
 
 After a failed health check, recovery first tries the authenticated control
 endpoint. If it is unreachable, Linux `/proc/<pid>/cmdline` must prove that the
@@ -149,9 +155,11 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 5. verify the worker's native and control endpoints are loopback-only,
    dynamically allocated, and distinct from the production ports, then prove
    that the selected JDK's `jcmd` cannot attach to the worker;
-6. connect using the tarball's Python-2-only `cqlsh` under a SHA-256-pinned
-   PyPy 2.7 runtime, disable Python bytecode writes into the Cassandra
-   installation, and verify Cassandra 3.11.19/native v4;
+6. prove unauthenticated and incorrect-password cqlsh connections fail, then
+   connect using the generated owner-only `cqlshrc` and the tarball's
+   Python-2-only `cqlsh` under a SHA-256-pinned PyPy 2.7 runtime, disable Python
+   bytecode writes into the Cassandra installation, and verify Cassandra
+   3.11.19/native v4;
 7. read the imported row, execute direct and prepared `INSERT`/`UPDATE`
    operations through native transport, prove direct and prepared paging with
    a page size of one, accept `ONE`/`LOCAL_ONE`, and reject `QUORUM`/`ALL`
@@ -161,17 +169,20 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
    a prepared `DELETE` fails during prepare, and re-query rows and schema to
    show no forbidden change occurred;
 9. send `SIGKILL` before flush, verify the production daemon remains queryable
-   with no peers, detect worker failure, reconcile the PID, and restart;
+   with no peers, detect worker failure, reconcile the PID, delete the stale
+   native credential, and restart with a different password;
 10. verify the inserted and updated values are restored by commit-log replay;
-11. drain the worker to `STOPPED` and verify the production daemon is still
-   queryable before stopping the fixture; and
+11. drain the worker to `STOPPED`, prove the native credential was deleted,
+   and verify the production daemon is still queryable before stopping the
+   fixture; and
 12. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
 
 Unit tests cover strict endpoint/import-result parsing and publication,
-authenticated control, private config generation, schema capture/CQL splitting,
+authenticated control, native credential parsing and loopback enforcement, the
+fixed role manager, private config generation, schema capture/CQL splitting,
 child JVM arguments, lifecycle transitions, baseline verification, stale PID
 handling, symlink/path confinement, and source inventories.
 
@@ -179,8 +190,7 @@ handling, symlink/path confinement, and source inventories.
 
 - Reject live Cassandra data directories and require stable snapshot/backup
   component sets.
-- Add ephemeral per-workspace native-protocol credentials and timestamp-policy
-  enforcement to the parsed-statement guard.
+- Add timestamp-policy enforcement to the parsed-statement guard.
 - Implement flush, baseline/delta classification, export, and post-export
   validation. The imported baseline is already recorded and reverified.
 - Add real Debian and RPM installation-layout fixtures.
@@ -190,4 +200,5 @@ The Cassandra 3.11 vertical prototype covers issue #5's acceptance scope and
 the core import, schema/partitioner rejection, and destination-collision paths
 from issue #6. Issue #6 remains open for compatible `mb`, collection/tuple/UDT,
 compact/dense-table, and broader multi-SSTable fixtures. Issues #7 through #10
-own remaining query-guard policy, flush/export, and the other release adapters.
+own remaining timestamp/query policy, flush/export, and the other release
+adapters.

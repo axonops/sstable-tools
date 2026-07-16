@@ -190,6 +190,17 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
         if (DatabaseDescriptor.startRpc()) {
             throw new IllegalStateException("Thrift RPC must be disabled");
         }
+        if (startNativeTransport
+                && !(DatabaseDescriptor.getAuthenticator()
+                instanceof WorkspaceAuthenticator)) {
+            throw new IllegalStateException("Native transport requires the workspace "
+                    + "authenticator");
+        }
+        if (startNativeTransport
+                && !(DatabaseDescriptor.getRoleManager() instanceof WorkspaceRoleManager)) {
+            throw new IllegalStateException("Native transport requires the workspace role "
+                    + "manager");
+        }
         if (DatabaseDescriptor.startNativeTransport() != startNativeTransport
                 || startNativeTransport
                 && DatabaseDescriptor.getNativeTransportPort() != nativePort) {

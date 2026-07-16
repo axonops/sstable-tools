@@ -251,7 +251,7 @@ version, Java version, and hashes of Cassandra JARs relevant to the adapter.
 
 The worker starts a real, isolated single-node Cassandra instance with:
 
-- loopback-only native CQL and authenticated control addresses;
+- loopback-only authenticated native CQL and control addresses;
 - Thrift RPC, internode messaging, and JMX connectors absent, with JVM attach
   disabled for the release worker;
 - an automatically allocated native-protocol port;
@@ -269,6 +269,15 @@ delta export incomplete or misleading. It must inspect both direct and prepared
 statements; string-prefix filtering is insufficient. All four target branches
 support configuring a native-protocol `QueryHandler`; each version-specific
 guard delegates accepted statements to that release's `QueryProcessor`.
+
+Production RBAC is not copied into a workspace. Each start generates a random
+256-bit native password in an owner-only `state/cqlshrc`; the matching worker
+authenticator accepts only a fixed, non-superuser workspace identity from a
+loopback client. A fixed in-memory role manager supplies login status without
+querying `system_auth`. The password rotates on restart and the credential file
+is deleted after graceful stop or dead-worker recovery. This identity gate does
+not replace statement authorization: the version-specific query guard remains
+the boundary that decides which CQL may execute.
 
 Running on a Cassandra host does not mean running inside the production
 Cassandra process. The worker uses a unique cluster name, loopback-only
@@ -296,6 +305,8 @@ workspace/
   state/
     pid
     endpoint.json
+    control.token
+    cqlshrc
     baseline-inventory.json
 ```
 
@@ -432,10 +443,16 @@ sstable-tools workspace start ./case
 sstable-tools workspace cqlsh ./case
 ```
 
-`start` prints a loopback endpoint for an external client. `cqlsh` launches the
-client from the selected Cassandra installation, which avoids unsupported
-client/server version combinations. The current 3.11 implementation provides
-`start`; the convenience `workspace cqlsh` wrapper remains planned.
+`start` prints a loopback endpoint, fixed username, and generated `cqlshrc` path
+for an external client. `cqlsh` launches the client from the selected Cassandra
+installation, which avoids unsupported client/server version combinations. The
+current 3.11 implementation provides `start`; the convenience `workspace
+cqlsh` wrapper remains planned. Until that wrapper exists, pass the printed
+configuration to the installed client:
+
+```shell
+$CASSANDRA_HOME/bin/cqlsh --cqlshrc /workspace/state/cqlshrc HOST PORT
+```
 
 Example workflow:
 
@@ -526,8 +543,9 @@ The implemented Cassandra 3.11 checkpoint installs this guard through
 `cassandra.custom_query_handler_class`. It parses both direct and prepared
 requests with Cassandra before classification and uses a stable
 `SSTABLE_TOOLS_POLICY` invalid-request error for rejections. Production RBAC is
-not copied into the sandbox; ephemeral per-workspace authentication remains a
-required issue #7 deliverable.
+not copied into the sandbox. The implemented per-start credential and fixed
+role authenticate one loopback workspace identity; `AllowAllAuthorizer` is used
+behind the query guard and does not expose production permissions.
 
 The Cassandra 3.11 guard preserves the native request consistency value and
 accepts only `ONE` or `LOCAL_ONE`. It rejects every other level rather than
@@ -706,13 +724,15 @@ The same black-box suite runs against all workers:
 1. validate and import every compatible fixture;
 2. reject every incompatible fixture before startup;
 3. query expected rows through the matching Apache cqlsh/native driver;
-4. execute `INSERT` and each supported `UPDATE` shape;
-5. verify read-your-writes before flush;
-6. export delta, reopen base plus delta in a fresh workspace, and verify identical
+4. reject missing and incorrect credentials, and verify credentials rotate on
+   restart and disappear on stop or dead-worker recovery;
+5. execute `INSERT` and each supported `UPDATE` shape;
+6. verify read-your-writes before flush;
+7. export delta, reopen base plus delta in a fresh workspace, and verify identical
    logical results and timestamps;
-7. import the export into a clean node of the declared target release;
-8. prove every source hash is unchanged;
-9. verify that forbidden statements fail without producing delta files.
+8. import the export into a clean node of the declared target release;
+9. prove every source hash is unchanged;
+10. verify that forbidden statements fail without producing delta files.
 
 ### 15.3 Failure tests
 
@@ -787,7 +807,9 @@ The feature is ready for a release line only when:
 6. incompatible formats and schema mismatches fail before writes are enabled;
 7. forbidden mutations are rejected through both direct and prepared protocol
    paths;
-8. workspace recovery is documented and tested for every persisted state.
+8. missing and incorrect native credentials are rejected, credentials rotate
+   across starts, and stopped workspaces retain no native credential; and
+9. workspace recovery is documented and tested for every persisted state.
 
 ## 18. Alternatives considered
 
