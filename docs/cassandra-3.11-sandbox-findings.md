@@ -228,8 +228,11 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
     stopping the fixture;
 15. import the original `ma` base plus generated latest-format `me` delta into
     a fresh workspace, re-query all logical values, write timestamps, and TTLs,
-    and prove they match the pre-export state exactly; and
-16. reject the repository's `mb` fixture because its explicit
+    and prove they match the pre-export state exactly;
+16. use the installed distribution's stock `sstableloader` to stream that base
+    and delta into the clean gossip/internode-enabled Cassandra fixture, then
+    prove normal native reads return the same values and cell metadata; and
+17. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
@@ -249,9 +252,10 @@ inventories.
 - Add a compatible future-dated SSTable fixture so CI proves reconciliation
   against a real source cell above wall clock, not only allocator boundaries
   derived from real statistics metadata.
-- Implement clean-node import validation and forced-termination coverage at
-  every export boundary. Quiesced flush, release verification, atomic
-  delta/snapshot publication, and base-plus-delta reopening are implemented.
+- Implement forced-termination coverage at every export boundary. Quiesced
+  flush, release verification, atomic delta/snapshot publication,
+  base-plus-delta reopening, and stock-loader clean-node validation are
+  implemented.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 

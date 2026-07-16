@@ -4,7 +4,9 @@ import com.csforge.sstable.worker.api.WorkerEndpoint;
 import com.csforge.sstable.workspace.ExportRecord;
 import com.csforge.sstable.workspace.Hashing;
 import com.csforge.sstable.workspace.ManifestFile;
+import com.csforge.sstable.workspace.SourceComponent;
 import com.csforge.sstable.workspace.SourceInventory;
+import com.csforge.sstable.workspace.SstableSet;
 import com.csforge.sstable.workspace.WorkspaceFlushResult;
 import com.csforge.sstable.workspace.WorkspaceManifest;
 import com.csforge.sstable.workspace.WorkspaceRepository;
@@ -541,6 +543,38 @@ public class Cassandra311SandboxIT {
             capturedDelta.verifyUnchanged();
             production.assertRunning("Delta replay affected production Cassandra");
             assertProductionIsolated(cqlsh, "after base-plus-delta replay");
+
+            CommandResult targetSchema = runCqlsh(Arrays.asList(cqlsh.toString(),
+                    "127.0.0.1", Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT),
+                    "-e", "CREATE KEYSPACE blog WITH replication = {'class': "
+                    + "'SimpleStrategy', 'replication_factor': 1}; "
+                    + "CREATE TABLE blog.users (user_name varchar PRIMARY KEY, "
+                    + "password varchar, gender varchar, state varchar, "
+                    + "birth_year bigint);"));
+            Assert.assertEquals(targetSchema.output, 0, targetSchema.exitCode);
+            Path loaderTable = Files.createDirectories(temporary.getRoot().toPath()
+                    .resolve("clean-node-load/blog/users"));
+            copyInventory(capturedSource, loaderTable);
+            copyInventory(capturedDelta, loaderTable);
+            SourceInventory loaderInventory = SourceInventory.capture(
+                    Collections.singletonList(loaderTable));
+            Map<String, String> loaderEnvironment = new TreeMap<>();
+            loaderEnvironment.put("JAVA_HOME", javaHome.toString());
+            loaderEnvironment.put("CASSANDRA_HOME", cassandraHome.toString());
+            CommandResult loaded = run(Arrays.asList(
+                    cassandraHome.resolve("bin/sstableloader").toString(),
+                    "--no-progress", "-d", "127.0.0.1", loaderTable.toString()),
+                    loaderEnvironment);
+            Assert.assertEquals(loaded.output, 0, loaded.exitCode);
+            String[] productionEndpoint = new String[]{"127.0.0.1",
+                    Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT)};
+            Assert.assertEquals("Clean target node changed logical values or cell metadata",
+                    expectedLogicalState,
+                    readLogicalState(cassandraHome, productionEndpoint, null));
+            loaderInventory.verifyUnchanged();
+            capturedSource.verifyUnchanged();
+            capturedDelta.verifyUnchanged();
+            production.assertRunning("SSTable loader affected target Cassandra");
         } finally {
             try {
                 if (workerRunning && start != null && start.exitCode == 0) {
@@ -724,13 +758,15 @@ public class Cassandra311SandboxIT {
                                                  NativeCredentials credentials)
             throws Exception {
         String script = "from cassandra.cluster import Cluster\n"
-                + "from cassandra.auth import PlainTextAuthProvider\n"
                 + "import os, sys\n"
+                + (credentials == null
+                ? "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]))\n"
+                : "from cassandra.auth import PlainTextAuthProvider\n"
                 + "auth = PlainTextAuthProvider("
                 + "username=os.environ['SSTABLE_TOOLS_TEST_USERNAME'], "
                 + "password=os.environ['SSTABLE_TOOLS_TEST_PASSWORD'])\n"
                 + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]), "
-                + "auth_provider=auth)\n"
+                + "auth_provider=auth)\n")
                 + "session = cluster.connect()\n"
                 + "rows = session.execute(\"SELECT user_name, password, state, "
                 + "writetime(password) AS password_ts, writetime(state) AS state_ts, "
@@ -744,8 +780,10 @@ public class Cassandra311SandboxIT {
         Map<String, String> environment = new TreeMap<>();
         environment.put("PYTHONDONTWRITEBYTECODE", "1");
         environment.put("PYTHONPATH", pythonDriverPath(cassandraHome));
-        environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
-        environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
+        if (credentials != null) {
+            environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
+            environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
+        }
         CommandResult result = run(Arrays.asList(python2(), "-c", script,
                 endpoint[0], endpoint[1]), environment);
         Assert.assertEquals(result.output, 0, result.exitCode);
@@ -757,6 +795,18 @@ public class Cassandra311SandboxIT {
         }
         Assert.assertEquals(result.output, 4, state.size());
         return state;
+    }
+
+    private static void copyInventory(SourceInventory inventory, Path destination)
+            throws Exception {
+        inventory.verifyUnchanged();
+        for (SstableSet set : inventory.sets()) {
+            for (SourceComponent component : set.components()) {
+                Path target = destination.resolve(component.path().getFileName().toString());
+                Files.copy(component.path(), target, StandardCopyOption.COPY_ATTRIBUTES);
+            }
+        }
+        inventory.verifyUnchanged();
     }
 
     private static String pythonDriverPath(Path cassandraHome) throws Exception {

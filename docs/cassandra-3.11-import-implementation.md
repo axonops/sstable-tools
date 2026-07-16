@@ -93,7 +93,10 @@ stale hardcoded token list. The `ma` path reads its row through stock cqlsh,
 applies `INSERT` and `UPDATE`, kills the worker, restarts it, verifies private
 commit-log replay, exports generated `me` SSTables, and imports the original
 base plus that delta into a fresh workspace. The fresh worker returns identical
-logical values, write timestamps, and TTLs.
+logical values, write timestamps, and TTLs. The installed distribution's stock
+`sstableloader` also streams those sets into the normal
+gossip/internode-enabled Cassandra fixture, whose native endpoint returns the
+same values and cell metadata.
 
 ## Manifest baseline
 

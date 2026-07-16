@@ -334,7 +334,10 @@ manifest reconciliation after an interrupted controller transition, runs
 Cassandra's extended verifier, atomically publishes a delta, and drains cleanly
 without retaining the credential file. Finally it imports the original `ma`
 base plus the generated latest-format `me` delta into a fresh workspace and
-proves all values, write timestamps, and TTLs are identical.
+proves all values, write timestamps, and TTLs are identical. The distribution's
+stock `sstableloader` then streams the same base and delta into the
+gossip/internode-enabled clean Cassandra fixture, where normal native reads
+prove the same cell metadata again.
 GitHub Actions runs the same profile against a SHA-512-pinned 3.11.19 archive
 and supplies a SHA-256-pinned PyPy 2.7 runtime
 required by that release's `cqlsh` launcher.
