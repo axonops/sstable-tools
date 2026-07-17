@@ -196,7 +196,7 @@ version, and starts a child process equivalent to:
 
 ```shell
 java -cp "/path/sstable-tools.jar:$CASSANDRA_HOME/conf:$CASSANDRA_HOME/lib/*" \
-  com.csforge.sstable.worker.Main --workspace /path/to/workspace
+  com.axonops.sstable.worker.Main --workspace /path/to/workspace
 ```
 
 The public entry point remains convenient:

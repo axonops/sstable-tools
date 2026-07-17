@@ -12,7 +12,7 @@ Each `sstable-tools-cassandra-<line>.jar` contains only:
 - the project-owned `worker-api` classes;
 - exactly one project-owned release adapter;
 - Gson, relocated from `com.google.gson` to
-  `com.csforge.sstable.internal.gson`, for strict manifest JSON parsing; and
+  `com.axonops.sstable.internal.gson`, for strict manifest JSON parsing; and
 - the adapter metadata and executable manifest.
 
 Gson `2.14.0` is the only packaged third-party library. It is used because Java

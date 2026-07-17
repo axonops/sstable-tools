@@ -426,6 +426,17 @@ and failures/errors/skips to both the job log and the GitHub Actions run
 summary. The live Cassandra 3.11 job includes the cqlsh mutation, recovery,
 flush, export, reopen, and clean-node-import integration suite.
 
+The `stopped-cqlsh-source` matrix additionally starts a stock Cassandra Docker
+image for every supported release line. Its stock `cqlsh` creates a table,
+executes `INSERT` and `UPDATE`, reads the mutated row, and flushes it. The job
+then stops the source node before copying its SSTables and asks the matching
+tool JAR to create and integrity-check a workspace from that completed copy.
+This proves that each artifact accepts real, version-matched SSTable component
+sets without ever pointing the tool at a live source node. Full workspace
+import, cqlsh mutation, flush, export, and replay remain an acceptance test for
+3.11 only: the 4.0, 4.1, and 5.0 adapters currently provide runtime linkage
+verification but do not yet implement the write workflow.
+
 Compatibility remains deliberately conservative until the remaining release
 lines have equivalent installed-package fixtures in CI:
 
@@ -447,6 +458,9 @@ lines have equivalent installed-package fixtures in CI:
 * [Cassandra 3.11 sandbox findings](docs/cassandra-3.11-sandbox-findings.md) -
   Implemented vertical prototype, isolation controls, test evidence, and
   remaining go-live blockers.
+* [Real Cassandra CI coverage](docs/ci-real-cassandra-testing.md) -
+  Stock-cqlsh source generation coverage for every release line and the
+  current boundary for full write-workflow acceptance.
 
 ## cqlsh
 cql shell similiar and modeled after the C* cqlsh tool. Enables issuing cql queries against raw sstables and

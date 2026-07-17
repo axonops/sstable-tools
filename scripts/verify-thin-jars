@@ -10,10 +10,10 @@ declare -A expected_class_versions=(
   ["5.0"]="61"
 )
 declare -A runtime_classes=(
-  ["3.11"]="com.csforge.sstable.worker.cassandra311.Cassandra311Runtime"
-  ["4.0"]="com.csforge.sstable.worker.cassandra40.Cassandra40Runtime"
-  ["4.1"]="com.csforge.sstable.worker.cassandra41.Cassandra41Runtime"
-  ["5.0"]="com.csforge.sstable.worker.cassandra50.Cassandra50Runtime"
+  ["3.11"]="com.axonops.sstable.worker.cassandra311.Cassandra311Runtime"
+  ["4.0"]="com.axonops.sstable.worker.cassandra40.Cassandra40Runtime"
+  ["4.1"]="com.axonops.sstable.worker.cassandra41.Cassandra41Runtime"
+  ["5.0"]="com.axonops.sstable.worker.cassandra50.Cassandra50Runtime"
 )
 
 smoke_root="$(mktemp -d)"
@@ -47,19 +47,19 @@ for release_line in "${release_lines[@]}"; do
         cassandra_entry="$entry"
         break
         ;;
-      com/csforge/sstable/bootstrap/BootstrapMain.class)
+      com/axonops/sstable/bootstrap/BootstrapMain.class)
         bootstrap_found=true
         ;;
-      com/csforge/sstable/worker/api/WorkerMain.class)
+      com/axonops/sstable/worker/api/WorkerMain.class)
         worker_main_found=true
         ;;
-      com/csforge/sstable/internal/gson/Gson.class)
+      com/axonops/sstable/internal/gson/Gson.class)
         relocated_gson_found=true
         ;;
-      META-INF/*|com/|com/csforge/|com/csforge/sstable/|\
-      com/csforge/sstable/bootstrap/*|com/csforge/sstable/workspace/*|\
-      com/csforge/sstable/internal/|com/csforge/sstable/internal/gson/*|\
-      com/csforge/sstable/worker/*|sstable-tools-adapter.properties)
+      META-INF/*|com/|com/axonops/|com/axonops/sstable/|\
+      com/axonops/sstable/bootstrap/*|com/axonops/sstable/workspace/*|\
+      com/axonops/sstable/internal/|com/axonops/sstable/internal/gson/*|\
+      com/axonops/sstable/worker/*|sstable-tools-adapter.properties)
         ;;
       *)
         unexpected_entry="$entry"

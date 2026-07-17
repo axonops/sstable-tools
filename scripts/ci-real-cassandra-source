@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path>\n' "$0" >&2
+  exit 64
+}
+
+image=''
+release=''
+tool_jar=''
+output_root=''
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image) image=${2:-}; shift 2 ;;
+    --release) release=${2:-}; shift 2 ;;
+    --tool-jar) tool_jar=${2:-}; shift 2 ;;
+    --output-root) output_root=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$image" && -n "$release" && -n "$tool_jar" && -n "$output_root" ]] || usage
+[[ -f "$tool_jar" ]] || { printf 'Tool JAR not found: %s\n' "$tool_jar" >&2; exit 1; }
+
+container="sstable-tools-ci-${release//./-}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+container=${container:0:63}
+source_dir="$output_root/source"
+workspace="$output_root/workspace"
+mkdir -p "$source_dir"
+
+cleanup() {
+  docker rm -f "$container" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker pull "$image"
+docker run -d --name "$container" \
+  -e MAX_HEAP_SIZE=512M \
+  -e HEAP_NEWSIZE=128M \
+  "$image" >/dev/null
+
+ready=false
+for attempt in $(seq 1 90); do
+  if docker exec "$container" cqlsh 127.0.0.1 9042 -e \
+      'SELECT release_version FROM system.local;' >"$output_root/cqlsh-ready.log" 2>&1; then
+    ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$ready" != true ]]; then
+  docker logs "$container" >"$output_root/cassandra.log" 2>&1 || true
+  printf 'Cassandra %s did not become ready\n' "$release" >&2
+  exit 1
+fi
+
+run_cqlsh() {
+  local statement=$1
+  printf 'cqlsh> %s\n' "$statement"
+  docker exec "$container" cqlsh 127.0.0.1 9042 -e "$statement"
+}
+
+run_cqlsh "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};"
+run_cqlsh 'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);'
+run_cqlsh "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('source-row', 'seed', 'new');"
+run_cqlsh "UPDATE ci_source.events SET payload = 'updated', state = 'ready' WHERE event_id = 'source-row';"
+selected="$(docker exec "$container" cqlsh 127.0.0.1 9042 -e \
+  "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'source-row';")"
+printf '%s\n' "$selected"
+[[ "$selected" == *source-row* && "$selected" == *updated* && "$selected" == *ready* ]] || {
+  printf 'Stock cqlsh did not return the expected mutated row\n' >&2
+  exit 1
+}
+
+docker exec "$container" nodetool flush ci_source events
+table_dir="$(docker exec "$container" sh -c \
+  "find /var/lib/cassandra/data/ci_source -mindepth 1 -maxdepth 1 -type d -name 'events-*' | head -n 1")"
+[[ -n "$table_dir" ]] || { printf 'No flushed table directory found\n' >&2; exit 1; }
+docker stop "$container" >/dev/null
+[[ "$(docker inspect -f '{{.State.Running}}' "$container")" == false ]] || {
+  printf 'Cassandra source container is still running\n' >&2
+  exit 1
+}
+docker cp "$container:$table_dir/." "$source_dir"
+find "$source_dir" -maxdepth 1 -type f -printf '%f\n' | sort | tee "$output_root/source-components.txt"
+find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -quit | grep -q . || {
+  printf 'Stopped Cassandra source did not yield Data.db\n' >&2
+  exit 1
+}
+
+java -jar "$tool_jar" workspace create "$workspace" --sstables "$source_dir" \
+  | tee "$output_root/workspace-create.log"
+java -jar "$tool_jar" workspace status "$workspace" \
+  | tee "$output_root/workspace-status.log"
+grep -q 'workspace.state=VALIDATED' "$output_root/workspace-create.log"
+grep -q 'source.integrity=verified' "$output_root/workspace-status.log"
+
+printf 'Verified Cassandra %s stock-cqlsh source generation and stopped-SSTable workspace capture.\n' \
+  "$release"

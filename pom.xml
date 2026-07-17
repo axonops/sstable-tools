@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.csforge</groupId>
+  <groupId>com.axonops</groupId>
   <artifactId>sstable-tools-parent</artifactId>
   <version>3.11.0-alpha12-SNAPSHOT</version>
   <packaging>pom</packaging>
@@ -50,17 +50,17 @@
         <version>${junit.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.csforge</groupId>
+        <groupId>com.axonops</groupId>
         <artifactId>sstable-tools-bootstrap</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.csforge</groupId>
+        <groupId>com.axonops</groupId>
         <artifactId>sstable-tools-workspace-core</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.csforge</groupId>
+        <groupId>com.axonops</groupId>
         <artifactId>sstable-tools-worker-api</artifactId>
         <version>${project.version}</version>
       </dependency>

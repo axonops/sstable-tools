@@ -1,8 +1,8 @@
 package org.apache.cassandra.hints;
 
 
-import com.csforge.sstable.MutationReplayer;
-import com.csforge.sstable.MutationTool;
+import com.axonops.sstable.MutationReplayer;
+import com.axonops.sstable.MutationTool;
 import org.apache.cassandra.db.Mutation;
 import org.apache.cassandra.db.partitions.PartitionUpdate;
 import org.apache.cassandra.db.rows.Row;
