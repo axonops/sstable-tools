@@ -197,67 +197,74 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
    update loses under `wall-clock`; prove a timestamp-free prepared update wins
    under `after-source`; and prove the source remains unchanged and production
    remains queryable;
-3. verify source hashes, full data digest, serialization header, extended
+3. generate a second latest-format `me` source whose real cells cover scalar,
+   static, set, list, map, tuple, frozen-UDT, and regular-column metadata; read
+   it through stock cqlsh; perform rich cqlsh `INSERT` and `UPDATE` operations
+   including collection additions and TTL; independently validate every merged
+   value and the live TTL through a prepared driver; flush and export only the
+   delta; reopen base plus delta in a fresh workspace; repeat both query paths;
+   and prove source and delta immutability;
+4. verify source hashes, full data digest, serialization header, extended
    Cassandra verification, one logical imported row, disabled auto-compaction,
    maximum source timestamp, and a baseline inventory while native transport
    remains disabled, after rejecting genuine `ma` fixture copies for schema,
    digest, required-index, unsupported-format, and destination-collision
    failures without retaining table data and proving collision retry;
-4. start the thin JAR against the same SHA-512-pinned 3.11.19 final tarball
+5. start the thin JAR against the same SHA-512-pinned 3.11.19 final tarball
    using JDK 8;
-5. verify the worker's native and control endpoints are loopback-only,
+6. verify the worker's native and control endpoints are loopback-only,
    dynamically allocated, and distinct from the production ports, prove the
    native port refuses the host's non-loopback IPv4 address, then prove that the
    selected JDK's `jcmd` cannot attach to the worker;
-6. prove unauthenticated and incorrect-password cqlsh connections fail, then
+7. prove unauthenticated and incorrect-password cqlsh connections fail, then
    query through `workspace cqlsh --execute` and connect directly using the
    generated owner-only `cqlshrc` and the tarball's
    Python-2-only `cqlsh` under a SHA-256-pinned PyPy 2.7 runtime, disable Python
    bytecode writes into the Cassandra installation, and verify Cassandra
    3.11.19/native v4;
-7. prove direct `DELETE`, `TRUNCATE`, DDL, batch, conditional update, system
+8. prove direct `DELETE`, `TRUNCATE`, DDL, batch, conditional update, system
    write, and unneeded system read requests fail at the policy boundary, prove
    prepared `DELETE` and `ALL` update paths fail before mutation, then flush the
    target table before any accepted write and require a zero-file delta;
-8. stop that policy-only session, prove its credential was removed, restart
+9. stop that policy-only session, prove its credential was removed, restart
    with a rotated credential and the persisted timestamp policy, read the
    imported row, and execute direct and prepared `INSERT`/`UPDATE`
    operations through native transport, prove direct and prepared paging with
    a page size of one, accept `ONE`/`LOCAL_ONE`, reject `QUORUM`/`ALL` before
    execution, preserve explicit CQL and protocol timestamps exactly, and
    advance the durable `after-source` high-water for timestamp-free clients;
-9. send `SIGKILL` before flush, verify the production daemon remains queryable
+10. send `SIGKILL` before flush, verify the production daemon remains queryable
    with no peers, detect worker failure, reconcile the PID, delete the stale
    native credential, and restart with a different password;
-10. verify the inserted and updated values are restored by commit-log replay,
+11. verify the inserted and updated values are restored by commit-log replay,
     restart without repeating the policy option, and prove the recorded policy
     and timestamp high-water are reused and advanced;
-11. issue `workspace flush`, prove native CQL and its credential are removed,
+12. issue `workspace flush`, prove native CQL and its credential are removed,
     wait for all guarded requests, perform a blocking flush of only the target
     table with auto-compaction disabled, and verify the strict full inventory
     plus a non-empty post-baseline delta;
-12. inject the controller-crash boundary where the worker/result are `FLUSHED`
+13. inject the controller-crash boundary where the worker/result are `FLUSHED`
     but the manifest remains `RUNNING`, then prove `workspace status` validates
     the inventory and completes the transition;
-13. force the export controller to halt after verification, the first copied
+14. force the export controller to halt after verification, the first copied
     file, all payload files, the export manifest fsync, the publication rename,
     and the workspace-manifest save; after each halt, rerun the identical
     export, require an exact valid publication, and prove no staging directory
     remains;
-14. run Cassandra extended verification and logical reconciliation, atomically
+15. run Cassandra extended verification and logical reconciliation, atomically
     publish a delta export, verify every recorded path, size, and SHA-256, prove
     no baseline component was copied, and replay the export command
     idempotently;
-15. drain the exported worker to `STOPPED`, prove the native credential remains
+16. drain the exported worker to `STOPPED`, prove the native credential remains
     deleted, and verify the production daemon is still queryable before
     stopping the fixture;
-16. import the original `ma` base plus generated latest-format `me` delta into
+17. import the original `ma` base plus generated latest-format `me` delta into
     a fresh workspace, re-query all logical values, write timestamps, and TTLs,
     and prove they match the pre-export state exactly;
-17. use the installed distribution's stock `sstableloader` to stream that base
+18. use the installed distribution's stock `sstableloader` to stream that base
     and delta into the clean gossip/internode-enabled Cassandra fixture, then
     prove normal native reads return the same values and cell metadata; and
-18. reject the repository's `mb` fixture because its explicit
+19. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.
@@ -280,6 +287,6 @@ inventories.
 The Cassandra 3.11 vertical prototype covers the acceptance scope of issues #5
 and #8 and the core import, schema/partitioner rejection, and
 destination-collision paths from issue #6. Issue #6 remains open for compatible
-`mb`, collection/tuple/UDT, compact/dense-table, and broader multi-SSTable
-fixtures. Issues #7, #9, and #10 own remaining query-shape coverage and the
-other release adapters.
+`mb`, compact/dense-table, legacy-format complex-type, and broader
+multi-SSTable fixtures. Issues #9 and #10 own lifecycle policy and the other
+release adapters.

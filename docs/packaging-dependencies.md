@@ -28,6 +28,14 @@ with Maven `provided` scope. They are loaded only in the worker child process
 from the Cassandra installation selected by the bootstrap. They are never
 shaded into the tool artifact.
 
+The Cassandra 3.11 integration fixture compiler additionally declares stable
+`com.datastax.cassandra:cassandra-driver-core:3.0.1` with Maven `test` scope.
+Cassandra's `CQLSSTableWriter` exposes driver UDT and tuple value types, but the
+published `cassandra-all` POM does not supply those classes transitively. The
+live fixture process uses the matching driver JAR already present in the
+3.11.19 installation; packaging verification proves it is absent from the
+distributed thin JAR.
+
 The compile pins are:
 
 | Adapter | Provided Cassandra dependency | Class-file target |

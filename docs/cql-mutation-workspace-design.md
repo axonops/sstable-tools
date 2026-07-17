@@ -579,6 +579,15 @@ not copied into the sandbox. The implemented per-start credential and fixed
 role authenticate one loopback workspace identity; `AllowAllAuthorizer` is used
 behind the query guard and does not expose production permissions.
 
+The Cassandra 3.11 live profile exercises the complete supported shape set
+against a pinned-writer latest-format source containing scalar, static,
+collection, tuple, and frozen-UDT cells. Stock cqlsh reads the source, performs
+literal `INSERT` and `UPDATE` statements with set/list/map operations and TTL,
+and reads its writes. A prepared driver independently decodes the merged state.
+After flush and delta export, a fresh workspace importing base plus delta
+returns the same values and a still-live TTL, with source and delta hashes
+unchanged.
+
 The Cassandra 3.11 guard preserves the native request consistency value and
 accepts only `ONE` or `LOCAL_ONE`. It rejects every other level rather than
 silently reducing it to the sandbox's single replica. This workspace provides

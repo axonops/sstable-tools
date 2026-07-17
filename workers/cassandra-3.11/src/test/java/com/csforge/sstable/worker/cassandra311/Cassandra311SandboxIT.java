@@ -98,6 +98,13 @@ public class Cassandra311SandboxIT {
             production.assertRunning("Future-timestamp workspaces affected production "
                     + "Cassandra");
 
+            Path shapeSource = createShapeSstableSource(cassandraHome, javaHome);
+            SourceInventory capturedShapeSource = SourceInventory.capture(
+                    Collections.singletonList(shapeSource));
+            assertSupportedDataShapes(toolJar, cassandraHome, javaHome, shapeSource);
+            capturedShapeSource.verifyUnchanged();
+            production.assertRunning("Data-shape workspaces affected production Cassandra");
+
             Path mismatchWorkspace = temporary.newFolder("mismatch-workspace").toPath();
             Path mismatchSchema = createSchemaBundle("text");
             CommandResult mismatchCreate = run(command(controllerJava(), toolJar,
@@ -1100,7 +1107,28 @@ public class Cassandra311SandboxIT {
                                            Path javaHome,
                                            long timestampMicros) throws Exception {
         Path source = temporary.newFolder("future-source").toPath();
-        Path logDirectory = temporary.newFolder("future-writer-log").toPath();
+        runFixtureWriter(cassandraHome, javaHome, source, "future",
+                Long.toString(timestampMicros));
+        Assert.assertTrue("Future fixture writer produced no Data.db",
+                countDataComponents(source) > 0);
+        return source;
+    }
+
+    private Path createShapeSstableSource(Path cassandraHome,
+                                          Path javaHome) throws Exception {
+        Path source = temporary.newFolder("shape-source").toPath();
+        runFixtureWriter(cassandraHome, javaHome, source, "shapes");
+        Assert.assertTrue("Data-shape fixture writer produced no Data.db",
+                countDataComponents(source) > 0);
+        return source;
+    }
+
+    private void runFixtureWriter(Path cassandraHome,
+                                  Path javaHome,
+                                  Path source,
+                                  String kind,
+                                  String... arguments) throws Exception {
+        Path logDirectory = temporary.newFolder(kind + "-writer-log").toPath();
         Path testClasses = Paths.get(Cassandra311FixtureWriter.class.getProtectionDomain()
                 .getCodeSource().getLocation().toURI()).toRealPath();
         List<Path> classpath = new ArrayList<>();
@@ -1120,19 +1148,17 @@ public class Cassandra311SandboxIT {
             }
             joined.append(entry);
         }
-        CommandResult generated = run(Arrays.asList(
+        List<String> command = new ArrayList<>(Arrays.asList(
                 javaHome.resolve("bin/java").toString(),
                 "-Xms128m", "-Xmx512m",
                 "-javaagent:" + singleMatch(cassandraHome.resolve("lib"), "jamm-*.jar"),
                 "-Dcassandra.storagedir=" + source,
                 "-Dcassandra.logdir=" + logDirectory,
                 "-cp", joined.toString(),
-                Cassandra311FixtureWriter.class.getName(), source.toString(),
-                Long.toString(timestampMicros)));
+                Cassandra311FixtureWriter.class.getName(), kind, source.toString()));
+        command.addAll(Arrays.asList(arguments));
+        CommandResult generated = run(command);
         Assert.assertEquals(generated.output, 0, generated.exitCode);
-        Assert.assertTrue("Future fixture writer produced no Data.db",
-                countDataComponents(source) > 0);
-        return source;
     }
 
     private void assertFutureTimestampPolicies(Path toolJar,
@@ -1238,6 +1264,238 @@ public class Cassandra311SandboxIT {
                 "warning.futureSourceTimestamp"));
     }
 
+    private void assertSupportedDataShapes(Path toolJar,
+                                           Path cassandraHome,
+                                           Path javaHome,
+                                           Path source) throws Exception {
+        Path schema = createShapeSchemaBundle();
+        Path workspace = temporary.newFolder("shape-workspace").toPath();
+        createAndImportWorkspace(toolJar, cassandraHome, javaHome, workspace, source,
+                schema);
+        boolean workerRunning = false;
+        Path deltaSstables;
+        List<String> expected;
+        try {
+            CommandResult started = run(command(controllerJava(), toolJar,
+                    "--cassandra-home", cassandraHome.toString(),
+                    "--java-home", javaHome.toString(),
+                    "workspace", "start", workspace.toString()));
+            Assert.assertEquals(started.output + workerError(workspace), 0,
+                    started.exitCode);
+            workerRunning = true;
+            String[] endpoint = property(started.output, "worker.native").split(":", 2);
+            Path cqlshrc = Paths.get(property(started.output, "worker.cqlshrc"));
+            Path cqlsh = cassandraHome.resolve("bin/cqlsh");
+            assertShapeSourceRow(cqlsh, endpoint, cqlshrc);
+
+            CommandResult mutated = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc,
+                    "INSERT INTO shape_fixture.items (tenant, item_id, category, name, "
+                            + "tags, scores, attrs, location, pair, expiring) VALUES "
+                            + "('acct', 1, 'category-insert', 'insert-name', "
+                            + "{'blue'}, [1, 2], {'a': 'one'}, "
+                            + "{street: 'First Street', zip: 100}, "
+                            + "('insert-pair', 10), 'insert-expiring') USING TTL 600; "
+                            + "UPDATE shape_fixture.items USING TTL 600 SET "
+                            + "name = 'updated-name', tags = tags + {'green'}, "
+                            + "scores = [0] + scores, attrs['b'] = 'two', "
+                            + "location = {street: 'Second Street', zip: 200}, "
+                            + "pair = ('updated-pair', 20), "
+                            + "expiring = 'updated-expiring' "
+                            + "WHERE tenant = 'acct' AND item_id = 1; "
+                            + "UPDATE shape_fixture.items SET category = 'category-static' "
+                            + "WHERE tenant = 'acct'; "
+                            + "INSERT INTO shape_fixture.items (tenant, item_id, name) "
+                            + "VALUES ('acct', 2, 'sibling');"));
+            Assert.assertEquals(mutated.output, 0, mutated.exitCode);
+            assertShapeMutationRows(cqlsh, endpoint, cqlshrc);
+            expected = readShapeState(cassandraHome, endpoint,
+                    readCredentials(cqlshrc));
+
+            CommandResult flushed = run(command(controllerJava(), toolJar,
+                    "workspace", "flush", workspace.toString()));
+            Assert.assertEquals(flushed.output + workerError(workspace), 0,
+                    flushed.exitCode);
+            Assert.assertTrue(flushed.output,
+                    Integer.parseInt(property(flushed.output,
+                            "flush.deltaFileCount")) > 0);
+
+            Path deltaExport = temporary.getRoot().toPath().resolve("shape-delta-export");
+            CommandResult exported = run(command(controllerJava(), toolJar,
+                    "workspace", "export", workspace.toString(), "--mode", "delta",
+                    "--output", deltaExport.toString()));
+            Assert.assertEquals(exported.output + workerError(workspace), 0,
+                    exported.exitCode);
+            Assert.assertEquals("EXPORTED", property(exported.output, "workspace.state"));
+            deltaSstables = deltaExport.resolve("sstables");
+            Assert.assertTrue("Data-shape export has no delta SSTables",
+                    countDataComponents(deltaSstables) > 0);
+
+            CommandResult stopped = run(command(controllerJava(), toolJar,
+                    "workspace", "stop", workspace.toString()));
+            Assert.assertEquals(stopped.output, 0, stopped.exitCode);
+            workerRunning = false;
+        } finally {
+            if (workerRunning) {
+                CommandResult stopped = run(command(controllerJava(), toolJar,
+                        "workspace", "stop", workspace.toString()));
+                Assert.assertEquals(stopped.output, 0, stopped.exitCode);
+            }
+        }
+
+        SourceInventory capturedDelta = SourceInventory.capture(
+                Collections.singletonList(deltaSstables));
+        Path replayWorkspace = temporary.newFolder("shape-replay-workspace").toPath();
+        CommandResult replayCreated = run(command(controllerJava(), toolJar,
+                "workspace", "create", replayWorkspace.toString(),
+                "--sstables", source.toString(), "--sstables", deltaSstables.toString(),
+                "--schema", schema.toString()));
+        Assert.assertEquals(replayCreated.output, 0, replayCreated.exitCode);
+        CommandResult replayImported = run(command(controllerJava(), toolJar,
+                "--cassandra-home", cassandraHome.toString(),
+                "--java-home", javaHome.toString(),
+                "workspace", "import", replayWorkspace.toString()));
+        Assert.assertEquals(replayImported.output + importError(replayWorkspace), 0,
+                replayImported.exitCode);
+
+        boolean replayRunning = false;
+        try {
+            CommandResult replayStarted = run(command(controllerJava(), toolJar,
+                    "--cassandra-home", cassandraHome.toString(),
+                    "--java-home", javaHome.toString(),
+                    "workspace", "start", replayWorkspace.toString()));
+            Assert.assertEquals(replayStarted.output + workerError(replayWorkspace), 0,
+                    replayStarted.exitCode);
+            replayRunning = true;
+            String[] endpoint = property(replayStarted.output,
+                    "worker.native").split(":", 2);
+            Path cqlshrc = Paths.get(property(replayStarted.output, "worker.cqlshrc"));
+            assertShapeSourceRow(cassandraHome.resolve("bin/cqlsh"), endpoint, cqlshrc);
+            assertShapeMutationRows(cassandraHome.resolve("bin/cqlsh"), endpoint,
+                    cqlshrc);
+            Assert.assertEquals("Base plus data-shape delta changed logical values",
+                    expected, readShapeState(cassandraHome, endpoint,
+                            readCredentials(cqlshrc)));
+        } finally {
+            if (replayRunning) {
+                CommandResult stopped = run(command(controllerJava(), toolJar,
+                        "workspace", "stop", replayWorkspace.toString()));
+                Assert.assertEquals(stopped.output, 0, stopped.exitCode);
+            }
+        }
+        capturedDelta.verifyUnchanged();
+    }
+
+    private static void assertShapeSourceRow(Path cqlsh,
+                                             String[] endpoint,
+                                             Path cqlshrc) throws Exception {
+        CommandResult selected = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc,
+                "SELECT category, name, tags, scores, attrs, location, pair, expiring "
+                        + "FROM shape_fixture.items WHERE tenant = 'base';"));
+        Assert.assertEquals(selected.output, 0, selected.exitCode);
+        for (String value : Arrays.asList("source-category", "source-name", "seed",
+                "source", "offline-writer", "Source Street", "source-pair",
+                "source-expiring")) {
+            Assert.assertTrue("Stock cqlsh did not render source value " + value + ":\n"
+                    + selected.output, selected.output.contains(value));
+        }
+    }
+
+    private static void assertShapeMutationRows(Path cqlsh,
+                                                String[] endpoint,
+                                                Path cqlshrc) throws Exception {
+        CommandResult selected = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc,
+                "SELECT item_id, category, name, tags, scores, attrs, location, pair, "
+                        + "expiring, ttl(expiring) AS expires_in "
+                        + "FROM shape_fixture.items WHERE tenant = 'acct';"));
+        Assert.assertEquals(selected.output, 0, selected.exitCode);
+        for (String value : Arrays.asList("category-static", "updated-name", "blue",
+                "green", "Second Street", "updated-pair", "updated-expiring",
+                "sibling", "2 rows")) {
+            Assert.assertTrue("Stock cqlsh did not render mutated value " + value + ":\n"
+                    + selected.output, selected.output.contains(value));
+        }
+    }
+
+    private void createAndImportWorkspace(Path toolJar,
+                                          Path cassandraHome,
+                                          Path javaHome,
+                                          Path workspace,
+                                          Path source,
+                                          Path schema) throws Exception {
+        CommandResult created = run(command(controllerJava(), toolJar,
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString(), "--schema", schema.toString()));
+        Assert.assertEquals(created.output, 0, created.exitCode);
+        CommandResult imported = run(command(controllerJava(), toolJar,
+                "--cassandra-home", cassandraHome.toString(),
+                "--java-home", javaHome.toString(),
+                "workspace", "import", workspace.toString()));
+        Assert.assertEquals(imported.output + importError(workspace), 0,
+                imported.exitCode);
+    }
+
+    private static List<String> readShapeState(Path cassandraHome,
+                                               String[] endpoint,
+                                               NativeCredentials credentials)
+            throws Exception {
+        String script = "from cassandra.cluster import Cluster\n"
+                + "from cassandra.auth import PlainTextAuthProvider\n"
+                + "import os, sys\n"
+                + "auth = PlainTextAuthProvider("
+                + "username=os.environ['SSTABLE_TOOLS_TEST_USERNAME'], "
+                + "password=os.environ['SSTABLE_TOOLS_TEST_PASSWORD'])\n"
+                + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]), "
+                + "auth_provider=auth)\n"
+                + "session = cluster.connect()\n"
+                + "selected = session.prepare("
+                + "\"SELECT item_id, category, name, tags, scores, attrs, location, "
+                + "pair, expiring FROM shape_fixture.items WHERE tenant = ?\")\n"
+                + "rows = list(session.execute(selected.bind(('acct',))))\n"
+                + "assert len(rows) == 2\n"
+                + "rows = dict((row.item_id, row) for row in rows)\n"
+                + "first = rows[1]\n"
+                + "assert first.category == 'category-static'\n"
+                + "assert first.name == 'updated-name'\n"
+                + "assert sorted(first.tags) == ['blue', 'green']\n"
+                + "assert first.scores == [0, 1, 2]\n"
+                + "assert first.attrs == {'a': 'one', 'b': 'two'}\n"
+                + "assert first.location.street == 'Second Street'\n"
+                + "assert first.location.zip == 200\n"
+                + "assert first.pair[0] == 'updated-pair' and first.pair[1] == 20\n"
+                + "assert first.expiring == 'updated-expiring'\n"
+                + "second = rows[2]\n"
+                + "assert second.category == 'category-static'\n"
+                + "assert second.name == 'sibling'\n"
+                + "ttl = next(iter(session.execute("
+                + "\"SELECT ttl(expiring) AS expires_in FROM shape_fixture.items "
+                + "WHERE tenant = 'acct' AND item_id = 1\"))).expires_in\n"
+                + "assert ttl is not None and ttl > 0 and ttl <= 600\n"
+                + "print('SHAPE|1|%s|%s|%s|%s|%s|%s|%s|%s|%s' % ("
+                + "first.category, first.name, ','.join(sorted(first.tags)), "
+                + "','.join(str(value) for value in first.scores), "
+                + "','.join('%s=%s' % item for item in sorted(first.attrs.items())), "
+                + "first.location.street, first.location.zip, first.pair[0], "
+                + "first.pair[1]))\n"
+                + "print('SHAPE|2|%s|%s' % (second.category, second.name))\n"
+                + "cluster.shutdown()\n";
+        Map<String, String> environment = new TreeMap<>();
+        environment.put("PYTHONDONTWRITEBYTECODE", "1");
+        environment.put("PYTHONPATH", pythonDriverPath(cassandraHome));
+        environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
+        environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
+        CommandResult result = run(Arrays.asList(python2(), "-c", script,
+                endpoint[0], endpoint[1]), environment);
+        Assert.assertEquals(result.output, 0, result.exitCode);
+        List<String> state = new ArrayList<>();
+        for (String line : result.output.split("\\r?\\n")) {
+            if (line.startsWith("SHAPE|")) {
+                state.add(line);
+            }
+        }
+        Assert.assertEquals(result.output, 2, state.size());
+        return state;
+    }
+
     private static CommandResult runFutureTimestampFreeUpdate(Path cassandraHome,
                                                                String host,
                                                                String port,
@@ -1309,6 +1567,16 @@ public class Cassandra311SandboxIT {
                 "  user_name text PRIMARY KEY,",
                 "  password text",
                 ");"), StandardCharsets.UTF_8);
+        return schema;
+    }
+
+    private Path createShapeSchemaBundle() throws IOException {
+        Path schema = temporary.newFile("schema-shapes.cql").toPath();
+        Files.write(schema, Arrays.asList(
+                "CREATE KEYSPACE shape_fixture WITH replication = {'class': "
+                        + "'SimpleStrategy', 'replication_factor': 1};",
+                Cassandra311FixtureWriter.SHAPE_TYPE + ";",
+                Cassandra311FixtureWriter.SHAPE_TABLE + ";"), StandardCharsets.UTF_8);
         return schema;
     }
 

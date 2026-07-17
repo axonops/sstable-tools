@@ -106,6 +106,14 @@ under `wall-clock`, then prove a timestamp-free prepared update receives a
 winning durable timestamp under `after-source`. Source hashes remain unchanged
 in both cases.
 
+Another pinned-writer `me` source contains regular and static cells plus sets,
+lists, maps, a tuple, a frozen UDT, and scalar values. Stock 3.11.19 cqlsh reads
+the source and performs literal `INSERT` and `UPDATE` operations across every
+shape, including collection additions and a live TTL. A prepared driver checks
+the exact merged values and TTL before flush. The profile exports only the new
+delta, imports base plus delta into a fresh workspace, and repeats both cqlsh
+and prepared validation while rechecking source and delta hashes.
+
 ## Manifest baseline
 
 The baseline inventory contains every regular file in the imported table

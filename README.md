@@ -350,7 +350,13 @@ latest-format `me` source whose cell timestamp is one year ahead of wall clock.
 The profile imports independent copies under both policies, proves an ordinary
 stock-cqlsh update loses under `wall-clock`, proves a timestamp-free prepared
 update wins under `after-source`, and verifies the source remains unchanged and
-the production daemon remains queryable. It then rejects a complete source
+the production daemon remains queryable. A second writer-generated `me` source
+contains scalar, collection, tuple, frozen UDT, static, and regular cells. Stock
+cqlsh reads that source, executes rich `INSERT` and `UPDATE` statements with a
+live TTL, and reads the merged rows; a prepared driver independently validates
+every value and TTL. The profile flushes and exports that delta, reopens base
+plus delta in a fresh workspace, and proves the same logical state and source
+immutability. It then rejects a complete source
 placed beneath that daemon's live storage root before creating a workspace,
 rejects schema, partitioner, digest,
 required-component, unsupported-format, and destination-collision failures
