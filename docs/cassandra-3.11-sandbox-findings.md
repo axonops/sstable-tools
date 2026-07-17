@@ -203,7 +203,9 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
    including collection additions and TTL; independently validate every merged
    value and the live TTL through a prepared driver; flush and export only the
    delta; reopen base plus delta in a fresh workspace; repeat both query paths;
-   and prove source and delta immutability;
+   prove source and delta immutability; refuse to destroy the workspace while
+   its real worker is running; then destroy it after stop using exact UUID
+   confirmation while retaining the external source and delta;
 4. verify source hashes, full data digest, serialization header, extended
    Cassandra verification, one logical imported row, disabled auto-compaction,
    maximum source timestamp, and a baseline inventory while native transport

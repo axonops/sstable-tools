@@ -1,6 +1,7 @@
 package com.csforge.sstable.bootstrap;
 
 import java.nio.file.Paths;
+import java.util.UUID;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -94,6 +95,25 @@ public class BootstrapArgumentsTest {
         assertUsageFailure(new String[]{"workspace", "status", "workspace",
                 "--execute", "SELECT now() FROM system.local"},
                 "only valid with workspace cqlsh");
+    }
+
+    @Test
+    public void requiresExactUuidConfirmationOnlyForWorkspaceDestroy() throws Exception {
+        UUID workspaceId = UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183");
+        BootstrapArguments destroy = BootstrapArguments.parse(new String[]{
+                "workspace", "destroy", "workspace",
+                "--confirm-workspace-id", workspaceId.toString()
+        });
+        Assert.assertEquals(BootstrapArguments.Action.WORKSPACE_DESTROY, destroy.action());
+        Assert.assertEquals(workspaceId, destroy.confirmedWorkspaceId());
+
+        assertUsageFailure(new String[]{"workspace", "destroy", "workspace"},
+                "requires --confirm-workspace-id");
+        assertUsageFailure(new String[]{"workspace", "destroy", "workspace",
+                "--confirm-workspace-id", "not-a-uuid"}, "requires a valid UUID");
+        assertUsageFailure(new String[]{"workspace", "status", "workspace",
+                "--confirm-workspace-id", workspaceId.toString()},
+                "only valid with workspace destroy");
     }
 
     private static void assertUsageFailure(String[] arguments, String expected)

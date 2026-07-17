@@ -42,6 +42,10 @@ java -jar sstable-tools-cassandra-3.11-<version>.jar \
 
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace recover ./case
+
+java -jar sstable-tools-cassandra-3.11-<version>.jar \
+  workspace destroy ./case \
+  --confirm-workspace-id UUID_FROM_workspace.status
 ```
 
 `--sstables` is repeatable. Every value is a directory containing complete
@@ -57,6 +61,13 @@ baseline identities before committing `IMPORTED`. `workspace status`, `start`,
 `flush`, `stop`, and `recover` reverify source, schema, and imported baseline
 hashes.
 New delta files are allowed; changing or removing a baseline file fails closed.
+
+`workspace destroy` is deliberately different from data operations. It does
+not touch or require readable source files and never deletes recorded export
+destinations. It requires the exact manifest UUID and accepts only `NEW`,
+`VALIDATED`, `IMPORTED`, or `STOPPED`. Under the exclusive lock it rejects an
+unexpected root entry and uses a non-following walk confined to the canonical
+workspace. A recorded worker must be proven stopped before removal begins.
 
 The bootstrap does not discover or load Cassandra for create, status, flush,
 stop, or recover. Import and start launch a release-specific child JVM against
@@ -250,8 +261,8 @@ The failed manifest retains its exact prior state in `lastStableState`.
 | Persisted state | Recovery action |
 |---|---|
 | `NEW` | Retry create, or destroy the incomplete workspace |
-| `VALIDATED` | Resume source validation and import |
-| `IMPORTED` | Start the version-matched worker |
+| `VALIDATED` | Resume source validation and import, or destroy the inactive workspace |
+| `IMPORTED` | Start the version-matched worker, or destroy the inactive workspace |
 | `RUNNING` | Check worker health; recover only when its recorded process is stale |
 | `FLUSHED` | Export the flushed delta, restart, or stop |
 | `EXPORTED` | Verify the export, then restart or stop |
@@ -286,6 +297,13 @@ allowlist. Otherwise recovery fails closed without deleting the tree.
 An `EXPORTED` workspace and a failed workspace whose last stable state was
 `EXPORTED` must validate the flush-bound verification evidence and every
 recorded export hash before status or recovery succeeds.
+
+Destroy is not a lifecycle transition because it removes the manifest itself.
+It refuses `RUNNING`, `FLUSHED`, `EXPORTED`, and `FAILED_RECOVERABLE`; those
+states must first complete `stop` or `recover`. Repeating the manifest UUID on
+the command line prevents a mistaken path from authorizing deletion. The lock
+file is removed last, after all other confined entries, and the parent
+directory is fsynced.
 
 Each Cassandra 3.11 start replaces `state/cqlshrc` with a new random 256-bit
 password for the fixed `sstable_workspace` identity. Graceful stop and

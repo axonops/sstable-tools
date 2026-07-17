@@ -8,16 +8,21 @@ import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -219,8 +224,95 @@ public final class WorkspaceRepository {
         }
     }
 
+    public void destroyContents(WorkspaceLock lock) throws WorkspaceException {
+        requireLock(lock);
+        requireDestroyableTopLevel();
+        try {
+            Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attributes)
+                        throws IOException {
+                    requireVisitedPath(file);
+                    if (!file.equals(lockPath) && !file.equals(manifestPath)) {
+                        Files.delete(file);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path directory, IOException failure)
+                        throws IOException {
+                    requireVisitedPath(directory);
+                    if (failure != null) {
+                        throw failure;
+                    }
+                    if (!directory.equals(root)) {
+                        Files.delete(directory);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            fsyncDirectory(root);
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot destroy workspace contents under " + root, e);
+        }
+    }
+
+    public void deleteRootAfterDestroy() throws WorkspaceException {
+        Path parent = root.getParent();
+        if (parent == null) {
+            throw new WorkspaceException("Refusing to destroy a filesystem root: " + root);
+        }
+        try {
+            if (Files.isSymbolicLink(root) || !Files.isDirectory(root,
+                    LinkOption.NOFOLLOW_LINKS)) {
+                throw new WorkspaceException("Destroyed workspace root is unsafe: " + root);
+            }
+            try (DirectoryStream<Path> entries = Files.newDirectoryStream(root)) {
+                for (Path entry : entries) {
+                    if (!entry.equals(lockPath) && !entry.equals(manifestPath)) {
+                        throw new WorkspaceException("Destroyed workspace contains an "
+                                + "unexpected entry: " + entry);
+                    }
+                }
+            }
+            Files.deleteIfExists(manifestPath);
+            Files.deleteIfExists(lockPath);
+            Files.delete(root);
+            fsyncDirectory(parent);
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot remove destroyed workspace root " + root, e);
+        }
+    }
+
     public Path root() {
         return root;
+    }
+
+    private void requireDestroyableTopLevel() throws WorkspaceException {
+        Set<String> allowed = new HashSet<>(LAYOUT_DIRECTORIES);
+        allowed.add(MANIFEST_FILE);
+        allowed.add(LOCK_FILE);
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(root)) {
+            for (Path entry : entries) {
+                String name = entry.getFileName().toString();
+                boolean manifestTemporary = name.startsWith("." + MANIFEST_FILE + ".")
+                        && name.endsWith(".tmp");
+                if (!allowed.contains(name) && !manifestTemporary) {
+                    throw new WorkspaceException("Refusing to destroy workspace with "
+                            + "unexpected top-level entry: " + entry);
+                }
+            }
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot inspect workspace before destroy " + root, e);
+        }
+    }
+
+    private void requireVisitedPath(Path path) throws IOException {
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!normalized.equals(root) && !normalized.startsWith(root)) {
+            throw new IOException("Workspace destroy escaped canonical root: " + path);
+        }
     }
 
     private void createLayout() throws WorkspaceException {

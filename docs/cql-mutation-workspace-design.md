@@ -678,7 +678,11 @@ faithful offline edit.
 The controller takes an exclusive workspace lock. `workspace flush` disables
 native transport and inventories the exact table while the control endpoint
 remains live. `stop` drains and stops the daemon. `destroy` refuses to run while
-a worker is live and never traverses paths outside the canonical workspace root.
+a worker is live and never traverses paths outside the canonical workspace
+root. The implemented command requires the exact manifest UUID, accepts only
+inactive pre-start states or `STOPPED`, rejects unexpected root entries, and
+walks without following symlinks. Source and export paths are external and are
+never candidates for deletion.
 
 ## 13. Control protocol
 

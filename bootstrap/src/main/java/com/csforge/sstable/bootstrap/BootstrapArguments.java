@@ -5,6 +5,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 /** Minimal JDK-only command-line parser for bootstrap options and runtime commands. */
 final class BootstrapArguments {
@@ -21,7 +22,8 @@ final class BootstrapArguments {
         WORKSPACE_FLUSH,
         WORKSPACE_EXPORT,
         WORKSPACE_STOP,
-        WORKSPACE_RECOVER
+        WORKSPACE_RECOVER,
+        WORKSPACE_DESTROY
     }
 
     private final Action action;
@@ -34,6 +36,7 @@ final class BootstrapArguments {
     private final ExportMode exportMode;
     private final Path outputPath;
     private final String executeCql;
+    private final UUID confirmedWorkspaceId;
 
     private BootstrapArguments(Action action,
                                RuntimeOptions runtimeOptions,
@@ -44,7 +47,8 @@ final class BootstrapArguments {
                                boolean timestampPolicySpecified,
                                ExportMode exportMode,
                                Path outputPath,
-                               String executeCql) {
+                               String executeCql,
+                               UUID confirmedWorkspaceId) {
         this.action = action;
         this.runtimeOptions = runtimeOptions;
         this.workspacePath = workspacePath;
@@ -56,13 +60,14 @@ final class BootstrapArguments {
         this.exportMode = exportMode;
         this.outputPath = outputPath;
         this.executeCql = executeCql;
+        this.confirmedWorkspaceId = confirmedWorkspaceId;
     }
 
     static BootstrapArguments parse(String[] args) throws BootstrapException {
         if (args.length == 0) {
             return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
                     null, Collections.<Path>emptyList(), null, TimestampPolicy.WALL_CLOCK,
-                    false, null, null, null);
+                    false, null, null, null, null);
         }
 
         Path cassandraHome = null;
@@ -75,6 +80,7 @@ final class BootstrapArguments {
         ExportMode exportMode = null;
         Path outputPath = null;
         String executeCql = null;
+        UUID confirmedWorkspaceId = null;
         List<String> command = new ArrayList<>();
 
         for (int index = 0; index < args.length; index++) {
@@ -83,13 +89,15 @@ final class BootstrapArguments {
                 return new BootstrapArguments(Action.HELP,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath, executeCql);
+                        timestampPolicySpecified, exportMode, outputPath, executeCql,
+                        confirmedWorkspaceId);
             }
             if ("--version".equals(argument)) {
                 return new BootstrapArguments(Action.VERSION,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath, executeCql);
+                        timestampPolicySpecified, exportMode, outputPath, executeCql,
+                        confirmedWorkspaceId);
             }
             if ("--cassandra-home".equals(argument)) {
                 cassandraHome = pathValue(args, ++index, argument);
@@ -123,6 +131,16 @@ final class BootstrapArguments {
                     throw usage("--execute requires one non-empty CQL statement");
                 }
                 executeCql = args[index];
+            } else if ("--confirm-workspace-id".equals(argument)) {
+                if (confirmedWorkspaceId != null || ++index >= args.length
+                        || args[index].trim().isEmpty()) {
+                    throw usage("--confirm-workspace-id requires one UUID");
+                }
+                try {
+                    confirmedWorkspaceId = UUID.fromString(args[index]);
+                } catch (IllegalArgumentException e) {
+                    throw usage("--confirm-workspace-id requires a valid UUID");
+                }
             } else if (argument.startsWith("--")) {
                 throw usage("Unknown option: " + argument);
             } else {
@@ -174,6 +192,10 @@ final class BootstrapArguments {
                 && "recover".equals(command.get(1))) {
             action = Action.WORKSPACE_RECOVER;
             workspacePath = commandPath(command.get(2));
+        } else if (command.size() == 3 && "workspace".equals(command.get(0))
+                && "destroy".equals(command.get(1))) {
+            action = Action.WORKSPACE_DESTROY;
+            workspacePath = commandPath(command.get(2));
         } else {
             throw usage("Expected 'runtime inspect', 'runtime preflight', or a supported "
                     + "'workspace <command> <path>' command");
@@ -185,7 +207,8 @@ final class BootstrapArguments {
                 || action == Action.WORKSPACE_STATUS
                 || action == Action.WORKSPACE_FLUSH
                 || action == Action.WORKSPACE_EXPORT
-                || action == Action.WORKSPACE_STOP || action == Action.WORKSPACE_RECOVER;
+                || action == Action.WORKSPACE_STOP || action == Action.WORKSPACE_RECOVER
+                || action == Action.WORKSPACE_DESTROY;
         if (workspaceAction && action != Action.WORKSPACE_START
                 && action != Action.WORKSPACE_IMPORT
                 && action != Action.WORKSPACE_CQLSH
@@ -214,10 +237,17 @@ final class BootstrapArguments {
         if (action != Action.WORKSPACE_CQLSH && executeCql != null) {
             throw usage("--execute is only valid with workspace cqlsh");
         }
+        if (action == Action.WORKSPACE_DESTROY && confirmedWorkspaceId == null) {
+            throw usage("workspace destroy requires --confirm-workspace-id <uuid>");
+        }
+        if (action != Action.WORKSPACE_DESTROY && confirmedWorkspaceId != null) {
+            throw usage("--confirm-workspace-id is only valid with workspace destroy");
+        }
         return new BootstrapArguments(action,
                 new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                 workspacePath, sourceDirectories, schemaPath, timestampPolicy,
-                timestampPolicySpecified, exportMode, outputPath, executeCql);
+                timestampPolicySpecified, exportMode, outputPath, executeCql,
+                confirmedWorkspaceId);
     }
 
     private static Path pathValue(String[] args, int index, String option)
@@ -285,5 +315,9 @@ final class BootstrapArguments {
 
     String executeCql() {
         return executeCql;
+    }
+
+    UUID confirmedWorkspaceId() {
+        return confirmedWorkspaceId;
     }
 }

@@ -1286,6 +1286,17 @@ public class Cassandra311SandboxIT {
             String[] endpoint = property(started.output, "worker.native").split(":", 2);
             Path cqlshrc = Paths.get(property(started.output, "worker.cqlshrc"));
             Path cqlsh = cassandraHome.resolve("bin/cqlsh");
+            String workspaceId = WorkspaceRepository.open(workspace).load()
+                    .workspaceId().toString();
+            CommandResult rejectedDestroy = run(command(controllerJava(), toolJar,
+                    "workspace", "destroy", workspace.toString(),
+                    "--confirm-workspace-id", workspaceId));
+            Assert.assertNotEquals(rejectedDestroy.output, 0,
+                    rejectedDestroy.exitCode);
+            Assert.assertTrue(rejectedDestroy.output,
+                    rejectedDestroy.output.contains("stop or recover the workspace first"));
+            Assert.assertTrue("Live destroy removed the workspace",
+                    Files.isDirectory(workspace));
             assertShapeSourceRow(cqlsh, endpoint, cqlshrc);
 
             CommandResult mutated = runCqlsh(cqlshCommand(cqlsh, endpoint, cqlshrc,
@@ -1334,6 +1345,16 @@ public class Cassandra311SandboxIT {
                     "workspace", "stop", workspace.toString()));
             Assert.assertEquals(stopped.output, 0, stopped.exitCode);
             workerRunning = false;
+            waitForProcessExit(WorkerEndpoint.read(
+                    workspace.resolve("state/worker.properties")).pid());
+            CommandResult destroyed = run(command(controllerJava(), toolJar,
+                    "workspace", "destroy", workspace.toString(),
+                    "--confirm-workspace-id", workspaceId));
+            Assert.assertEquals(destroyed.output, 0, destroyed.exitCode);
+            Assert.assertFalse("Stopped destroy retained the workspace",
+                    Files.exists(workspace));
+            Assert.assertTrue("Workspace destroy removed the external delta",
+                    Files.isDirectory(deltaSstables));
         } finally {
             if (workerRunning) {
                 CommandResult stopped = run(command(controllerJava(), toolJar,
@@ -1845,7 +1866,7 @@ public class Cassandra311SandboxIT {
         while (Files.exists(process) && System.nanoTime() < deadline) {
             Thread.sleep(50);
         }
-        Assert.assertFalse("Worker process did not exit after SIGKILL: " + pid,
+        Assert.assertFalse("Worker process did not exit: " + pid,
                 Files.exists(process));
     }
 

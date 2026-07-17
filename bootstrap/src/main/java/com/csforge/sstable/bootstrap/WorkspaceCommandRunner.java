@@ -29,6 +29,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Executes Cassandra-free workspace lifecycle commands under an exclusive lock. */
 final class WorkspaceCommandRunner {
@@ -51,6 +52,9 @@ final class WorkspaceCommandRunner {
                 return;
             case WORKSPACE_RECOVER:
                 recover(arguments, out);
+                return;
+            case WORKSPACE_DESTROY:
+                destroy(arguments, out);
                 return;
             default:
                 throw new IllegalArgumentException("Not a workspace command: "
@@ -600,6 +604,49 @@ final class WorkspaceCommandRunner {
             }
             printStatus(repository, manifest, out);
         }
+    }
+
+    private static void destroy(BootstrapArguments arguments, PrintStream out)
+            throws WorkspaceException {
+        WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
+        Path root = repository.root();
+        UUID workspaceId;
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest manifest = repository.load();
+            workspaceId = manifest.workspaceId();
+            if (!workspaceId.equals(arguments.confirmedWorkspaceId())) {
+                throw new WorkspaceException("Workspace confirmation UUID does not match "
+                        + workspaceId);
+            }
+            if (manifest.state() != WorkspaceState.NEW
+                    && manifest.state() != WorkspaceState.VALIDATED
+                    && manifest.state() != WorkspaceState.IMPORTED
+                    && manifest.state() != WorkspaceState.STOPPED) {
+                throw new WorkspaceException("workspace destroy requires state NEW, VALIDATED, "
+                        + "IMPORTED, or STOPPED, not " + manifest.state()
+                        + "; stop or recover the workspace first");
+            }
+
+            Path endpointPath = repository.resolveInside(
+                    Cassandra311SandboxConfig.ENDPOINT_PATH);
+            if (Files.exists(endpointPath, LinkOption.NOFOLLOW_LINKS)) {
+                if (Files.isSymbolicLink(endpointPath)
+                        || !Files.isRegularFile(endpointPath, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new WorkspaceException("Worker endpoint record is unsafe: "
+                            + endpointPath);
+                }
+                WorkerEndpoint endpoint = WorkerControlClient.readEndpoint(repository,
+                        workspaceId);
+                new WorkerProcessProbe().requireMatchingWorkerStopped(endpoint,
+                        workspaceId, root);
+            }
+
+            out.println("WARNING: permanently destroying workspace " + root);
+            out.println("workspace.id=" + workspaceId);
+            repository.destroyContents(lock);
+        }
+        repository.deleteRootAfterDestroy();
+        out.println("workspace.destroyed=" + root);
     }
 
     private static void printStatus(WorkspaceRepository repository,

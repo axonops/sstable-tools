@@ -92,7 +92,8 @@ public final class BootstrapMain {
                 || action == BootstrapArguments.Action.WORKSPACE_FLUSH
                 || action == BootstrapArguments.Action.WORKSPACE_EXPORT
                 || action == BootstrapArguments.Action.WORKSPACE_STOP
-                || action == BootstrapArguments.Action.WORKSPACE_RECOVER;
+                || action == BootstrapArguments.Action.WORKSPACE_RECOVER
+                || action == BootstrapArguments.Action.WORKSPACE_DESTROY;
     }
 
     private static boolean requiresSstableWriteWarning(BootstrapArguments.Action action) {
@@ -155,6 +156,7 @@ public final class BootstrapMain {
         out.println("  --mode <mode>           delta or snapshot (workspace export)");
         out.println("  --output <path>         Atomic publication destination (workspace export)");
         out.println("  --execute <cql>         Execute CQL and exit (workspace cqlsh)");
+        out.println("  --confirm-workspace-id <uuid> Exact UUID required by workspace destroy");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();
@@ -172,13 +174,11 @@ public final class BootstrapMain {
         out.println("  workspace export <path>  Verify and publish a delta or snapshot export");
         out.println("  workspace stop <path>    Drain and stop a running workspace sandbox");
         out.println("  workspace recover <path> Recover a failed workspace to its last stable state");
+        out.println("  workspace destroy <path> Permanently delete a stopped/inactive workspace");
         out.println();
         out.println("Safety warning:");
         out.println("  Never run SSTable write operations against files owned by a running");
         out.println("  production Cassandra process. Stop it, or use a completed snapshot or");
         out.println("  backup copied outside every live Cassandra data directory.");
-        out.println();
-        out.println("Workspace commands planned for later implementation:");
-        out.println("  workspace destroy");
     }
 }

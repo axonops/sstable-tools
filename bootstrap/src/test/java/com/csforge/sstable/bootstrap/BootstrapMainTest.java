@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.UUID;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -237,6 +238,93 @@ public class BootstrapMainTest {
         Assert.assertTrue(error.toString("UTF-8").contains("worker reconciliation"));
         Assert.assertEquals(WorkspaceState.FAILED_RECOVERABLE,
                 repository.load().state());
+    }
+
+    @Test
+    public void destroyRequiresMatchingUuidAndNeverFollowsWorkspaceSymlinks()
+            throws Exception {
+        Path source = createSstableSource("destroy-source", "mc-9-big");
+        Path workspace = temporary.newFolder("destroy-workspace").toPath();
+        Assert.assertEquals(0, BootstrapMain.run(new String[]{
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString()
+        }, discard(), System.err));
+        Path canonicalWorkspace = workspace.toRealPath();
+        UUID workspaceId = WorkspaceRepository.open(workspace).load().workspaceId();
+        Path outside = Files.write(temporary.newFile("outside-evidence").toPath(),
+                "outside".getBytes(StandardCharsets.UTF_8));
+        try {
+            Files.createSymbolicLink(workspace.resolve("runtime/outside-link"), outside);
+        } catch (UnsupportedOperationException | java.io.IOException ignored) {
+            // The confinement assertions still run on filesystems without symlinks.
+        }
+
+        ByteArrayOutputStream wrongError = new ByteArrayOutputStream();
+        int wrongExit = BootstrapMain.run(new String[]{
+                "workspace", "destroy", workspace.toString(),
+                "--confirm-workspace-id", UUID.randomUUID().toString()
+        }, discard(), new PrintStream(wrongError, true, "UTF-8"));
+        Assert.assertEquals(BootstrapException.WORKSPACE_EXIT_CODE, wrongExit);
+        Assert.assertTrue(wrongError.toString("UTF-8").contains(
+                "confirmation UUID does not match"));
+        Assert.assertTrue(Files.isDirectory(workspace));
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int exitCode = BootstrapMain.run(new String[]{
+                "workspace", "destroy", workspace.toString(),
+                "--confirm-workspace-id", workspaceId.toString()
+        }, new PrintStream(output, true, "UTF-8"), System.err);
+
+        Assert.assertEquals(0, exitCode);
+        Assert.assertTrue(output.toString("UTF-8").contains(
+                "WARNING: permanently destroying workspace"));
+        Assert.assertTrue(output.toString("UTF-8").contains(
+                "workspace.destroyed=" + canonicalWorkspace));
+        Assert.assertFalse(Files.exists(workspace));
+        Assert.assertTrue(Files.isRegularFile(source.resolve("mc-9-big-Data.db")));
+        Assert.assertEquals("outside", new String(Files.readAllBytes(outside),
+                StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void destroyRefusesLiveStateAndUnexpectedTopLevelEntries() throws Exception {
+        Path source = createSstableSource("guarded-destroy-source", "mc-10-big");
+        Path workspace = temporary.newFolder("guarded-destroy-workspace").toPath();
+        Assert.assertEquals(0, BootstrapMain.run(new String[]{
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString()
+        }, discard(), System.err));
+        WorkspaceRepository repository = WorkspaceRepository.open(workspace);
+        UUID workspaceId = repository.load().workspaceId();
+        Files.write(workspace.resolve("unowned.txt"),
+                "do not delete".getBytes(StandardCharsets.UTF_8));
+
+        ByteArrayOutputStream unexpectedError = new ByteArrayOutputStream();
+        int unexpectedExit = BootstrapMain.run(new String[]{
+                "workspace", "destroy", workspace.toString(),
+                "--confirm-workspace-id", workspaceId.toString()
+        }, discard(), new PrintStream(unexpectedError, true, "UTF-8"));
+        Assert.assertEquals(BootstrapException.WORKSPACE_EXIT_CODE, unexpectedExit);
+        Assert.assertTrue(unexpectedError.toString("UTF-8").contains(
+                "unexpected top-level entry"));
+        Assert.assertTrue(Files.isRegularFile(workspace.resolve("unowned.txt")));
+        Files.delete(workspace.resolve("unowned.txt"));
+
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest imported = repository.load()
+                    .transitionTo(WorkspaceState.IMPORTED);
+            repository.save(lock, imported);
+            repository.save(lock, imported.transitionTo(WorkspaceState.RUNNING));
+        }
+        ByteArrayOutputStream runningError = new ByteArrayOutputStream();
+        int runningExit = BootstrapMain.run(new String[]{
+                "workspace", "destroy", workspace.toString(),
+                "--confirm-workspace-id", workspaceId.toString()
+        }, discard(), new PrintStream(runningError, true, "UTF-8"));
+        Assert.assertEquals(BootstrapException.WORKSPACE_EXIT_CODE, runningExit);
+        Assert.assertTrue(runningError.toString("UTF-8").contains(
+                "stop or recover the workspace first"));
+        Assert.assertTrue(Files.isDirectory(workspace));
     }
 
     private Path createSstableSource(String directoryName, String descriptor) throws Exception {

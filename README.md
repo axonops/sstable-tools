@@ -144,7 +144,8 @@ workspace artifacts are written below `workers/cassandra-<line>/target/`.
 The shared workspace manifest commands are available in those thin JARs. The
 Cassandra 3.11 artifact also contains schema/header validation, copy-based
 SSTable import, isolated-daemon start, guarded table flush, status, stop, and
-crash recovery, release verification, and atomic delta/snapshot export.
+crash recovery, confined workspace destroy, release verification, and atomic
+delta/snapshot export.
 Its native endpoint now requires an ephemeral workspace credential and guards
 direct and prepared CQL statements. Cross-platform live-source detection and
 broader fixture coverage remain under development, so this is not yet an
@@ -262,6 +263,25 @@ overwritten and is adopted after a controller crash only when every path, size,
 and SHA-256 matches the deterministic publication. A retry removes a partial
 staging directory only when its owner-only marker has the exact expected
 workspace, flush, mode, and export identity.
+
+After stopping a worker, obtain the exact UUID from `workspace status` and
+repeat it as the destructive confirmation:
+
+```shell
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  workspace stop ./case
+
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  workspace destroy ./case \
+  --confirm-workspace-id UUID_FROM_workspace.status
+```
+
+Destroy is accepted only for `NEW`, `VALIDATED`, `IMPORTED`, or `STOPPED`.
+It takes the exclusive workspace lock, rejects a mismatched UUID, refuses
+active or unrecovered states and a still-running recorded worker, and will not
+delete a root containing unexpected top-level entries. The confined walk never
+follows symlinks. Source SSTables, schema inputs, and published export
+directories are outside the workspace and are not part of deletion.
 
 The schema bundle and SSTable sources must remain outside the workspace and
 unchanged. The importer recognizes Cassandra 3.11 row-storage Big `ma` through
