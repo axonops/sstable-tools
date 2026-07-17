@@ -613,6 +613,14 @@ stock cqlsh against a future-dated source must therefore use `USING TIMESTAMP`
 above the reported maximum. Other clients can opt into allocation by omitting
 both forms of timestamp.
 
+The Cassandra 3.11 live profile generates a latest-format `me` SSTable with a
+real cell timestamp one year ahead of the test clock using the installed
+runtime's `CQLSSTableWriter`. Independent imports prove that a stock-cqlsh
+update under `wall-clock` is accepted but loses reconciliation to the future
+source cell, while a prepared client with client timestamp generation disabled
+receives a durable `after-source` timestamp above the source maximum and wins.
+Both paths recheck the original component inventory for byte immutability.
+
 TTL expiry and tombstone visibility are evaluated using the sandbox clock. For
 forensic reproducibility, a later phase may add a supported fixed-time query
 mode; changing the process clock is not part of the first release.

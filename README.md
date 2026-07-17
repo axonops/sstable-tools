@@ -345,8 +345,14 @@ mvn clean verify -pl workers/cassandra-3.11 -am \
 ```
 
 It first starts a complete production-like daemon on normal ports 7000 and
-9042, rejects a complete source placed beneath that daemon's live storage root
-before creating a workspace, rejects schema, partitioner, digest,
+9042. The pinned Cassandra runtime's `CQLSSTableWriter` then generates a real
+latest-format `me` source whose cell timestamp is one year ahead of wall clock.
+The profile imports independent copies under both policies, proves an ordinary
+stock-cqlsh update loses under `wall-clock`, proves a timestamp-free prepared
+update wins under `after-source`, and verifies the source remains unchanged and
+the production daemon remains queryable. It then rejects a complete source
+placed beneath that daemon's live storage root before creating a workspace,
+rejects schema, partitioner, digest,
 required-component, unsupported-format, and destination-collision failures
 without retaining user data, then imports matching `ma` and `mc` fixtures. It
 starts the thin JAR worker from the

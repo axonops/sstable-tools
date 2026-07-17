@@ -195,6 +195,12 @@ allocator and is preserved exactly. In particular, stock Cassandra 3.11 cqlsh
 normally sends a protocol timestamp. `workspace status` reports the policy and
 the current durable high-water when present.
 
+The Cassandra 3.11 live profile exercises this manifest contract with a real
+latest-format source cell dated one year in the future. It proves an ordinary
+stock-cqlsh update loses under `wall-clock`, while a timestamp-free prepared
+update under `after-source` wins with a write time above the persisted source
+maximum.
+
 `workspace flush` is terminal for the current native session. Worker protocol
 v3 closes native transport, waits for all requests already admitted by the
 query guard, verifies auto-compaction is disabled, and performs a blocking

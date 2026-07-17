@@ -99,6 +99,13 @@ logical values, write timestamps, and TTLs. The installed distribution's stock
 gossip/internode-enabled Cassandra fixture, whose native endpoint returns the
 same values and cell metadata.
 
+The same profile also uses the installed 3.11.19 `CQLSSTableWriter` to create a
+separate latest-format `me` source with a real cell timestamp one year ahead of
+wall clock. Independent imports prove the warning and losing stock-cqlsh update
+under `wall-clock`, then prove a timestamp-free prepared update receives a
+winning durable timestamp under `after-source`. Source hashes remain unchanged
+in both cases.
+
 ## Manifest baseline
 
 The baseline inventory contains every regular file in the imported table

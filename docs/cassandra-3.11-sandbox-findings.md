@@ -5,7 +5,7 @@
   use until the blockers below are complete
 - **Validated runtime:** Apache Cassandra 3.11.19 final distribution, JDK 8,
   native protocol v4
-- **Last updated:** 2026-07-16
+- **Last updated:** 2026-07-17
 
 ## Result
 
@@ -190,14 +190,19 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
    7000 and native port 9042, with gossip and internode messaging enabled and
    every mutable path redirected to a private fixture root;
 2. verify that production is queryable and has no peers, reject a complete
-   source beneath its reported live storage root without creating a workspace,
-   reject genuine `ma` fixture copies for schema, digest, required-index, and
-   unsupported-format failures without retaining table data, exercise collision
-   cleanup and retry, and then import it with the matching schema;
+   source beneath its reported live storage root without creating a workspace;
+   generate a latest-format `me` fixture through the pinned runtime's
+   `CQLSSTableWriter` with a real cell timestamp one year ahead of wall clock;
+   import independent copies under both policies; prove an ordinary stock-cqlsh
+   update loses under `wall-clock`; prove a timestamp-free prepared update wins
+   under `after-source`; and prove the source remains unchanged and production
+   remains queryable;
 3. verify source hashes, full data digest, serialization header, extended
    Cassandra verification, one logical imported row, disabled auto-compaction,
    maximum source timestamp, and a baseline inventory while native transport
-   remains disabled;
+   remains disabled, after rejecting genuine `ma` fixture copies for schema,
+   digest, required-index, unsupported-format, and destination-collision
+   failures without retaining table data and proving collision retry;
 4. start the thin JAR against the same SHA-512-pinned 3.11.19 final tarball
    using JDK 8;
 5. verify the worker's native and control endpoints are loopback-only,
@@ -269,9 +274,6 @@ inventories.
 
 - Add equivalent live-source process evidence on non-Linux systems and document
   deployment behavior when Linux `/proc` hides processes owned by other users.
-- Add a compatible future-dated SSTable fixture so CI proves reconciliation
-  against a real source cell above wall clock, not only allocator boundaries
-  derived from real statistics metadata.
 - Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 
@@ -279,5 +281,5 @@ The Cassandra 3.11 vertical prototype covers the acceptance scope of issues #5
 and #8 and the core import, schema/partitioner rejection, and
 destination-collision paths from issue #6. Issue #6 remains open for compatible
 `mb`, collection/tuple/UDT, compact/dense-table, and broader multi-SSTable
-fixtures. Issues #7, #9, and #10 own remaining timestamp/query policy and the
+fixtures. Issues #7, #9, and #10 own remaining query-shape coverage and the
 other release adapters.

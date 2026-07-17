@@ -86,6 +86,18 @@ public class Cassandra311SandboxIT {
         CommandResult start = null;
         boolean workerRunning = false;
         try {
+            long futureTimestampMicros = System.currentTimeMillis() * 1000L
+                    + TimeUnit.DAYS.toMicros(365);
+            Path futureSource = createFutureSstableSource(cassandraHome, javaHome,
+                    futureTimestampMicros);
+            SourceInventory capturedFutureSource = SourceInventory.capture(
+                    Collections.singletonList(futureSource));
+            assertFutureTimestampPolicies(toolJar, cassandraHome, javaHome,
+                    futureSource, futureTimestampMicros);
+            capturedFutureSource.verifyUnchanged();
+            production.assertRunning("Future-timestamp workspaces affected production "
+                    + "Cassandra");
+
             Path mismatchWorkspace = temporary.newFolder("mismatch-workspace").toPath();
             Path mismatchSchema = createSchemaBundle("text");
             CommandResult mismatchCreate = run(command(controllerJava(), toolJar,
@@ -1084,6 +1096,180 @@ public class Cassandra311SandboxIT {
         throw new IOException("A Python 2.7 interpreter is required for prepared CQL tests");
     }
 
+    private Path createFutureSstableSource(Path cassandraHome,
+                                           Path javaHome,
+                                           long timestampMicros) throws Exception {
+        Path source = temporary.newFolder("future-source").toPath();
+        Path logDirectory = temporary.newFolder("future-writer-log").toPath();
+        Path testClasses = Paths.get(Cassandra311FixtureWriter.class.getProtectionDomain()
+                .getCodeSource().getLocation().toURI()).toRealPath();
+        List<Path> classpath = new ArrayList<>();
+        classpath.add(testClasses);
+        classpath.add(cassandraHome.resolve("conf"));
+        try (java.nio.file.DirectoryStream<Path> libraries = Files.newDirectoryStream(
+                cassandraHome.resolve("lib"), "*.jar")) {
+            for (Path library : libraries) {
+                classpath.add(library);
+            }
+        }
+        classpath.sort(Comparator.comparing(Path::toString));
+        StringBuilder joined = new StringBuilder();
+        for (Path entry : classpath) {
+            if (joined.length() > 0) {
+                joined.append(File.pathSeparatorChar);
+            }
+            joined.append(entry);
+        }
+        CommandResult generated = run(Arrays.asList(
+                javaHome.resolve("bin/java").toString(),
+                "-Xms128m", "-Xmx512m",
+                "-javaagent:" + singleMatch(cassandraHome.resolve("lib"), "jamm-*.jar"),
+                "-Dcassandra.storagedir=" + source,
+                "-Dcassandra.logdir=" + logDirectory,
+                "-cp", joined.toString(),
+                Cassandra311FixtureWriter.class.getName(), source.toString(),
+                Long.toString(timestampMicros)));
+        Assert.assertEquals(generated.output, 0, generated.exitCode);
+        Assert.assertTrue("Future fixture writer produced no Data.db",
+                countDataComponents(source) > 0);
+        return source;
+    }
+
+    private void assertFutureTimestampPolicies(Path toolJar,
+                                               Path cassandraHome,
+                                               Path javaHome,
+                                               Path source,
+                                               long futureTimestampMicros) throws Exception {
+        Path schema = createFutureSchemaBundle();
+
+        Path wallClockWorkspace = temporary.newFolder("future-wall-clock").toPath();
+        createAndImportFutureWorkspace(toolJar, cassandraHome, javaHome,
+                wallClockWorkspace, source, schema, futureTimestampMicros);
+        boolean wallClockRunning = false;
+        try {
+            CommandResult started = run(command(controllerJava(), toolJar,
+                    "--cassandra-home", cassandraHome.toString(),
+                    "--java-home", javaHome.toString(),
+                    "workspace", "start", wallClockWorkspace.toString()));
+            Assert.assertEquals(started.output + workerError(wallClockWorkspace),
+                    0, started.exitCode);
+            wallClockRunning = true;
+            Assert.assertEquals("wall-clock", property(started.output, "timestamp.policy"));
+            Assert.assertEquals("true", property(started.output,
+                    "warning.futureSourceTimestamp"));
+            String[] endpoint = property(started.output, "worker.native").split(":", 2);
+            Path cqlshrc = Paths.get(property(started.output, "worker.cqlshrc"));
+            CommandResult lowerTimestamp = runCqlsh(cqlshCommand(
+                    cassandraHome.resolve("bin/cqlsh"), endpoint, cqlshrc,
+                    "UPDATE future_fixture.users SET password = 'wall-clock-loses' "
+                            + "WHERE user_name = 'future'; "
+                            + "SELECT password, writetime(password) FROM "
+                            + "future_fixture.users WHERE user_name = 'future';"));
+            Assert.assertEquals(lowerTimestamp.output, 0, lowerTimestamp.exitCode);
+            Assert.assertTrue(lowerTimestamp.output,
+                    lowerTimestamp.output.contains("future-base"));
+            Assert.assertFalse(lowerTimestamp.output,
+                    lowerTimestamp.output.contains("wall-clock-loses"));
+            Assert.assertTrue(lowerTimestamp.output,
+                    lowerTimestamp.output.contains(Long.toString(futureTimestampMicros)));
+        } finally {
+            if (wallClockRunning) {
+                CommandResult stopped = run(command(controllerJava(), toolJar,
+                        "workspace", "stop", wallClockWorkspace.toString()));
+                Assert.assertEquals(stopped.output, 0, stopped.exitCode);
+            }
+        }
+
+        Path afterSourceWorkspace = temporary.newFolder("future-after-source").toPath();
+        createAndImportFutureWorkspace(toolJar, cassandraHome, javaHome,
+                afterSourceWorkspace, source, schema, futureTimestampMicros);
+        boolean afterSourceRunning = false;
+        try {
+            CommandResult started = run(command(controllerJava(), toolJar,
+                    "--cassandra-home", cassandraHome.toString(),
+                    "--java-home", javaHome.toString(),
+                    "workspace", "start", afterSourceWorkspace.toString(),
+                    "--timestamp-policy", "after-source"));
+            Assert.assertEquals(started.output + workerError(afterSourceWorkspace),
+                    0, started.exitCode);
+            afterSourceRunning = true;
+            Assert.assertEquals("after-source", property(started.output,
+                    "timestamp.policy"));
+            Assert.assertEquals("true", property(started.output,
+                    "warning.futureSourceTimestamp"));
+            String[] endpoint = property(started.output, "worker.native").split(":", 2);
+            Path cqlshrc = Paths.get(property(started.output, "worker.cqlshrc"));
+            CommandResult updated = runFutureTimestampFreeUpdate(cassandraHome,
+                    endpoint[0], endpoint[1], readCredentials(cqlshrc));
+            Assert.assertEquals(updated.output, 0, updated.exitCode);
+            String[] result = property(updated.output, "future.result").split("\\|", 2);
+            Assert.assertEquals(updated.output, 2, result.length);
+            Assert.assertEquals("after-source-wins", result[0]);
+            Assert.assertTrue(updated.output,
+                    Long.parseLong(result[1]) > futureTimestampMicros);
+        } finally {
+            if (afterSourceRunning) {
+                CommandResult stopped = run(command(controllerJava(), toolJar,
+                        "workspace", "stop", afterSourceWorkspace.toString()));
+                Assert.assertEquals(stopped.output, 0, stopped.exitCode);
+            }
+        }
+    }
+
+    private void createAndImportFutureWorkspace(Path toolJar,
+                                                Path cassandraHome,
+                                                Path javaHome,
+                                                Path workspace,
+                                                Path source,
+                                                Path schema,
+                                                long futureTimestampMicros) throws Exception {
+        CommandResult created = run(command(controllerJava(), toolJar,
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString(), "--schema", schema.toString()));
+        Assert.assertEquals(created.output, 0, created.exitCode);
+        CommandResult imported = run(command(controllerJava(), toolJar,
+                "--cassandra-home", cassandraHome.toString(),
+                "--java-home", javaHome.toString(),
+                "workspace", "import", workspace.toString()));
+        Assert.assertEquals(imported.output + importError(workspace), 0, imported.exitCode);
+        Assert.assertEquals(Long.toString(futureTimestampMicros),
+                property(imported.output, "import.maxTimestampMicros"));
+        Assert.assertEquals("true", property(imported.output,
+                "warning.futureSourceTimestamp"));
+    }
+
+    private static CommandResult runFutureTimestampFreeUpdate(Path cassandraHome,
+                                                               String host,
+                                                               String port,
+                                                               NativeCredentials credentials)
+            throws Exception {
+        String script = "from cassandra.cluster import Cluster\n"
+                + "from cassandra.auth import PlainTextAuthProvider\n"
+                + "import os, sys\n"
+                + "auth = PlainTextAuthProvider("
+                + "username=os.environ['SSTABLE_TOOLS_TEST_USERNAME'], "
+                + "password=os.environ['SSTABLE_TOOLS_TEST_PASSWORD'])\n"
+                + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]), "
+                + "auth_provider=auth)\n"
+                + "session = cluster.connect()\n"
+                + "session.use_client_timestamp = False\n"
+                + "update = session.prepare("
+                + "\"UPDATE future_fixture.users SET password = ? "
+                + "WHERE user_name = ?\")\n"
+                + "session.execute(update.bind(('after-source-wins', 'future')))\n"
+                + "row = next(iter(session.execute("
+                + "\"SELECT password, writetime(password) AS ts "
+                + "FROM future_fixture.users WHERE user_name = 'future'\")))\n"
+                + "print('future.result=%s|%s' % (row.password, row.ts))\n"
+                + "cluster.shutdown()\n";
+        Map<String, String> environment = new TreeMap<>();
+        environment.put("PYTHONDONTWRITEBYTECODE", "1");
+        environment.put("PYTHONPATH", pythonDriverPath(cassandraHome));
+        environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
+        environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
+        return run(Arrays.asList(python2(), "-c", script, host, port), environment);
+    }
+
     private Path createSstableSource(Path fixtureDirectory) throws IOException {
         return createSstableSource(fixtureDirectory, "source", "ma-2-big-");
     }
@@ -1112,6 +1298,18 @@ public class Cassandra311SandboxIT {
 
     private Path createSchemaBundle() throws IOException {
         return createSchemaBundle("bigint");
+    }
+
+    private Path createFutureSchemaBundle() throws IOException {
+        Path schema = temporary.newFile("schema-future.cql").toPath();
+        Files.write(schema, Arrays.asList(
+                "CREATE KEYSPACE future_fixture WITH replication = {'class': "
+                        + "'SimpleStrategy', 'replication_factor': 1};",
+                "CREATE TABLE future_fixture.users (",
+                "  user_name text PRIMARY KEY,",
+                "  password text",
+                ");"), StandardCharsets.UTF_8);
+        return schema;
     }
 
     private Path createSchemaBundle(String birthYearType) throws IOException {
