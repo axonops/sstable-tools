@@ -246,8 +246,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           curl -fsSLO https://archive.apache.org/dist/cassandra/4.0.17/apache-cassandra-4.0.17-bin.tar.gz
-          curl -fsSLO https://archive.apache.org/dist/cassandra/4.0.17/apache-cassandra-4.0.17-bin.tar.gz.sha512
-          sha512sum --check apache-cassandra-4.0.17-bin.tar.gz.sha512
+          echo '7f72941dd1c73e30361cc2aad55dabd7005e95f2275c9190645fd0467cac6da67f8602ffbae53fb98367cb67116b4e271b8293381d7d5041267ce2437e8273be  apache-cassandra-4.0.17-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-4.0.17-bin.tar.gz
 
       - name: Build Cassandra 4.0 adapter
