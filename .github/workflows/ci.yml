@@ -119,6 +119,20 @@ jobs:
           echo '42d7732c2b81c65a960101d1146603d430de341adcdf8d0ffc649753a340cf64dad696050f2ec01faff5f15e726f4f2a459f0b3ac281569b957f7726f51d43e0  apache-cassandra-3.11.19-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-3.11.19-bin.tar.gz
 
+      - name: Extract pinned Cassandra 3.11.19 Debian and RPM layouts
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSLO https://debian.cassandra.apache.org/pool/main/c/cassandra/cassandra_3.11.19_all.deb
+          echo 'c20d57d722e711c093cc5f12f04046775aa16a69816ade831540f70feffbc894  cassandra_3.11.19_all.deb' | sha256sum --check
+          mkdir cassandra-debian
+          dpkg-deb -x cassandra_3.11.19_all.deb cassandra-debian
+          sudo apt-get update
+          sudo apt-get install --yes rpm2cpio cpio
+          curl -fsSLO https://redhat.cassandra.apache.org/311x/cassandra-3.11.19-1.noarch.rpm
+          echo '57c03f8302ba325880e04c83f9ccf176ca3b627b9c62d594d81b929f3d9f0668  cassandra-3.11.19-1.noarch.rpm' | sha256sum --check
+          mkdir cassandra-rpm
+          rpm2cpio cassandra-3.11.19-1.noarch.rpm | (cd cassandra-rpm && cpio -idm)
+
       - name: Install pinned Python 2.7 runtime for Cassandra cqlsh
         working-directory: ${{ runner.temp }}
         run: |
@@ -134,3 +148,15 @@ jobs:
           -Pcassandra-3.11-sandbox-it
           -Dcassandra311.home=${{ runner.temp }}/apache-cassandra-3.11.19
           -Dcassandra311.java.home="$CASSANDRA_JAVA_HOME"
+
+      - name: Preflight extracted Debian and RPM Cassandra layouts
+        run: |
+          TOOL_JAR=workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-3.11.0-alpha12-SNAPSHOT.jar
+          java -jar "$TOOL_JAR" \
+            --cassandra-home "${{ runner.temp }}/cassandra-debian/usr/share/cassandra" \
+            --cassandra-conf "${{ runner.temp }}/cassandra-debian/etc/cassandra" \
+            --java-home "$CASSANDRA_JAVA_HOME" runtime preflight
+          java -jar "$TOOL_JAR" \
+            --cassandra-home "${{ runner.temp }}/cassandra-rpm/usr/share/cassandra" \
+            --cassandra-conf "${{ runner.temp }}/cassandra-rpm/etc/cassandra/default.conf" \
+            --java-home "$CASSANDRA_JAVA_HOME" runtime preflight

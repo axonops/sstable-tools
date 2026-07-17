@@ -39,16 +39,25 @@ public final class ChildProcessLauncher {
             builder.inheritIO();
         }
 
+        final Object childStartup = new Object();
+        final Process[] childHolder = new Process[1];
+        Thread shutdownHook = new Thread(() -> {
+            synchronized (childStartup) {
+                stopChild(childHolder[0]);
+            }
+        }, "sstable-tools-worker-shutdown");
         final Process child;
         try {
-            child = builder.start();
+            synchronized (childStartup) {
+                Runtime.getRuntime().addShutdownHook(shutdownHook);
+                child = builder.start();
+                childHolder[0] = child;
+            }
         } catch (IOException e) {
+            removeShutdownHook(shutdownHook);
             throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
                     "Cannot start Cassandra worker child", e);
         }
-
-        Thread shutdownHook = new Thread(() -> stopChild(child), "sstable-tools-worker-shutdown");
-        Runtime.getRuntime().addShutdownHook(shutdownHook);
         try {
             return child.waitFor();
         } catch (InterruptedException e) {
@@ -61,11 +70,7 @@ public final class ChildProcessLauncher {
                 closeQuietly(child.getInputStream());
                 closeQuietly(child.getErrorStream());
             }
-            try {
-                Runtime.getRuntime().removeShutdownHook(shutdownHook);
-            } catch (IllegalStateException ignored) {
-                // JVM shutdown is already in progress and owns hook execution.
-            }
+            removeShutdownHook(shutdownHook);
         }
     }
 
@@ -152,16 +157,25 @@ public final class ChildProcessLauncher {
                 logs.resolve("import.err").toFile()));
         configureEnvironment(builder, installation, runtime);
 
+        final Object childStartup = new Object();
+        final Process[] childHolder = new Process[1];
+        Thread shutdownHook = new Thread(() -> {
+            synchronized (childStartup) {
+                stopChild(childHolder[0]);
+            }
+        }, "sstable-tools-import-shutdown");
         final Process child;
         try {
-            child = builder.start();
+            synchronized (childStartup) {
+                Runtime.getRuntime().addShutdownHook(shutdownHook);
+                child = builder.start();
+                childHolder[0] = child;
+            }
         } catch (IOException e) {
+            removeShutdownHook(shutdownHook);
             throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
                     "Cannot start Cassandra import worker", e);
         }
-        Thread shutdownHook = new Thread(() -> stopChild(child),
-                "sstable-tools-import-shutdown");
-        Runtime.getRuntime().addShutdownHook(shutdownHook);
         try {
             if (!child.waitFor(IMPORT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 stopChild(child);
@@ -186,11 +200,7 @@ public final class ChildProcessLauncher {
             throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
                     "Interrupted while waiting for Cassandra import worker", e);
         } finally {
-            try {
-                Runtime.getRuntime().removeShutdownHook(shutdownHook);
-            } catch (IllegalStateException ignored) {
-                // JVM shutdown is already in progress and owns hook execution.
-            }
+            removeShutdownHook(shutdownHook);
         }
     }
 
@@ -199,6 +209,14 @@ public final class ChildProcessLauncher {
             input.close();
         } catch (IOException ignored) {
             // Test-only captured streams do not affect the child exit status.
+        }
+    }
+
+    private static void removeShutdownHook(Thread shutdownHook) {
+        try {
+            Runtime.getRuntime().removeShutdownHook(shutdownHook);
+        } catch (IllegalStateException ignored) {
+            // JVM shutdown is already in progress and owns hook execution.
         }
     }
 
@@ -377,7 +395,7 @@ public final class ChildProcessLauncher {
     }
 
     private static void stopChild(Process child) {
-        if (!child.isAlive()) {
+        if (child == null || !child.isAlive()) {
             return;
         }
         child.destroy();

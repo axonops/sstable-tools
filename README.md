@@ -345,12 +345,13 @@ java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
 ```
 
 For Debian/RPM-style layouts, pass the separate configuration directory when
-it cannot be discovered unambiguously:
+it cannot be discovered unambiguously. Cassandra 3.11's RPM package places it
+under `default.conf`:
 
 ```shell
 java -jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-*.jar \
   --cassandra-home /usr/share/cassandra \
-  --cassandra-conf /etc/cassandra \
+  --cassandra-conf /etc/cassandra/default.conf \
   --java-home /usr/lib/jvm/java-11-openjdk \
   runtime preflight
 ```
@@ -413,12 +414,15 @@ proves all values, write timestamps, and TTLs are identical. The distribution's
 stock `sstableloader` then streams the same base and delta into the
 gossip/internode-enabled clean Cassandra fixture, where normal native reads
 prove the same cell metadata again.
-GitHub Actions runs the same profile against a SHA-512-pinned 3.11.19 archive
-and supplies a SHA-256-pinned PyPy 2.7 runtime
-required by that release's `cqlsh` launcher.
+GitHub Actions is configured to run the same profile against a SHA-512-pinned 3.11.19 archive,
+supplies a SHA-256-pinned PyPy 2.7 runtime required by that release's `cqlsh`
+launcher, and preflights SHA-256-pinned official 3.11.19 Debian and RPM
+packages after extraction only. The Debian fixture uses `/usr/share/cassandra`
+with `/etc/cassandra`; the RPM fixture uses `/usr/share/cassandra` with
+`/etc/cassandra/default.conf`. No package service script is called.
 
-Compatibility is deliberately conservative until broader installed-package
-fixtures are in CI:
+Compatibility remains deliberately conservative until the remaining release
+lines have equivalent installed-package fixtures in CI:
 
 | Artifact | Tested Cassandra patch | Supported Java runtime |
 |---|---:|---:|

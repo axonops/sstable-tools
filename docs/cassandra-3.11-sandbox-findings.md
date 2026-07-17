@@ -34,9 +34,11 @@ child classpath in this order:
 
 The worker uses the Java home selected for Cassandra, adds the installed Jamm
 JAR as `-javaagent`, removes inherited Java option variables, and redirects
-stdout/stderr below `workspace/logs`. Tarball layouts are validated by the
-integration test. Split Debian/RPM home and configuration layouts are supported
-by discovery but still need real package fixtures.
+stdout/stderr below `workspace/logs`. GitHub Actions is configured to verify
+runtime preflight against the SHA-pinned Apache 3.11.19 tarball, official Debian package
+(`/usr/share/cassandra` plus `/etc/cassandra`), and official RPM package
+(`/usr/share/cassandra` plus `/etc/cassandra/default.conf`). These fixtures are
+only extracted; the package service scripts are never invoked.
 
 ## Isolation controls
 
@@ -277,14 +279,14 @@ authenticated control, native credential parsing and loopback enforcement, the
 fixed role manager, future-source timestamp warnings, private config generation,
 schema capture/CQL splitting, child JVM arguments, lifecycle transitions,
 baseline verification, imported/stopped failed-state recovery, stale PID
-handling, confirmed confined destroy, symlink/path confinement, and source
-inventories.
+handling, confirmed confined destroy, symlink/path confinement, source
+inventories, and Linux SIGTERM propagation from the bootstrap controller to a
+preflight child without leaving a live child process.
 
 ## Remaining blockers
 
 - Add equivalent live-source process evidence on non-Linux systems and document
   deployment behavior when Linux `/proc` hides processes owned by other users.
-- Add real Debian and RPM installation-layout fixtures.
 - Port and revalidate the worker lifecycle against Cassandra 4.0, 4.1, and 5.0.
 
 The Cassandra 3.11 vertical prototype covers the acceptance scope of issues #5
