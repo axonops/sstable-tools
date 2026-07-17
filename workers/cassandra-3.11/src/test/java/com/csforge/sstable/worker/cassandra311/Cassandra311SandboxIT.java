@@ -61,6 +61,22 @@ public class Cassandra311SandboxIT {
         assertProductionVersion(cqlsh);
         assertProductionIsolated(cqlsh, "before worker startup");
 
+        Path liveSource = Files.createDirectories(
+                productionRoot.resolve("data/live-source"));
+        copySstableFixtures(fixtureDirectory, liveSource, "ma-2-big-");
+        Path rejectedLiveWorkspace = temporary.getRoot().toPath().resolve(
+                "live-source-workspace");
+        CommandResult rejectedLiveSource = run(command(controllerJava(), toolJar,
+                "workspace", "create", rejectedLiveWorkspace.toString(),
+                "--sstables", liveSource.toString(), "--schema", schema.toString()));
+        Assert.assertNotEquals(rejectedLiveSource.output, 0, rejectedLiveSource.exitCode);
+        Assert.assertTrue(rejectedLiveSource.output,
+                rejectedLiveSource.output.contains("active Cassandra process"));
+        Assert.assertTrue(rejectedLiveSource.output,
+                rejectedLiveSource.output.contains("outside every live Cassandra data"));
+        Assert.assertFalse("Live-source rejection left workspace artifacts",
+                Files.exists(rejectedLiveWorkspace));
+
         CommandResult start = null;
         boolean workerRunning = false;
         try {
@@ -952,16 +968,22 @@ public class Cassandra311SandboxIT {
                                      String directoryName,
                                      String... prefixes) throws IOException {
         Path source = temporary.newFolder(directoryName).toPath();
+        copySstableFixtures(fixtureDirectory, source, prefixes);
+        return source;
+    }
+
+    private static void copySstableFixtures(Path fixtureDirectory,
+                                            Path destination,
+                                            String... prefixes) throws IOException {
         for (String prefix : prefixes) {
             try (java.nio.file.DirectoryStream<Path> fixtures = Files.newDirectoryStream(
                     fixtureDirectory, prefix + "*")) {
                 for (Path fixture : fixtures) {
-                    Files.copy(fixture, source.resolve(fixture.getFileName()),
+                    Files.copy(fixture, destination.resolve(fixture.getFileName()),
                             StandardCopyOption.COPY_ATTRIBUTES);
                 }
             }
         }
-        return source;
     }
 
     private Path createSchemaBundle() throws IOException {

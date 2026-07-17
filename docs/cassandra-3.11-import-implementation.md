@@ -12,9 +12,9 @@ repository's `ma` and `mc` fixtures. The repository's `mb` fixture explicitly
 uses `LocalPartitioner` and is a partitioner-rejection fixture, not evidence of
 a compatible `mb` import.
 
-This is not yet a production-ready write workflow. The query guard, explicit
-flush/export, live-data-directory detection, multi-fixture matrix, and other
-Cassandra release adapters remain open work.
+This is not yet a production-ready write workflow. Cross-platform
+live-data-directory detection, the multi-fixture matrix, and other Cassandra
+release adapters remain open work.
 
 ## Process boundary
 
@@ -85,8 +85,9 @@ The real integration profile proves that on-disk type, partitioner, digest,
 required-index, and unsupported-format failures leave no user `Data.db`, and
 that a destination collision leaves no partial table directory and can be
 retried after recovery. Every rejected import retains native transport as
-disabled and preserves its captured source hashes. A production Cassandra
-daemon using the same installed distribution remains queryable with no worker
+disabled and preserves its captured source hashes. A complete fixture placed
+beneath the production daemon's reported storage root is rejected before any
+workspace artifact is written. That daemon remains queryable with no worker
 peer. Success paths import the repository's genuine `ma-2-big` and `mc-1-big`
 fixtures. The format gate also covers `md` and 3.11.19's latest `me` without a
 stale hardcoded token list. The `ma` path reads its row through stock cqlsh,

@@ -70,6 +70,7 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
+            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             if (manifest.state() != WorkspaceState.IMPORTED
@@ -156,6 +157,7 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
+            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             if (manifest.state() == WorkspaceState.IMPORTED) {
@@ -225,6 +227,7 @@ final class WorkspaceCommandRunner {
     private static void create(BootstrapArguments arguments, PrintStream out)
             throws WorkspaceException {
         requireSeparateArguments(arguments.workspacePath(), arguments.sourceDirectories());
+        LiveCassandraSourceGuard.reject(arguments.sourceDirectories());
         SchemaBundle schema = arguments.schemaPath() == null
                 ? null : SchemaBundle.capture(arguments.schemaPath());
         if (schema != null) {
@@ -334,6 +337,7 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
+            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             verifyBaselineIfPresent(repository, manifest);
@@ -433,6 +437,7 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
+            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             verifyBaselineIfPresent(repository, manifest);

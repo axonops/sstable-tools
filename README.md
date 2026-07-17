@@ -146,15 +146,23 @@ Cassandra 3.11 artifact also contains schema/header validation, copy-based
 SSTable import, isolated-daemon start, guarded table flush, status, stop, and
 crash recovery, release verification, and atomic delta/snapshot export.
 Its native endpoint now requires an ephemeral workspace credential and guards
-direct and prepared CQL statements. Live-source rejection and broader fixture
-coverage remain under development, so this is not yet an operator-ready write
-workflow.
+direct and prepared CQL statements. Cross-platform live-source detection and
+broader fixture coverage remain under development, so this is not yet an
+operator-ready write workflow.
 
 > **DANGER:** Never use SSTable import, mutation, compaction, or export against
 > files owned by a running production Cassandra process. Stop the owning
 > Cassandra process, or use a completed snapshot or backup copied outside every
 > live Cassandra data directory. The isolated Cassandra worker started by this
 > tool is expected and writes only beneath its private workspace.
+
+On Linux, `workspace create`, `import`, `start`, `flush`, and `export` also scan
+visible `/proc` entries for an active Cassandra daemon. A source below its
+reported `cassandra.storagedir`, or containing a file the daemon has open or
+memory-mapped, is rejected. Creation performs this check before writing the
+workspace directory. Restricted `/proc` visibility and non-Linux platforms
+cannot provide the same process evidence, so this guard does not replace the
+warning or the requirement to use an external completed copy.
 
 The current Cassandra 3.11 workflow is:
 
@@ -317,9 +325,11 @@ mvn clean verify -pl workers/cassandra-3.11 -am \
 ```
 
 It first starts a complete production-like daemon on normal ports 7000 and
-9042, rejects schema, partitioner, digest, required-component, unsupported
-format, and destination-collision failures without retaining user data, then
-imports matching `ma` and `mc` fixtures. It starts the thin JAR worker from the
+9042, rejects a complete source placed beneath that daemon's live storage root
+before creating a workspace, rejects schema, partitioner, digest,
+required-component, unsupported-format, and destination-collision failures
+without retaining user data, then imports matching `ma` and `mc` fixtures. It
+starts the thin JAR worker from the
 same installed distribution on private loopback endpoints, reads the imported
 row, records the maximum source timestamp from real Statistics metadata,
 proves missing and incorrect credentials are rejected, runs `INSERT` and

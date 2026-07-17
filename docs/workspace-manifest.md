@@ -163,8 +163,14 @@ duplicate TOC entries, and unsafe component names fail creation.
 The inventory is sorted deterministically and stores file size plus SHA-256.
 Verification checks type, size, and digest. A mismatch stops create, status, and
 recover with workspace exit code `6`. Cassandra snapshot or backup directories
-are the normal source. Operators are responsible for ensuring any other
-directory is quiescent before it is inventoried.
+are the normal source. Before create, import, start, flush, and export on Linux,
+the controller scans visible `/proc` command lines, file descriptors, and memory
+maps. It rejects a source below an active Cassandra daemon's reported
+`cassandra.storagedir` or containing a file that daemon has open or mapped.
+Create performs the check before creating workspace artifacts. This detection
+cannot classify processes hidden by `/proc` permissions and is unavailable on
+non-Linux systems, so the required input remains a completed copy outside all
+live Cassandra data directories.
 
 The release worker reads the maximum timestamp from each validated statistics
 component during import. Worker protocol v3 returns the overall maximum, which

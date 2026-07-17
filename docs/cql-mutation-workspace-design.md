@@ -128,8 +128,11 @@ The implementation must maintain these invariants:
    compaction, or export, the CLI warns that files owned by a running production
    Cassandra process must never be used. Operators must stop the owning process
    or use a completed snapshot or backup copied outside every live data
-   directory. The warning is defense in depth and does not replace live-source
-   detection and rejection.
+   directory. On Linux, the controller also rejects sources under a visible
+   Cassandra daemon's reported storage root or containing its open/mapped files
+   before create, import, start, flush, and export. Restricted `/proc`
+   visibility and non-Linux systems still require the operator invariant; the
+   warning and automatic check are complementary controls.
 
 ## 7. Proposed architecture
 

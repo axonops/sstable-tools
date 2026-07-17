@@ -182,10 +182,11 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 1. start a complete production-like Cassandra daemon on loopback storage port
    7000 and native port 9042, with gossip and internode messaging enabled and
    every mutable path redirected to a private fixture root;
-2. verify that production is queryable and has no peers, reject genuine `ma`
-   fixture copies for schema, digest, required-index, and unsupported-format
-   failures without retaining table data, exercise collision cleanup and retry,
-   and then import it with the matching schema;
+2. verify that production is queryable and has no peers, reject a complete
+   source beneath its reported live storage root without creating a workspace,
+   reject genuine `ma` fixture copies for schema, digest, required-index, and
+   unsupported-format failures without retaining table data, exercise collision
+   cleanup and retry, and then import it with the matching schema;
 3. verify source hashes, full data digest, serialization header, extended
    Cassandra verification, one logical imported row, disabled auto-compaction,
    maximum source timestamp, and a baseline inventory while native transport
@@ -255,8 +256,8 @@ inventories.
 
 ## Remaining blockers
 
-- Reject live Cassandra data directories and require stable snapshot/backup
-  component sets.
+- Add equivalent live-source process evidence on non-Linux systems and document
+  deployment behavior when Linux `/proc` hides processes owned by other users.
 - Add a compatible future-dated SSTable fixture so CI proves reconciliation
   against a real source cell above wall clock, not only allocator boundaries
   derived from real statistics metadata.
