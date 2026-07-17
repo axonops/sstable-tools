@@ -32,6 +32,10 @@ jobs:
       - name: Build, test, and verify thin JARs
         run: mvn -B -ntp verify
 
+      - name: Publish executed test results
+        if: always()
+        run: bash scripts/ci-test-summary | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Generate runtime dependency reports
         run: >-
           mvn -B -ntp dependency:tree
@@ -86,6 +90,10 @@ jobs:
 
       - name: Test adapter and required shared modules
         run: mvn -B -ntp -pl "${{ matrix.module }}" -am test
+
+      - name: Publish executed test results
+        if: always()
+        run: bash scripts/ci-test-summary | tee -a "$GITHUB_STEP_SUMMARY"
 
   cassandra-311-sandbox:
     name: Cassandra 3.11.19 sandbox and cqlsh integration
@@ -148,6 +156,10 @@ jobs:
           -Pcassandra-3.11-sandbox-it
           -Dcassandra311.home=${{ runner.temp }}/apache-cassandra-3.11.19
           -Dcassandra311.java.home="$CASSANDRA_JAVA_HOME"
+
+      - name: Publish executed test results
+        if: always()
+        run: bash scripts/ci-test-summary | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Preflight extracted Debian and RPM Cassandra layouts
         run: |

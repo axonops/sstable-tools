@@ -421,6 +421,11 @@ packages after extraction only. The Debian fixture uses `/usr/share/cassandra`
 with `/etc/cassandra`; the RPM fixture uses `/usr/share/cassandra` with
 `/etc/cassandra/default.conf`. No package service script is called.
 
+Each CI job publishes its executed Surefire/Failsafe suites, exact test counts,
+and failures/errors/skips to both the job log and the GitHub Actions run
+summary. The live Cassandra 3.11 job includes the cqlsh mutation, recovery,
+flush, export, reopen, and clean-node-import integration suite.
+
 Compatibility remains deliberately conservative until the remaining release
 lines have equivalent installed-package fixtures in CI:
 
