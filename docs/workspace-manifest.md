@@ -269,15 +269,16 @@ The failed manifest retains its exact prior state in `lastStableState`.
 | `STOPPED` | Restart or destroy the workspace |
 | `FAILED_RECOVERABLE` | Inspect the failure, then recover to `lastStableState` |
 
-Recovery of `NEW` or `VALIDATED` only changes persisted state because those
-states have no worker process. The Cassandra 3.11 controller reconciles a
+Recovery of `NEW`, `VALIDATED`, or `IMPORTED` restores the prior state only
+after source, schema, and any imported baseline validate; none of those states
+has a persistent sandbox worker. The Cassandra 3.11 controller reconciles a
 failed `RUNNING`, `FLUSHED`, or `EXPORTED` state against its authenticated
 control endpoint and recorded PID. A responsive worker restores its prior
 state. An unreachable worker recovers as `STOPPED` only when Linux `/proc`
 proves the exact workspace worker command is gone; missing or ambiguous process
-identity fails closed. Other worker-owned recovery remains unimplemented. A
-worker exit code alone is never sufficient evidence that a transition
-completed.
+identity fails closed. A failed `STOPPED` state requires a valid `STOPPED`
+endpoint and the same process-death proof before recovery. A worker exit code
+alone is never sufficient evidence that a transition completed.
 
 If the worker and flush record are already `FLUSHED` while the manifest still
 says `RUNNING`, `workspace status`, `flush`, or `recover` verifies the complete

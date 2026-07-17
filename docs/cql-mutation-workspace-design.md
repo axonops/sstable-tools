@@ -898,6 +898,13 @@ The feature is ready for a release line only when:
    across starts, and stopped workspaces retain no native credential; and
 9. workspace recovery is documented and tested for every persisted state.
 
+The Cassandra 3.11 checkpoint implements this recovery matrix. Pre-worker
+states recover only after immutable inputs and any baseline revalidate. Active,
+flushed, and exported states reconcile authenticated worker evidence and fall
+back to `STOPPED` only when Linux process identity proves the exact worker is
+gone. Recovering a failed `STOPPED` state likewise requires a valid stopped
+endpoint and process-death proof.
+
 ## 18. Alternatives considered
 
 ### Extend the current `Query` class into a mutation engine

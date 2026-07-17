@@ -293,6 +293,13 @@ fixture declares `LocalPartitioner`, so the integration test proves that it is
 rejected against the sandbox's `Murmur3Partitioner`; compatible `mb` and `md`
 fixtures remain required before claiming full fixture coverage.
 
+`workspace recover` covers every persisted lifecycle state. `NEW`, `VALIDATED`,
+and `IMPORTED` recover only after immutable input and baseline checks. Failed
+active/flushed/exported states reconcile the authenticated endpoint and exact
+recorded PID; a dead worker can fall back only to `STOPPED` when Linux `/proc`
+proves the matching process is gone. Failed `STOPPED` recovery requires the
+same process evidence and removes any stale native credential.
+
 The Cassandra 3.11 worker uses a custom native-protocol query handler. It
 allows cqlsh metadata reads, `SELECT` against the imported table, and
 non-conditional `INSERT`/`UPDATE` against that table. It rejects `DELETE`,

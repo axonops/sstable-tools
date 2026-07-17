@@ -1,5 +1,7 @@
 package com.csforge.sstable.bootstrap;
 
+import com.csforge.sstable.worker.api.WorkerEndpoint;
+import com.csforge.sstable.worker.api.WorkerProtocol;
 import com.csforge.sstable.workspace.WorkspaceLock;
 import com.csforge.sstable.workspace.WorkspaceManifest;
 import com.csforge.sstable.workspace.WorkspaceRepository;
@@ -9,6 +11,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.UUID;
 import org.junit.Assert;
@@ -213,7 +216,7 @@ public class BootstrapMainTest {
     }
 
     @Test
-    public void recoverRefusesWorkerStateWithoutWorkerReconciliation() throws Exception {
+    public void recoverRestoresVerifiedImportedWorkspaceWithoutAWorker() throws Exception {
         Path source = createSstableSource("worker-state-source", "mc-5-big");
         Path workspace = temporary.newFolder("worker-state-workspace").toPath();
         Assert.assertEquals(0, BootstrapMain.run(new String[]{
@@ -229,15 +232,58 @@ public class BootstrapMainTest {
             repository.save(lock, imported.fail("worker stopped unexpectedly"));
         }
 
-        ByteArrayOutputStream error = new ByteArrayOutputStream();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
         int exitCode = BootstrapMain.run(new String[]{
                         "workspace", "recover", workspace.toString()
-                }, System.out, new PrintStream(error, true, "UTF-8"));
+                }, new PrintStream(output, true, "UTF-8"), System.err);
 
-        Assert.assertEquals(BootstrapException.WORKSPACE_EXIT_CODE, exitCode);
-        Assert.assertTrue(error.toString("UTF-8").contains("worker reconciliation"));
-        Assert.assertEquals(WorkspaceState.FAILED_RECOVERABLE,
+        Assert.assertEquals(0, exitCode);
+        Assert.assertTrue(output.toString("UTF-8").contains(
+                "workspace.state=IMPORTED"));
+        Assert.assertEquals(WorkspaceState.IMPORTED,
                 repository.load().state());
+    }
+
+    @Test
+    public void recoverRestoresStoppedWorkspaceOnlyAfterPidIsProvenGone() throws Exception {
+        Path source = createSstableSource("stopped-recover-source", "mc-11-big");
+        Path workspace = temporary.newFolder("stopped-recover-workspace").toPath();
+        Assert.assertEquals(0, BootstrapMain.run(new String[]{
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString()
+        }, discard(), System.err));
+
+        WorkspaceRepository repository = WorkspaceRepository.open(workspace);
+        UUID workspaceId;
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest imported = repository.load()
+                    .transitionTo(WorkspaceState.IMPORTED);
+            repository.save(lock, imported);
+            WorkspaceManifest running = imported.transitionTo(WorkspaceState.RUNNING);
+            repository.save(lock, running);
+            WorkspaceManifest stopped = running.transitionTo(WorkspaceState.STOPPED);
+            repository.save(lock, stopped);
+            repository.save(lock, stopped.fail("simulated stopped-state interruption"));
+            workspaceId = stopped.workspaceId();
+        }
+        Instant now = Instant.parse("2026-07-17T12:00:00Z");
+        new WorkerEndpoint(WorkerProtocol.CURRENT_VERSION, workspaceId,
+                WorkerEndpoint.Status.STOPPED, 999999999L, "3.11.19", "127.0.0.1",
+                19042, "127.0.0.1", 19043, now, now, "stopped")
+                .writeAtomically(workspace.resolve("state/worker.properties"));
+        Files.write(workspace.resolve("state/cqlshrc"),
+                "stale credential".getBytes(StandardCharsets.UTF_8));
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        int exitCode = BootstrapMain.run(new String[]{
+                        "workspace", "recover", workspace.toString()
+                }, new PrintStream(output, true, "UTF-8"), System.err);
+
+        Assert.assertEquals(0, exitCode);
+        Assert.assertTrue(output.toString("UTF-8").contains(
+                "workspace.state=STOPPED"));
+        Assert.assertEquals(WorkspaceState.STOPPED, repository.load().state());
+        Assert.assertFalse(Files.exists(workspace.resolve("state/cqlshrc")));
     }
 
     @Test

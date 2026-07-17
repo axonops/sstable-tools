@@ -592,14 +592,27 @@ final class WorkspaceCommandRunner {
                     repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
                     repository.save(lock, manifest);
                 } else if (recoveryTarget == WorkspaceState.NEW
-                        || recoveryTarget == WorkspaceState.VALIDATED) {
+                        || recoveryTarget == WorkspaceState.VALIDATED
+                        || recoveryTarget == WorkspaceState.IMPORTED) {
                     manifest = manifest.recover();
                     repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.CQLSHRC_PATH);
                     repository.save(lock, manifest);
+                } else if (recoveryTarget == WorkspaceState.STOPPED) {
+                    WorkerEndpoint endpoint = WorkerControlClient.readEndpoint(repository,
+                            manifest.workspaceId());
+                    if (endpoint.status() != WorkerEndpoint.Status.STOPPED) {
+                        throw new WorkspaceException("Stopped workspace endpoint is not "
+                                + "STOPPED: " + endpoint.status());
+                    }
+                    new WorkerProcessProbe().requireMatchingWorkerStopped(endpoint,
+                            manifest.workspaceId(), repository.root());
+                    manifest = manifest.recover();
+                    repository.deleteOwnedFile(lock,
+                            Cassandra311SandboxConfig.CQLSHRC_PATH);
+                    repository.save(lock, manifest);
                 } else {
-                    throw new WorkspaceException("Recovery from " + recoveryTarget
-                            + " requires release-worker reconciliation, which is not yet "
-                            + "implemented");
+                    throw new WorkspaceException("Manifest has an unsupported recovery target: "
+                            + recoveryTarget);
                 }
             }
             printStatus(repository, manifest, out);

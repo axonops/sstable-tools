@@ -276,7 +276,8 @@ delta and snapshot publication, crash reconciliation and corruption refusal,
 authenticated control, native credential parsing and loopback enforcement, the
 fixed role manager, future-source timestamp warnings, private config generation,
 schema capture/CQL splitting, child JVM arguments, lifecycle transitions,
-baseline verification, stale PID handling, symlink/path confinement, and source
+baseline verification, imported/stopped failed-state recovery, stale PID
+handling, confirmed confined destroy, symlink/path confinement, and source
 inventories.
 
 ## Remaining blockers
