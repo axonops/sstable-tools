@@ -201,23 +201,26 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 4. start the thin JAR against the same SHA-512-pinned 3.11.19 final tarball
    using JDK 8;
 5. verify the worker's native and control endpoints are loopback-only,
-   dynamically allocated, and distinct from the production ports, then prove
-   that the selected JDK's `jcmd` cannot attach to the worker;
+   dynamically allocated, and distinct from the production ports, prove the
+   native port refuses the host's non-loopback IPv4 address, then prove that the
+   selected JDK's `jcmd` cannot attach to the worker;
 6. prove unauthenticated and incorrect-password cqlsh connections fail, then
    query through `workspace cqlsh --execute` and connect directly using the
    generated owner-only `cqlshrc` and the tarball's
    Python-2-only `cqlsh` under a SHA-256-pinned PyPy 2.7 runtime, disable Python
    bytecode writes into the Cassandra installation, and verify Cassandra
    3.11.19/native v4;
-7. read the imported row, execute direct and prepared `INSERT`/`UPDATE`
+7. prove direct `DELETE`, `TRUNCATE`, DDL, batch, conditional update, system
+   write, and unneeded system read requests fail at the policy boundary, prove
+   prepared `DELETE` and `ALL` update paths fail before mutation, then flush the
+   target table before any accepted write and require a zero-file delta;
+8. stop that policy-only session, prove its credential was removed, restart
+   with a rotated credential and the persisted timestamp policy, read the
+   imported row, and execute direct and prepared `INSERT`/`UPDATE`
    operations through native transport, prove direct and prepared paging with
    a page size of one, accept `ONE`/`LOCAL_ONE`, reject `QUORUM`/`ALL` before
    execution, preserve explicit CQL and protocol timestamps exactly, and
    advance the durable `after-source` high-water for timestamp-free clients;
-8. prove direct `DELETE`, `TRUNCATE`, DDL, batch, conditional update, system
-   write, and unneeded system read requests fail at the policy boundary, prove
-   a prepared `DELETE` fails during prepare, and re-query rows and schema to
-   show no forbidden change occurred;
 9. send `SIGKILL` before flush, verify the production daemon remains queryable
    with no peers, detect worker failure, reconcile the PID, delete the stale
    native credential, and restart with a different password;

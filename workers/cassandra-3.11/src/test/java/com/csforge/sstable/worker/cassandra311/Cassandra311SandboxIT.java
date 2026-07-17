@@ -16,6 +16,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,6 +30,7 @@ import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -297,6 +303,39 @@ public class Cassandra311SandboxIT {
             Assert.assertTrue(sourceRow.output, sourceRow.output.contains("frodo"));
             Assert.assertTrue(sourceRow.output, sourceRow.output.contains("pass@"));
 
+            assertNativeUnreachableOutsideLoopback(nativeEndpoint);
+            assertForbiddenPolicyMatrix(cqlsh, nativeEndpoint, cqlshrc);
+            CommandResult preparedRejections = runPreparedRejectionCheck(cassandraHome,
+                    nativeEndpoint[0], nativeEndpoint[1], credentials);
+            Assert.assertEquals(preparedRejections.output, 0,
+                    preparedRejections.exitCode);
+
+            CommandResult rejectionFlush = run(command(controllerJava(), toolJar,
+                    "workspace", "flush", workspace.toString()));
+            Assert.assertEquals(rejectionFlush.output + workerError(workspace),
+                    0, rejectionFlush.exitCode);
+            Assert.assertEquals("0", property(rejectionFlush.output,
+                    "flush.deltaFileCount"));
+            Assert.assertFalse("Policy-only flush retained native credentials",
+                    Files.exists(cqlshrc));
+            CommandResult rejectionStop = run(command(controllerJava(), toolJar,
+                    "workspace", "stop", workspace.toString()));
+            Assert.assertEquals(rejectionStop.output, 0, rejectionStop.exitCode);
+            workerRunning = false;
+
+            NativeCredentials firstSessionCredentials = credentials;
+            start = run(command(controllerJava(), toolJar,
+                    "--cassandra-home", cassandraHome.toString(),
+                    "--java-home", javaHome.toString(),
+                    "workspace", "start", workspace.toString()));
+            Assert.assertEquals(start.output + workerError(workspace), 0, start.exitCode);
+            workerRunning = true;
+            Assert.assertEquals("after-source", property(start.output, "timestamp.policy"));
+            nativeEndpoint = property(start.output, "worker.native").split(":", 2);
+            cqlshrc = Paths.get(property(start.output, "worker.cqlshrc"));
+            credentials = readCredentials(cqlshrc);
+            Assert.assertNotEquals(firstSessionCredentials.password, credentials.password);
+
             CommandResult mutate = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint, cqlshrc,
                     "INSERT INTO blog.users (user_name, password, gender, state, birth_year) "
                             + "VALUES ('sam', 'inserted', 'male', 'CA', 1980); "
@@ -319,25 +358,6 @@ public class Cassandra311SandboxIT {
                     explicitCql.output.contains(Long.toString(explicitCqlTimestamp)));
             Assert.assertEquals("Explicit CQL timestamp advanced automatic high-water",
                     firstHighWater, timestampHighWater(timestampState));
-
-            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
-                    "DELETE FROM blog.users WHERE user_name = 'sam';");
-            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
-                    "TRUNCATE blog.users;");
-            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
-                    "CREATE TABLE blog.forbidden (id text PRIMARY KEY);");
-            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
-                    "BEGIN BATCH INSERT INTO blog.users "
-                            + "(user_name, password) VALUES ('batch', 'forbidden'); "
-                            + "APPLY BATCH;");
-            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
-                    "UPDATE blog.users SET password = 'conditional' "
-                            + "WHERE user_name = 'frodo' IF password = 'after';");
-            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
-                    "UPDATE system.local SET cluster_name = 'compromised' "
-                            + "WHERE key = 'local';");
-            assertPolicyRejected(cqlsh, nativeEndpoint, cqlshrc,
-                    "SELECT * FROM system.batchlog;");
 
             CommandResult prepared = runPreparedPolicyCheck(cassandraHome,
                     nativeEndpoint[0], nativeEndpoint[1], credentials,
@@ -712,6 +732,58 @@ public class Cassandra311SandboxIT {
         Assert.assertTrue(rejected.output, rejected.output.contains("SSTABLE_TOOLS_POLICY"));
     }
 
+    private static void assertForbiddenPolicyMatrix(Path cqlsh,
+                                                    String[] endpoint,
+                                                    Path cqlshrc) throws Exception {
+        assertPolicyRejected(cqlsh, endpoint, cqlshrc,
+                "DELETE FROM blog.users WHERE user_name = 'sam';");
+        assertPolicyRejected(cqlsh, endpoint, cqlshrc, "TRUNCATE blog.users;");
+        assertPolicyRejected(cqlsh, endpoint, cqlshrc,
+                "CREATE TABLE blog.forbidden (id text PRIMARY KEY);");
+        assertPolicyRejected(cqlsh, endpoint, cqlshrc,
+                "BEGIN BATCH INSERT INTO blog.users "
+                        + "(user_name, password) VALUES ('batch', 'forbidden'); "
+                        + "APPLY BATCH;");
+        assertPolicyRejected(cqlsh, endpoint, cqlshrc,
+                "UPDATE blog.users SET password = 'conditional' "
+                        + "WHERE user_name = 'frodo' IF password = 'pass@';");
+        assertPolicyRejected(cqlsh, endpoint, cqlshrc,
+                "UPDATE system.local SET cluster_name = 'compromised' "
+                        + "WHERE key = 'local';");
+        assertPolicyRejected(cqlsh, endpoint, cqlshrc,
+                "SELECT * FROM system.batchlog;");
+    }
+
+    private static void assertNativeUnreachableOutsideLoopback(String[] endpoint)
+            throws Exception {
+        InetAddress nonLoopback = null;
+        Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+        while (interfaces.hasMoreElements() && nonLoopback == null) {
+            NetworkInterface network = interfaces.nextElement();
+            if (!network.isUp() || network.isLoopback()) {
+                continue;
+            }
+            Enumeration<InetAddress> addresses = network.getInetAddresses();
+            while (addresses.hasMoreElements()) {
+                InetAddress address = addresses.nextElement();
+                if (address instanceof Inet4Address && !address.isLoopbackAddress()
+                        && !address.isLinkLocalAddress()) {
+                    nonLoopback = address;
+                    break;
+                }
+            }
+        }
+        Assert.assertNotNull("Test host has no non-loopback IPv4 address", nonLoopback);
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(nonLoopback,
+                    Integer.parseInt(endpoint[1])), 1000);
+            Assert.fail("Workspace native endpoint accepted non-loopback connection on "
+                    + nonLoopback.getHostAddress() + ":" + endpoint[1]);
+        } catch (IOException expected) {
+            // A loopback-only bind must refuse the host interface address.
+        }
+    }
+
     private static void assertGuardedState(Path cqlsh,
                                            String[] endpoint,
                                            Path cqlshrc) throws Exception {
@@ -818,6 +890,48 @@ public class Cassandra311SandboxIT {
         environment.put("SSTABLE_TOOLS_SOURCE_MAX_TS", Long.toString(sourceMaxTimestamp));
         environment.put("SSTABLE_TOOLS_PROTOCOL_TS",
                 Long.toString(sourceMaxTimestamp + 2000L));
+        return run(Arrays.asList(python2(), "-c", script, host, port), environment);
+    }
+
+    private static CommandResult runPreparedRejectionCheck(Path cassandraHome,
+                                                            String host,
+                                                            String port,
+                                                            NativeCredentials credentials)
+            throws Exception {
+        String script = "from cassandra.cluster import Cluster\n"
+                + "from cassandra import ConsistencyLevel\n"
+                + "from cassandra.auth import PlainTextAuthProvider\n"
+                + "import os, sys\n"
+                + "auth = PlainTextAuthProvider("
+                + "username=os.environ['SSTABLE_TOOLS_TEST_USERNAME'], "
+                + "password=os.environ['SSTABLE_TOOLS_TEST_PASSWORD'])\n"
+                + "cluster = Cluster([sys.argv[1]], port=int(sys.argv[2]), "
+                + "auth_provider=auth)\n"
+                + "session = cluster.connect()\n"
+                + "try:\n"
+                + "    session.prepare("
+                + "\"DELETE FROM blog.users WHERE user_name = ?\")\n"
+                + "    raise AssertionError('prepared DELETE unexpectedly succeeded')\n"
+                + "except Exception as error:\n"
+                + "    if 'SSTABLE_TOOLS_POLICY' not in str(error):\n"
+                + "        raise\n"
+                + "allowed = session.prepare("
+                + "\"UPDATE blog.users SET password = ? WHERE user_name = ?\")\n"
+                + "rejected = allowed.bind(('forbidden-all', 'frodo'))\n"
+                + "rejected.consistency_level = ConsistencyLevel.ALL\n"
+                + "try:\n"
+                + "    session.execute(rejected)\n"
+                + "    raise AssertionError('ALL prepared update unexpectedly succeeded')\n"
+                + "except Exception as error:\n"
+                + "    if 'SSTABLE_TOOLS_POLICY' not in str(error):\n"
+                + "        raise\n"
+                + "finally:\n"
+                + "    cluster.shutdown()\n";
+        Map<String, String> environment = new TreeMap<>();
+        environment.put("PYTHONDONTWRITEBYTECODE", "1");
+        environment.put("PYTHONPATH", pythonDriverPath(cassandraHome));
+        environment.put("SSTABLE_TOOLS_TEST_USERNAME", credentials.username);
+        environment.put("SSTABLE_TOOLS_TEST_PASSWORD", credentials.password);
         return run(Arrays.asList(python2(), "-c", script, host, port), environment);
     }
 

@@ -352,7 +352,10 @@ without retaining user data, then imports matching `ma` and `mc` fixtures. It
 starts the thin JAR worker from the
 same installed distribution on private loopback endpoints, reads the imported
 row, records the maximum source timestamp from real Statistics metadata,
-proves missing and incorrect credentials are rejected, runs `INSERT` and
+proves missing and incorrect credentials are rejected, proves the native port
+refuses the host's non-loopback address, rejects the direct/prepared forbidden
+matrix and flushes exactly zero delta files before any allowed write, then
+restarts with a rotated credential and runs `INSERT` and
 `UPDATE` with the generated `cqlshrc` and the distribution's `cqlsh`, verifies
 forbidden direct and prepared statements are rejected without data/schema
 changes, exercises direct and prepared paging, accepts `ONE`/`LOCAL_ONE`,
