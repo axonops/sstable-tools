@@ -15,6 +15,7 @@ public final class AdapterMetadata {
     private final String runtimeClass;
     private final int minimumJava;
     private final int maximumJava;
+    private final boolean importSupported;
 
     private AdapterMetadata(String releaseLine,
                             CassandraVersion compiledVersion,
@@ -22,7 +23,8 @@ public final class AdapterMetadata {
                             CassandraVersion maximumVersion,
                             String runtimeClass,
                             int minimumJava,
-                            int maximumJava) {
+                            int maximumJava,
+                            boolean importSupported) {
         this.releaseLine = releaseLine;
         this.compiledVersion = compiledVersion;
         this.minimumVersion = minimumVersion;
@@ -30,6 +32,7 @@ public final class AdapterMetadata {
         this.runtimeClass = runtimeClass;
         this.minimumJava = minimumJava;
         this.maximumJava = maximumJava;
+        this.importSupported = importSupported;
     }
 
     public static AdapterMetadata loadRequired(ClassLoader classLoader) throws BootstrapException {
@@ -58,6 +61,7 @@ public final class AdapterMetadata {
         String runtimeClass = required(properties, "adapter.runtime-class");
         int minimumJava = positiveInteger(properties, "adapter.minimum-java-version");
         int maximumJava = positiveInteger(properties, "adapter.maximum-java-version");
+        boolean importSupported = optionalBoolean(properties, "adapter.import-supported", false);
 
         if (!compiled.releaseLine().equals(releaseLine)) {
             throw invalid("adapter.cassandra-version does not belong to release line " + releaseLine);
@@ -74,7 +78,7 @@ public final class AdapterMetadata {
         }
 
         return new AdapterMetadata(releaseLine, compiled, minimum, maximum,
-                runtimeClass, minimumJava, maximumJava);
+                runtimeClass, minimumJava, maximumJava, importSupported);
     }
 
     private static String required(Properties properties, String name) throws BootstrapException {
@@ -96,6 +100,21 @@ public final class AdapterMetadata {
         } catch (NumberFormatException e) {
             throw invalid(name + " must be a positive integer");
         }
+    }
+
+    private static boolean optionalBoolean(Properties properties, String name, boolean fallback)
+            throws BootstrapException {
+        String value = properties.getProperty(name);
+        if (value == null) {
+            return fallback;
+        }
+        if ("true".equalsIgnoreCase(value.trim())) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(value.trim())) {
+            return false;
+        }
+        throw invalid(name + " must be true or false");
     }
 
     private static BootstrapException invalid(String message) {
@@ -155,5 +174,9 @@ public final class AdapterMetadata {
 
     public int maximumJava() {
         return maximumJava;
+    }
+
+    public boolean importSupported() {
+        return importSupported;
     }
 }

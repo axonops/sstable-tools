@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path>\n' "$0" >&2
+  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path> [--import-cassandra-home <path> --java-home <path>]\n' "$0" >&2
   exit 64
 }
 
@@ -10,6 +10,8 @@ image=''
 release=''
 tool_jar=''
 output_root=''
+import_cassandra_home=''
+java_home=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -17,12 +19,22 @@ while [[ $# -gt 0 ]]; do
     --release) release=${2:-}; shift 2 ;;
     --tool-jar) tool_jar=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
+    --import-cassandra-home) import_cassandra_home=${2:-}; shift 2 ;;
+    --java-home) java_home=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
 
 [[ -n "$image" && -n "$release" && -n "$tool_jar" && -n "$output_root" ]] || usage
 [[ -f "$tool_jar" ]] || { printf 'Tool JAR not found: %s\n' "$tool_jar" >&2; exit 1; }
+if [[ -n "$import_cassandra_home" || -n "$java_home" ]]; then
+  [[ -n "$import_cassandra_home" && -n "$java_home" ]] || usage
+  [[ -d "$import_cassandra_home/lib" ]] || {
+    printf 'Cassandra home does not contain lib/: %s\n' "$import_cassandra_home" >&2
+    exit 1
+  }
+  [[ -x "$java_home/bin/java" ]] || { printf 'Invalid Java home: %s\n' "$java_home" >&2; exit 1; }
+fi
 
 container="sstable-tools-ci-${release//./-}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
 container=${container:0:63}
@@ -96,6 +108,15 @@ java -jar "$tool_jar" workspace status "$workspace" \
   | tee "$output_root/workspace-status.log"
 grep -q 'workspace.state=VALIDATED' "$output_root/workspace-create.log"
 grep -q 'source.integrity=verified' "$output_root/workspace-status.log"
+
+if [[ -n "$import_cassandra_home" ]]; then
+  java -jar "$tool_jar" --cassandra-home "$import_cassandra_home" --java-home "$java_home" \
+    workspace import "$workspace" | tee "$output_root/workspace-import.log"
+  java -jar "$tool_jar" workspace status "$workspace" \
+    | tee "$output_root/workspace-import-status.log"
+  grep -q 'workspace.state=IMPORTED' "$output_root/workspace-import.log"
+  grep -q 'source.integrity=verified' "$output_root/workspace-import-status.log"
+fi
 
 printf 'Verified Cassandra %s stock-cqlsh source generation and stopped-SSTable workspace capture.\n' \
   "$release"

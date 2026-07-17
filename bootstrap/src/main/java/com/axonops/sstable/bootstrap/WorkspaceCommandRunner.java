@@ -1,7 +1,7 @@
 package com.axonops.sstable.bootstrap;
 
-import com.axonops.sstable.worker.api.WorkerEndpoint;
 import com.axonops.sstable.worker.api.ImportResult;
+import com.axonops.sstable.worker.api.WorkerEndpoint;
 import com.axonops.sstable.workspace.ExportRecord;
 import com.axonops.sstable.workspace.ManifestFile;
 import com.axonops.sstable.workspace.SchemaBundle;
@@ -154,9 +154,10 @@ final class WorkspaceCommandRunner {
                         AdapterMetadata adapter,
                         CassandraInstallation installation,
                         PrintStream out) throws WorkspaceException, BootstrapException {
-        if (!"3.11".equals(adapter.releaseLine())) {
+        if (!adapter.importSupported()) {
             throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
-                    "SSTable import is currently implemented only by the Cassandra 3.11 adapter");
+                    "SSTable import is not implemented by the Cassandra "
+                            + adapter.releaseLine() + " adapter");
         }
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
