@@ -133,9 +133,10 @@ public class Cassandra311SandboxIT {
             CommandResult flushed = run(command(controllerJava(), toolJar,
                     "workspace", "flush", workspace.toString()));
             Assert.assertEquals(flushed.output + workerError(workspace), 0, flushed.exitCode);
+            Path deltaExport = temporary.getRoot().toPath().resolve("stopped-cqlsh-delta");
             CommandResult exported = run(command(controllerJava(), toolJar,
                     "workspace", "export", workspace.toString(), "--mode", "delta",
-                    "--output", temporary.newFolder("stopped-cqlsh-delta").toString()));
+                    "--output", deltaExport.toString()));
             Assert.assertEquals(exported.output + workerError(workspace), 0, exported.exitCode);
             Assert.assertTrue(exported.output, exported.output.contains("workspace.state=EXPORTED"));
 
