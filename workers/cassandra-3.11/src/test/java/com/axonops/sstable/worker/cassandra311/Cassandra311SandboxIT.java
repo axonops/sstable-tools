@@ -80,8 +80,8 @@ public class Cassandra311SandboxIT {
             Assert.assertTrue(selected.output, selected.output.contains("source-user"));
             Assert.assertTrue(selected.output, selected.output.contains("updated"));
 
-            CommandResult flush = run(Arrays.asList(cassandraHome.resolve("bin/nodetool").toString(),
-                    "-h", "127.0.0.1", "flush", "stopped_source", "users"));
+            CommandResult flush = runNodetool(cassandraHome, javaHome,
+                    "-h", "127.0.0.1", "flush", "stopped_source", "users");
             Assert.assertEquals(flush.output, 0, flush.exitCode);
         } finally {
             production.stop();
@@ -1945,6 +1945,18 @@ public class Cassandra311SandboxIT {
 
     private static CommandResult runCqlsh(java.util.List<String> command) throws Exception {
         return run(command, Collections.singletonMap("PYTHONDONTWRITEBYTECODE", "1"));
+    }
+
+    private static CommandResult runNodetool(Path cassandraHome,
+                                             Path javaHome,
+                                             String... arguments) throws Exception {
+        List<String> command = new ArrayList<>();
+        command.add(cassandraHome.resolve("bin/nodetool").toString());
+        command.addAll(Arrays.asList(arguments));
+        Map<String, String> environment = new TreeMap<>();
+        environment.put("CASSANDRA_HOME", cassandraHome.toString());
+        environment.put("JAVA_HOME", javaHome.toString());
+        return run(command, environment);
     }
 
     private static CommandResult run(java.util.List<String> command,
