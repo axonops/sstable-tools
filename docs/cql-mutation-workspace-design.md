@@ -130,7 +130,7 @@ The implementation must maintain these invariants:
    or use a completed snapshot or backup copied outside every live data
    directory. On Linux, the controller also rejects sources under a visible
    Cassandra daemon's reported storage root or containing its open/mapped files
-   before create, import, start, flush, and export. Restricted `/proc`
+   before create, import, start, cqlsh, flush, and export. Restricted `/proc`
    visibility and non-Linux systems still require the operator invariant; the
    warning and automatic check are complementary controls.
 
@@ -449,9 +449,14 @@ sstable-tools workspace cqlsh ./case
 `start` prints a loopback endpoint, fixed username, and generated `cqlshrc` path
 for an external client. `cqlsh` launches the client from the selected Cassandra
 installation, which avoids unsupported client/server version combinations. The
-current 3.11 implementation provides `start`; the convenience `workspace
-cqlsh` wrapper remains planned. Until that wrapper exists, pass the printed
-configuration to the installed client:
+implemented launcher requires the canonical Cassandra home, configuration, and
+release recorded by `start`, validates the live authenticated control endpoint
+and owner-only credential, and fixes the client host, port, and `cqlshrc`. The
+password never appears in process arguments. Interactive mode accepts no client
+overrides; `--execute <CQL>` provides the constrained noninteractive form.
+
+The printed configuration also remains usable with the installed client
+directly:
 
 ```shell
 $CASSANDRA_HOME/bin/cqlsh --cqlshrc /workspace/state/cqlshrc HOST PORT
@@ -466,6 +471,7 @@ sstable-tools workspace create ./case \
 
 sstable-tools workspace import ./case
 sstable-tools workspace start ./case
+sstable-tools workspace cqlsh ./case
 sstable-tools workspace flush ./case
 ```
 

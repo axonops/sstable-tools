@@ -80,6 +80,22 @@ public class BootstrapArgumentsTest {
                 "snapshot", "--output", "published"}, "only valid with workspace export");
     }
 
+    @Test
+    public void parsesWorkspaceCqlshAndRestrictsExecuteOption() throws Exception {
+        BootstrapArguments cqlsh = BootstrapArguments.parse(new String[]{
+                "--cassandra-home", "cassandra", "workspace", "cqlsh", "workspace",
+                "--execute", "SELECT * FROM blog.users"
+        });
+        Assert.assertEquals(BootstrapArguments.Action.WORKSPACE_CQLSH, cqlsh.action());
+        Assert.assertEquals("SELECT * FROM blog.users", cqlsh.executeCql());
+        Assert.assertEquals(Paths.get("cassandra"),
+                cqlsh.runtimeOptions().cassandraHome());
+
+        assertUsageFailure(new String[]{"workspace", "status", "workspace",
+                "--execute", "SELECT now() FROM system.local"},
+                "only valid with workspace cqlsh");
+    }
+
     private static void assertUsageFailure(String[] arguments, String expected)
             throws Exception {
         try {

@@ -16,6 +16,7 @@ final class BootstrapArguments {
         WORKSPACE_CREATE,
         WORKSPACE_IMPORT,
         WORKSPACE_START,
+        WORKSPACE_CQLSH,
         WORKSPACE_STATUS,
         WORKSPACE_FLUSH,
         WORKSPACE_EXPORT,
@@ -32,6 +33,7 @@ final class BootstrapArguments {
     private final boolean timestampPolicySpecified;
     private final ExportMode exportMode;
     private final Path outputPath;
+    private final String executeCql;
 
     private BootstrapArguments(Action action,
                                RuntimeOptions runtimeOptions,
@@ -41,7 +43,8 @@ final class BootstrapArguments {
                                TimestampPolicy timestampPolicy,
                                boolean timestampPolicySpecified,
                                ExportMode exportMode,
-                               Path outputPath) {
+                               Path outputPath,
+                               String executeCql) {
         this.action = action;
         this.runtimeOptions = runtimeOptions;
         this.workspacePath = workspacePath;
@@ -52,13 +55,14 @@ final class BootstrapArguments {
         this.timestampPolicySpecified = timestampPolicySpecified;
         this.exportMode = exportMode;
         this.outputPath = outputPath;
+        this.executeCql = executeCql;
     }
 
     static BootstrapArguments parse(String[] args) throws BootstrapException {
         if (args.length == 0) {
             return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
                     null, Collections.<Path>emptyList(), null, TimestampPolicy.WALL_CLOCK,
-                    false, null, null);
+                    false, null, null, null);
         }
 
         Path cassandraHome = null;
@@ -70,6 +74,7 @@ final class BootstrapArguments {
         boolean timestampPolicySpecified = false;
         ExportMode exportMode = null;
         Path outputPath = null;
+        String executeCql = null;
         List<String> command = new ArrayList<>();
 
         for (int index = 0; index < args.length; index++) {
@@ -78,13 +83,13 @@ final class BootstrapArguments {
                 return new BootstrapArguments(Action.HELP,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath);
+                        timestampPolicySpecified, exportMode, outputPath, executeCql);
             }
             if ("--version".equals(argument)) {
                 return new BootstrapArguments(Action.VERSION,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath);
+                        timestampPolicySpecified, exportMode, outputPath, executeCql);
             }
             if ("--cassandra-home".equals(argument)) {
                 cassandraHome = pathValue(args, ++index, argument);
@@ -112,6 +117,12 @@ final class BootstrapArguments {
                     throw usage("--output may be specified only once");
                 }
                 outputPath = pathValue(args, ++index, argument);
+            } else if ("--execute".equals(argument)) {
+                if (executeCql != null || ++index >= args.length
+                        || args[index].trim().isEmpty()) {
+                    throw usage("--execute requires one non-empty CQL statement");
+                }
+                executeCql = args[index];
             } else if (argument.startsWith("--")) {
                 throw usage("Unknown option: " + argument);
             } else {
@@ -140,6 +151,10 @@ final class BootstrapArguments {
             action = Action.WORKSPACE_START;
             workspacePath = commandPath(command.get(2));
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
+                && "cqlsh".equals(command.get(1))) {
+            action = Action.WORKSPACE_CQLSH;
+            workspacePath = commandPath(command.get(2));
+        } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "status".equals(command.get(1))) {
             action = Action.WORKSPACE_STATUS;
             workspacePath = commandPath(command.get(2));
@@ -166,12 +181,14 @@ final class BootstrapArguments {
 
         boolean workspaceAction = action == Action.WORKSPACE_CREATE
                 || action == Action.WORKSPACE_IMPORT || action == Action.WORKSPACE_START
+                || action == Action.WORKSPACE_CQLSH
                 || action == Action.WORKSPACE_STATUS
                 || action == Action.WORKSPACE_FLUSH
                 || action == Action.WORKSPACE_EXPORT
                 || action == Action.WORKSPACE_STOP || action == Action.WORKSPACE_RECOVER;
         if (workspaceAction && action != Action.WORKSPACE_START
                 && action != Action.WORKSPACE_IMPORT
+                && action != Action.WORKSPACE_CQLSH
                 && (cassandraHome != null || cassandraConf != null
                 || javaHome != null)) {
             throw usage("Cassandra runtime options are not accepted by this workspace command");
@@ -194,10 +211,13 @@ final class BootstrapArguments {
         if (action != Action.WORKSPACE_EXPORT && (exportMode != null || outputPath != null)) {
             throw usage("--mode and --output are only valid with workspace export");
         }
+        if (action != Action.WORKSPACE_CQLSH && executeCql != null) {
+            throw usage("--execute is only valid with workspace cqlsh");
+        }
         return new BootstrapArguments(action,
                 new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                 workspacePath, sourceDirectories, schemaPath, timestampPolicy,
-                timestampPolicySpecified, exportMode, outputPath);
+                timestampPolicySpecified, exportMode, outputPath, executeCql);
     }
 
     private static Path pathValue(String[] args, int index, String option)
@@ -261,5 +281,9 @@ final class BootstrapArguments {
 
     Path outputPath() {
         return outputPath;
+    }
+
+    String executeCql() {
+        return executeCql;
     }
 }

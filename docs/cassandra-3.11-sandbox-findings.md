@@ -136,6 +136,13 @@ and a fixed in-memory role manager grants login to only that non-superuser
 identity. Cassandra's `AllowAllAuthorizer` remains configured: the parsed
 statement guard, not production RBAC, is the authorization boundary.
 
+`workspace cqlsh` validates that the selected Cassandra home, configuration,
+and release match the runtime recorded by `start`, checks the authenticated
+worker control endpoint and owner-only credential, and launches that
+installation's stock client against the fixed loopback address. Interactive
+mode allows no endpoint/authentication overrides; `--execute <CQL>` is the only
+noninteractive client option exposed by the controller.
+
 ## Lifecycle and recovery
 
 The child publishes a strict, atomic endpoint record containing workspace UUID,
@@ -197,7 +204,8 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
    dynamically allocated, and distinct from the production ports, then prove
    that the selected JDK's `jcmd` cannot attach to the worker;
 6. prove unauthenticated and incorrect-password cqlsh connections fail, then
-   connect using the generated owner-only `cqlshrc` and the tarball's
+   query through `workspace cqlsh --execute` and connect directly using the
+   generated owner-only `cqlshrc` and the tarball's
    Python-2-only `cqlsh` under a SHA-256-pinned PyPy 2.7 runtime, disable Python
    bytecode writes into the Cassandra installation, and verify Cassandra
    3.11.19/native v4;

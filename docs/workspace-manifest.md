@@ -62,8 +62,9 @@ The bootstrap does not discover or load Cassandra for create, status, flush,
 stop, or recover. Import and start launch a release-specific child JVM against
 the selected installation. Cassandra 3.11 start and live status output include
 the loopback native endpoint, fixed username, and owner-only `state/cqlshrc`
-path needed by the installation's stock cqlsh. A convenience `workspace cqlsh`
-wrapper, export, and destroy remain later implementation stages.
+path needed by the installation's stock cqlsh. `workspace cqlsh` validates the
+recorded runtime and live endpoint, then launches that stock client with the
+fixed configuration; it does not load Cassandra classes into the controller.
 
 ## Owned layout
 
@@ -163,9 +164,9 @@ duplicate TOC entries, and unsafe component names fail creation.
 The inventory is sorted deterministically and stores file size plus SHA-256.
 Verification checks type, size, and digest. A mismatch stops create, status, and
 recover with workspace exit code `6`. Cassandra snapshot or backup directories
-are the normal source. Before create, import, start, flush, and export on Linux,
-the controller scans visible `/proc` command lines, file descriptors, and memory
-maps. It rejects a source below an active Cassandra daemon's reported
+are the normal source. Before create, import, start, cqlsh, flush, and export on
+Linux, the controller scans visible `/proc` command lines, file descriptors, and
+memory maps. It rejects a source below an active Cassandra daemon's reported
 `cassandra.storagedir` or containing a file that daemon has open or mapped.
 Create performs the check before creating workspace artifacts. This detection
 cannot classify processes hidden by `/proc` permissions and is unavailable on

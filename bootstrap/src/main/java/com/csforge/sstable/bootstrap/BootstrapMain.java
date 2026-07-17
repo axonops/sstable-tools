@@ -55,6 +55,9 @@ public final class BootstrapMain {
                 new WorkspaceCommandRunner().start(arguments, adapter, installation, out);
                 return 0;
             }
+            if (arguments.action() == BootstrapArguments.Action.WORKSPACE_CQLSH) {
+                return new WorkspaceCommandRunner().cqlsh(arguments, installation);
+            }
             if (arguments.action() == BootstrapArguments.Action.WORKSPACE_IMPORT) {
                 new WorkspaceCommandRunner().importSstables(
                         arguments, adapter, installation, out);
@@ -96,6 +99,7 @@ public final class BootstrapMain {
         return action == BootstrapArguments.Action.WORKSPACE_CREATE
                 || action == BootstrapArguments.Action.WORKSPACE_IMPORT
                 || action == BootstrapArguments.Action.WORKSPACE_START
+                || action == BootstrapArguments.Action.WORKSPACE_CQLSH
                 || action == BootstrapArguments.Action.WORKSPACE_FLUSH
                 || action == BootstrapArguments.Action.WORKSPACE_EXPORT;
     }
@@ -150,6 +154,7 @@ public final class BootstrapMain {
         out.println("  --timestamp-policy <p>  wall-clock or after-source (workspace start)");
         out.println("  --mode <mode>           delta or snapshot (workspace export)");
         out.println("  --output <path>         Atomic publication destination (workspace export)");
+        out.println("  --execute <cql>         Execute CQL and exit (workspace cqlsh)");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();
@@ -161,6 +166,7 @@ public final class BootstrapMain {
         out.println("  workspace create <path>  Inventory sources and create a validated workspace");
         out.println("  workspace import <path>  Validate and copy SSTables with native CQL disabled");
         out.println("  workspace start <path>   Start an imported workspace sandbox (3.11 prototype)");
+        out.println("  workspace cqlsh <path>   Launch the selected installation's stock cqlsh");
         out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
         out.println("  workspace flush <path>   Quiesce CQL and flush the workspace table");
         out.println("  workspace export <path>  Verify and publish a delta or snapshot export");
@@ -173,6 +179,6 @@ public final class BootstrapMain {
         out.println("  backup copied outside every live Cassandra data directory.");
         out.println();
         out.println("Workspace commands planned for later implementation:");
-        out.println("  workspace cqlsh|destroy");
+        out.println("  workspace destroy");
     }
 }

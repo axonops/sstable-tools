@@ -156,9 +156,9 @@ operator-ready write workflow.
 > live Cassandra data directory. The isolated Cassandra worker started by this
 > tool is expected and writes only beneath its private workspace.
 
-On Linux, `workspace create`, `import`, `start`, `flush`, and `export` also scan
-visible `/proc` entries for an active Cassandra daemon. A source below its
-reported `cassandra.storagedir`, or containing a file the daemon has open or
+On Linux, `workspace create`, `import`, `start`, `cqlsh`, `flush`, and `export`
+also scan visible `/proc` entries for an active Cassandra daemon. A source below
+its reported `cassandra.storagedir`, or containing a file the daemon has open or
 memory-mapped, is rejected. Creation performs this check before writing the
 workspace directory. Restricted `/proc` visibility and non-Linux platforms
 cannot provide the same process evidence, so this guard does not replace the
@@ -200,6 +200,26 @@ appear in the process arguments:
   --cqlshrc /absolute/path/from/worker.cqlshrc \
   127.0.0.1 PORT_FROM_worker.native
 ```
+
+The controller can launch that exact client and fixed workspace endpoint
+without placing the password in its arguments:
+
+```shell
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  --cassandra-home /opt/apache-cassandra-3.11.19 \
+  --java-home /usr/lib/jvm/java-8-openjdk \
+  workspace cqlsh ./case
+
+java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
+  --cassandra-home /opt/apache-cassandra-3.11.19 \
+  --java-home /usr/lib/jvm/java-8-openjdk \
+  workspace cqlsh ./case --execute "SELECT * FROM blog.users;"
+```
+
+The launcher requires the same canonical Cassandra home, configuration, and
+release recorded when the worker started. It accepts only `--execute`; endpoint,
+authentication, and client configuration overrides are intentionally not
+passed through.
 
 Cassandra 3.11's stock cqlsh Python driver normally attaches a protocol
 timestamp to mutations. The guard preserves that timestamp, so `after-source`

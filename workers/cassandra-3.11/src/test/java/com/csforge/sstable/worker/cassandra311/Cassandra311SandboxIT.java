@@ -280,6 +280,16 @@ public class Cassandra311SandboxIT {
             Assert.assertTrue(version.output, version.output.contains("Cassandra 3.11.19"));
             Assert.assertTrue(version.output, version.output.contains("Native protocol v4"));
 
+            CommandResult launchedCqlsh = run(command(controllerJava(), toolJar,
+                    "--cassandra-home", cassandraHome.toString(),
+                    "--java-home", javaHome.toString(),
+                    "workspace", "cqlsh", workspace.toString(), "--execute",
+                    "SELECT user_name, password FROM blog.users "
+                            + "WHERE user_name = 'frodo';"));
+            Assert.assertEquals(launchedCqlsh.output, 0, launchedCqlsh.exitCode);
+            Assert.assertTrue(launchedCqlsh.output, launchedCqlsh.output.contains("frodo"));
+            Assert.assertTrue(launchedCqlsh.output, launchedCqlsh.output.contains("pass@"));
+
             CommandResult sourceRow = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint, cqlshrc,
                     "SELECT user_name, password, state FROM blog.users "
                             + "WHERE user_name = 'frodo';"));

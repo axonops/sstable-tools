@@ -224,6 +224,30 @@ final class WorkspaceCommandRunner {
         }
     }
 
+    int cqlsh(BootstrapArguments arguments,
+              CassandraInstallation installation)
+            throws WorkspaceException, BootstrapException {
+        final WorkerEndpoint endpoint;
+        final Path cqlshrc;
+        WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest manifest = repository.load();
+            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
+            manifest.sourceInventory().verifyUnchanged();
+            verifySchemaIfPresent(repository, manifest);
+            verifyBaselineIfPresent(repository, manifest);
+            if (manifest.state() != WorkspaceState.RUNNING) {
+                throw new WorkspaceException("workspace cqlsh requires state RUNNING, not "
+                        + manifest.state());
+            }
+            requireSelectedRuntime(manifest, installation);
+            endpoint = new WorkerControlClient().status(repository, manifest.workspaceId());
+            cqlshrc = repository.resolveInside(Cassandra311SandboxConfig.CQLSHRC_PATH);
+        }
+        return new CqlshLauncher().run(installation, endpoint, cqlshrc,
+                arguments.executeCql());
+    }
+
     private static void create(BootstrapArguments arguments, PrintStream out)
             throws WorkspaceException {
         requireSeparateArguments(arguments.workspacePath(), arguments.sourceDirectories());
@@ -843,6 +867,22 @@ final class WorkspaceCommandRunner {
             throw new WorkspaceException("Workspace runtime identity is missing " + key);
         }
         return value;
+    }
+
+    private static void requireSelectedRuntime(WorkspaceManifest manifest,
+                                               CassandraInstallation installation)
+            throws WorkspaceException {
+        Map<String, String> expected = new LinkedHashMap<>();
+        expected.put("cassandra.home", installation.home().toString());
+        expected.put("cassandra.conf", installation.conf().toString());
+        expected.put("cassandra.version", installation.version().toString());
+        for (Map.Entry<String, String> entry : expected.entrySet()) {
+            String recorded = requiredRuntimeValue(manifest, entry.getKey());
+            if (!recorded.equals(entry.getValue())) {
+                throw new WorkspaceException("Selected runtime " + entry.getKey() + " is "
+                        + entry.getValue() + " but workspace recorded " + recorded);
+            }
+        }
     }
 
     private static TimestampPolicy parseTimestampPolicy(String recorded)
