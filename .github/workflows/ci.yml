@@ -254,7 +254,7 @@ jobs:
           echo '7f72941dd1c73e30361cc2aad55dabd7005e95f2275c9190645fd0467cac6da67f8602ffbae53fb98367cb67116b4e271b8293381d7d5041267ce2437e8273be  apache-cassandra-4.0.17-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-4.0.17-bin.tar.gz
           python -m pip install --disable-pip-version-check --user \
-            -r apache-cassandra-4.0.17/pylib/requirements.txt
+            'cassandra-driver>=3.29,<4' 'six>=1.16'
 
       - name: Build Cassandra 4.0 adapter
         run: mvn -B -ntp -pl workers/cassandra-4.0 -am package -DskipTests
