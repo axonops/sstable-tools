@@ -296,6 +296,7 @@ public final class ChildProcessLauncher {
             throws BootstrapException {
         List<String> command = new ArrayList<>();
         command.add(installation.java().executable().toString());
+        appendCassandraModuleOptions(command, installation);
         command.add("-Xms512m");
         command.add("-Xmx512m");
         command.add("-XX:+DisableAttachMechanism");
@@ -314,6 +315,34 @@ public final class ChildProcessLauncher {
         command.add("-cp");
         command.add(joinClasspath(installation));
         return command;
+    }
+
+    private static void appendCassandraModuleOptions(List<String> command,
+                                                     CassandraInstallation installation)
+            throws BootstrapException {
+        if (installation.java().majorVersion() < 9) {
+            return;
+        }
+        Path options = installation.conf().resolve("jvm11-server.options");
+        if (!Files.isRegularFile(options, LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        try {
+            for (String raw : Files.readAllLines(options)) {
+                String option = raw.trim();
+                if (option.startsWith("--add-opens=") || option.startsWith("--add-exports=")) {
+                    command.add(option);
+                } else if (option.startsWith("--add-opens ")
+                        || option.startsWith("--add-exports ")) {
+                    String[] parts = option.split("\\s+", 2);
+                    command.add(parts[0]);
+                    command.add(parts[1]);
+                }
+            }
+        } catch (IOException e) {
+            throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
+                    "Cannot read Cassandra Java module options " + options, e);
+        }
     }
 
     private static void configureEnvironment(ProcessBuilder builder,

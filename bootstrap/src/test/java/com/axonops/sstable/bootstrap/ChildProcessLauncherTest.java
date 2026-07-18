@@ -113,6 +113,37 @@ public class ChildProcessLauncherTest {
         Assert.assertTrue(command.contains("-XX:+DisableAttachMechanism"));
     }
 
+    @Test
+    public void importCommandUsesDistributionJavaModuleOptions() throws Exception {
+        Path root = temporary.newFolder("module options").toPath();
+        Path home = Files.createDirectory(root.resolve("cassandra home"));
+        Path conf = Files.createDirectory(root.resolve("cassandra conf"));
+        Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
+        Files.write(conf.resolve("jvm11-server.options"), Arrays.asList(
+                "# Cassandra Java 11 options",
+                "--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED",
+                "--add-opens java.base/java.nio=ALL-UNNAMED",
+                "-XX:+UseG1GC"));
+        Path serverJar = Files.write(root.resolve("cassandra-all-4.0.17.jar"), new byte[0]);
+        Path jamm = Files.write(root.resolve("jamm-0.3.2.jar"), new byte[0]);
+        Path tool = Files.write(root.resolve("sstable-tools.jar"), new byte[0]);
+        Path workspace = Files.createDirectory(root.resolve("workspace"));
+        JavaInstallation java = JavaInstallation.discover(
+                Paths.get(System.getProperty("java.home")), System.getenv(), System.getProperties());
+        CassandraInstallation installation = new CassandraInstallation(
+                home, conf, serverJar, CassandraVersion.parse("4.0.17"), java,
+                tool, Arrays.asList(tool, conf, serverJar, jamm));
+
+        List<String> command = new ChildProcessLauncher(false).importCommand(
+                installation, workspace,
+                UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"));
+
+        Assert.assertTrue(command.contains("--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED"));
+        Assert.assertTrue(command.contains("--add-opens"));
+        Assert.assertTrue(command.contains("java.base/java.nio=ALL-UNNAMED"));
+        Assert.assertFalse(command.contains("-XX:+UseG1GC"));
+    }
+
     private static Path locationOf(Class<?> type) throws Exception {
         return Paths.get(type.getProtectionDomain().getCodeSource().getLocation().toURI())
                 .toRealPath();
