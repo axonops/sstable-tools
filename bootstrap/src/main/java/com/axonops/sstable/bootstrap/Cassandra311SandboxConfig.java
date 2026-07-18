@@ -73,6 +73,8 @@ final class Cassandra311SandboxConfig {
                 : "AllowAllAuthenticator";
         String roleManager = startNativeTransport
                 ? "com.axonops.sstable.worker.cassandra311.WorkspaceRoleManager"
+                : "4.0".equals(releaseLine)
+                ? "com.axonops.sstable.worker.cassandra40.OfflineRoleManager"
                 : "CassandraRoleManager";
         String yaml = "cluster_name: 'sstable-tools-" + workspaceId + "'\n"
                 + "authenticator: " + authenticator + "\n"

@@ -118,5 +118,7 @@ public class Cassandra311SandboxConfigTest {
                 root.resolve(Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
         Assert.assertFalse(yaml.contains("start_rpc:"));
         Assert.assertFalse(yaml.contains("rpc_port:"));
+        Assert.assertTrue(yaml.contains("role_manager: "
+                + "com.axonops.sstable.worker.cassandra40.OfflineRoleManager"));
     }
 }

@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -115,6 +116,8 @@ public class ChildProcessLauncherTest {
 
     @Test
     public void importCommandUsesDistributionJavaModuleOptions() throws Exception {
+        Assume.assumeTrue(JavaInstallation.discover(Paths.get(System.getProperty("java.home")),
+                System.getenv(), System.getProperties()).majorVersion() >= 9);
         Path root = temporary.newFolder("module options").toPath();
         Path home = Files.createDirectory(root.resolve("cassandra home"));
         Path conf = Files.createDirectory(root.resolve("cassandra conf"));
