@@ -40,6 +40,7 @@ container="sstable-tools-ci-${release//./-}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN
 container=${container:0:63}
 source_dir="$output_root/source"
 workspace="$output_root/workspace"
+schema="$output_root/schema.cql"
 mkdir -p "$source_dir"
 
 cleanup() {
@@ -102,7 +103,12 @@ find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -quit | grep -q . || {
   exit 1
 }
 
-java -jar "$tool_jar" workspace create "$workspace" --sstables "$source_dir" \
+printf '%s\n' \
+  "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+  'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);' \
+  >"$schema"
+
+java -jar "$tool_jar" workspace create "$workspace" --sstables "$source_dir" --schema "$schema" \
   | tee "$output_root/workspace-create.log"
 java -jar "$tool_jar" workspace status "$workspace" \
   | tee "$output_root/workspace-status.log"
