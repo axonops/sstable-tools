@@ -181,7 +181,7 @@ final class WorkspaceCommandRunner {
             repository.save(lock, manifest);
             int unusedNativePort = allocateLoopbackPort();
             Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
-                    unusedNativePort);
+                    unusedNativePort, adapter.releaseLine());
             repository.deleteOwnedFile(lock, ImportResult.WORKSPACE_PATH);
 
             try {

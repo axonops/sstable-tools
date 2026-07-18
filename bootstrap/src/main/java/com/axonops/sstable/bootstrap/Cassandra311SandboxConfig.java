@@ -29,7 +29,7 @@ final class Cassandra311SandboxConfig {
                 || nativePassword == null || !nativePassword.matches("[0-9a-f]{64}")) {
             throw new WorkspaceException("Invalid Cassandra 3.11 sandbox endpoint inputs");
         }
-        writeConfiguration(repository, lock, workspaceId, nativePort, true);
+        writeConfiguration(repository, lock, workspaceId, nativePort, true, "3.11");
         repository.writeOwnedFile(lock, CONTROL_TOKEN_PATH,
                 (controlToken + "\n").getBytes(StandardCharsets.US_ASCII));
         String cqlshrc = "[authentication]\n"
@@ -43,20 +43,30 @@ final class Cassandra311SandboxConfig {
                             WorkspaceLock lock,
                             UUID workspaceId,
                             int nativePort) throws WorkspaceException {
+        writeImport(repository, lock, workspaceId, nativePort, "3.11");
+    }
+
+    static void writeImport(WorkspaceRepository repository,
+                            WorkspaceLock lock,
+                            UUID workspaceId,
+                            int nativePort,
+                            String releaseLine) throws WorkspaceException {
         if (nativePort < 1 || nativePort > 65535) {
             throw new WorkspaceException("Invalid Cassandra 3.11 import endpoint input");
         }
         repository.deleteOwnedFile(lock, CQLSHRC_PATH);
         repository.deleteOwnedFile(lock, WorkspaceTimestampState.WORKSPACE_PATH);
-        writeConfiguration(repository, lock, workspaceId, nativePort, false);
+        writeConfiguration(repository, lock, workspaceId, nativePort, false, releaseLine);
     }
 
     private static void writeConfiguration(WorkspaceRepository repository,
                                            WorkspaceLock lock,
                                            UUID workspaceId,
                                            int nativePort,
-                                           boolean startNativeTransport)
+                                           boolean startNativeTransport,
+                                           String releaseLine)
             throws WorkspaceException {
+        boolean supportsThrift = "3.11".equals(releaseLine);
         Path root = repository.root();
         String authenticator = startNativeTransport
                 ? "com.axonops.sstable.worker.cassandra311.WorkspaceAuthenticator"
@@ -84,10 +94,10 @@ final class Cassandra311SandboxConfig {
                 + "broadcast_address: 127.0.0.1\n"
                 + "storage_port: 17000\n"
                 + "ssl_storage_port: 17001\n"
-                + "start_rpc: false\n"
                 + "rpc_address: 127.0.0.1\n"
                 + "broadcast_rpc_address: 127.0.0.1\n"
-                + "rpc_port: 19160\n"
+                + (supportsThrift ? "start_rpc: false\n"
+                + "rpc_port: 19160\n" : "")
                 + "start_native_transport: " + startNativeTransport + "\n"
                 + "native_transport_port: " + nativePort + "\n"
                 + "native_transport_max_threads: 16\n"
