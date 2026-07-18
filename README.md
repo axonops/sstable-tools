@@ -170,7 +170,7 @@ The current Cassandra 3.11 workflow is:
 ```shell
 java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
   workspace create ./case \
-  --sstables /evidence/snapshot/table-directory \
+  --sstables /evidence/snapshot/table-directory/ma-1-big-Data.db \
   --schema /evidence/schema.cql
 
 java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \

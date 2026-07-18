@@ -1007,10 +1007,11 @@ final class WorkspaceCommandRunner {
             try {
                 source = sourceArgument.toRealPath();
             } catch (IOException e) {
-                throw new WorkspaceException("Cannot resolve source directory "
+                throw new WorkspaceException("Cannot resolve SSTable source "
                         + sourceArgument, e);
             }
-            requireNoOverlap(workspace, source);
+            requireNoOverlap(workspace, Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)
+                    ? source : source.getParent());
         }
     }
 

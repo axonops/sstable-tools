@@ -16,7 +16,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
-/** Complete, checksummed SSTable descriptor sets captured from stable directories. */
+/** Complete, checksummed SSTable descriptor sets captured from explicit sources. */
 public final class SourceInventory {
     private static final String TOC_SUFFIX = "-TOC.txt";
     private static final String DATA_SUFFIX = "-Data.db";
@@ -43,23 +43,27 @@ public final class SourceInventory {
         this.sets = Collections.unmodifiableList(sorted);
     }
 
-    public static SourceInventory capture(List<Path> sourceDirectories)
+    public static SourceInventory capture(List<Path> sources)
             throws WorkspaceException {
-        if (sourceDirectories == null || sourceDirectories.isEmpty()) {
-            throw new WorkspaceException("At least one SSTable source directory is required");
+        if (sources == null || sources.isEmpty()) {
+            throw new WorkspaceException("At least one SSTable source is required");
         }
 
         Set<Path> canonicalDirectories = new LinkedHashSet<>();
-        for (Path source : sourceDirectories) {
+        Set<Path> selectedTocs = new LinkedHashSet<>();
+        for (Path source : sources) {
             try {
                 Path canonical = source.toRealPath();
-                if (!Files.isDirectory(canonical, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new WorkspaceException("Source must be a stable snapshot or backup directory, not a standalone component: "
-                            + source);
+                if (Files.isDirectory(canonical, LinkOption.NOFOLLOW_LINKS)) {
+                    canonicalDirectories.add(canonical);
+                } else if (Files.isRegularFile(canonical, LinkOption.NOFOLLOW_LINKS)) {
+                    selectedTocs.add(tocForSelectedComponent(canonical));
+                } else {
+                    throw new WorkspaceException("SSTable source must be a directory or "
+                            + "a Data.db/TOC.txt component: " + source);
                 }
-                canonicalDirectories.add(canonical);
             } catch (IOException e) {
-                throw new WorkspaceException("Cannot resolve source directory " + source, e);
+                throw new WorkspaceException("Cannot resolve SSTable source " + source, e);
             }
         }
 
@@ -67,11 +71,45 @@ public final class SourceInventory {
         for (Path directory : canonicalDirectories) {
             sets.addAll(captureDirectory(directory));
         }
+        for (Path toc : selectedTocs) {
+            Path directory = toc.getParent();
+            String name = toc.getFileName().toString();
+            String descriptor = name.substring(0, name.length() - TOC_SUFFIX.length());
+            sets.add(captureSet(directory, descriptor, toc));
+        }
         sets.sort(Comparator.comparing(set -> set.directory() + "/" + set.descriptor()));
         if (sets.isEmpty()) {
             throw new WorkspaceException("No complete SSTable descriptors were found");
         }
         return new SourceInventory(sets);
+    }
+
+    private static Path tocForSelectedComponent(Path component) throws WorkspaceException {
+        String name = component.getFileName().toString();
+        String descriptor;
+        if (name.endsWith(TOC_SUFFIX)) {
+            descriptor = name.substring(0, name.length() - TOC_SUFFIX.length());
+        } else if (name.endsWith(DATA_SUFFIX)) {
+            descriptor = name.substring(0, name.length() - DATA_SUFFIX.length());
+        } else {
+            throw new WorkspaceException("Explicit SSTable file must be a Data.db or TOC.txt "
+                    + "component: " + component);
+        }
+        if (descriptor.isEmpty()) {
+            throw new WorkspaceException("Malformed SSTable component name: " + component);
+        }
+        Path toc = component.getParent().resolve(descriptor + TOC_SUFFIX);
+        try {
+            Path canonical = toc.toRealPath();
+            if (!Files.isRegularFile(canonical, LinkOption.NOFOLLOW_LINKS)) {
+                throw new WorkspaceException("Explicit SSTable component has no safe TOC: "
+                        + component);
+            }
+            return canonical;
+        } catch (IOException e) {
+            throw new WorkspaceException("Explicit SSTable component has no TOC: " + component,
+                    e);
+        }
     }
 
     private static List<SstableSet> captureDirectory(Path directory)

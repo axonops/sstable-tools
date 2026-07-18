@@ -242,12 +242,19 @@ jobs:
           cache: maven
           cache-dependency-path: '**/pom.xml'
 
+      - name: Set up Python for stock Cassandra cqlsh
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
       - name: Download pinned Cassandra 4.0.17 distribution
         working-directory: ${{ runner.temp }}
         run: |
           curl -fsSLO https://archive.apache.org/dist/cassandra/4.0.17/apache-cassandra-4.0.17-bin.tar.gz
           echo '7f72941dd1c73e30361cc2aad55dabd7005e95f2275c9190645fd0467cac6da67f8602ffbae53fb98367cb67116b4e271b8293381d7d5041267ce2437e8273be  apache-cassandra-4.0.17-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-4.0.17-bin.tar.gz
+          python -m pip install --disable-pip-version-check --user \
+            -r apache-cassandra-4.0.17/pylib/requirements.txt
 
       - name: Build Cassandra 4.0 adapter
         run: mvn -B -ntp -pl workers/cassandra-4.0 -am package -DskipTests

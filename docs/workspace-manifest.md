@@ -20,7 +20,8 @@ The shared bootstrap currently implements:
 ```shell
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
   workspace create ./case \
-  --sstables /evidence/snapshots/before-change \
+  --sstables /evidence/snapshots/before-change/nb-42-big-Data.db \
+  --sstables /evidence/snapshots/before-change/nb-43-big-Data.db \
   --schema /evidence/schema.cql
 
 java -jar sstable-tools-cassandra-3.11-<version>.jar \
@@ -48,11 +49,15 @@ java -jar sstable-tools-cassandra-3.11-<version>.jar \
   --confirm-workspace-id UUID_FROM_workspace.status
 ```
 
-`--sstables` is repeatable. Every value is a directory containing complete
-TOC-declared component sets. `workspace create` records the inventory and moves
-the manifest from `NEW` to `VALIDATED`. Repeating create with the same canonical
-directories and byte identities is idempotent. Repeating it with different
-inputs fails.
+`--sstables` is repeatable. The preferred input is an explicit `*-Data.db` or
+`*-TOC.txt` file for each descriptor to include. Each selected descriptor is
+expanded only through its sibling TOC-declared components; no Cassandra data
+root, keyspace directory, or unrelated table is traversed. Directory inputs
+remain a compatibility mode and select every complete descriptor directly in
+that directory only. `workspace create` records the resulting inventory and
+moves the manifest from `NEW` to `VALIDATED`. Repeating create with the same
+canonical selection and byte identities is idempotent. Repeating it with
+different inputs fails.
 
 `workspace import` is currently implemented by the Cassandra 3.11 adapter. It
 parses the schema with installed Cassandra classes, validates every source set,

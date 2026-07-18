@@ -26,8 +26,8 @@ final class LiveCassandraSourceGuard {
     private LiveCassandraSourceGuard() {
     }
 
-    static void reject(List<Path> sourceDirectories) throws WorkspaceException {
-        reject(canonicalDirectories(sourceDirectories), Paths.get("/proc"));
+    static void reject(List<Path> sources) throws WorkspaceException {
+        reject(canonicalDirectories(sources), Paths.get("/proc"));
     }
 
     static void reject(SourceInventory inventory) throws WorkspaceException {
@@ -55,19 +55,22 @@ final class LiveCassandraSourceGuard {
         }
     }
 
-    private static List<Path> canonicalDirectories(List<Path> directories)
+    private static List<Path> canonicalDirectories(List<Path> sources)
             throws WorkspaceException {
         List<Path> result = new ArrayList<>();
-        for (Path directory : directories) {
+        for (Path source : sources) {
             try {
-                Path canonical = directory.toRealPath();
+                Path canonical = source.toRealPath();
+                if (Files.isRegularFile(canonical, LinkOption.NOFOLLOW_LINKS)) {
+                    canonical = canonical.getParent();
+                }
                 if (!Files.isDirectory(canonical, LinkOption.NOFOLLOW_LINKS)) {
-                    throw new WorkspaceException("SSTable source is not a canonical directory: "
-                            + directory);
+                    throw new WorkspaceException("SSTable source is not a canonical directory "
+                            + "or component: " + source);
                 }
                 result.add(canonical);
             } catch (IOException e) {
-                throw new WorkspaceException("Cannot resolve SSTable source " + directory, e);
+                throw new WorkspaceException("Cannot resolve SSTable source " + source, e);
             }
         }
         return result;

@@ -31,6 +31,23 @@ public class SourceInventoryTest {
     }
 
     @Test
+    public void capturesOnlyExplicitlySelectedDataDescriptor() throws Exception {
+        Path source = WorkspaceTestFixtures.completeSstableDirectory(
+                temporary.newFolder("selected").toPath());
+        Files.write(source.resolve("mb-2-big-TOC.txt"), Arrays.asList(
+                "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
+        Files.write(source.resolve("mb-2-big-Data.db"), new byte[]{3});
+        Files.write(source.resolve("mb-2-big-Statistics.db"), new byte[]{4});
+
+        SourceInventory inventory = SourceInventory.capture(Collections.singletonList(
+                source.resolve("ma-1-big-Data.db")));
+
+        Assert.assertEquals(1, inventory.sets().size());
+        Assert.assertEquals("ma-1-big", inventory.sets().get(0).descriptor());
+        inventory.verifyUnchanged();
+    }
+
+    @Test
     public void rejectsStandaloneDataComponent() throws Exception {
         Path source = temporary.newFolder("standalone").toPath();
         Files.write(source.resolve("ma-1-big-Data.db"), new byte[]{1});

@@ -150,7 +150,7 @@ public final class BootstrapMain {
         out.println("  --cassandra-home <path>  Cassandra installation to use");
         out.println("  --cassandra-conf <path>  Cassandra configuration directory to use");
         out.println("  --java-home <path>       Compatible Java installation to use");
-        out.println("  --sstables <path>        Stable SSTable directory (repeatable for create)");
+        out.println("  --sstables <path>        Selected SSTable Data.db or TOC.txt (repeatable)");
         out.println("  --schema <path>          UTF-8 CQL schema bundle for workspace import");
         out.println("  --timestamp-policy <p>  wall-clock or after-source (workspace start)");
         out.println("  --mode <mode>           delta or snapshot (workspace export)");

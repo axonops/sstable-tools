@@ -217,7 +217,7 @@ final class BootstrapArguments {
             throw usage("Cassandra runtime options are not accepted by this workspace command");
         }
         if (action == Action.WORKSPACE_CREATE && sourceDirectories.isEmpty()) {
-            throw usage("workspace create requires at least one --sstables directory");
+            throw usage("workspace create requires at least one --sstables source");
         }
         if (action != Action.WORKSPACE_CREATE && !sourceDirectories.isEmpty()) {
             throw usage("--sstables is only valid with workspace create");

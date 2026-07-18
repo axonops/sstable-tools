@@ -98,7 +98,8 @@ docker stop "$container" >/dev/null
 }
 docker cp "$container:$table_dir/." "$source_dir"
 find "$source_dir" -maxdepth 1 -type f -printf '%f\n' | sort | tee "$output_root/source-components.txt"
-find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -quit | grep -q . || {
+selected_sstable="$(find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -quit)"
+[[ -n "$selected_sstable" ]] || {
   printf 'Stopped Cassandra source did not yield Data.db\n' >&2
   exit 1
 }
@@ -108,7 +109,7 @@ printf '%s\n' \
   'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);' \
   >"$schema"
 
-java -jar "$tool_jar" workspace create "$workspace" --sstables "$source_dir" --schema "$schema" \
+java -jar "$tool_jar" workspace create "$workspace" --sstables "$selected_sstable" --schema "$schema" \
   | tee "$output_root/workspace-create.log"
 java -jar "$tool_jar" workspace status "$workspace" \
   | tee "$output_root/workspace-status.log"
