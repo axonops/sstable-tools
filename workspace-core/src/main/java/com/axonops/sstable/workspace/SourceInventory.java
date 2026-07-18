@@ -73,6 +73,10 @@ public final class SourceInventory {
         }
         for (Path toc : selectedTocs) {
             Path directory = toc.getParent();
+            if (canonicalDirectories.contains(directory)) {
+                throw new WorkspaceException("Do not combine a source directory with an "
+                        + "explicit SSTable from that directory: " + toc);
+            }
             String name = toc.getFileName().toString();
             String descriptor = name.substring(0, name.length() - TOC_SUFFIX.length());
             sets.add(captureSet(directory, descriptor, toc));
