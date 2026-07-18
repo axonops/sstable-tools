@@ -13,9 +13,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryHandler;
+import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.service.CassandraDaemon;
+import org.apache.cassandra.service.ClientState;
+import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -39,6 +42,13 @@ public final class Cassandra40Runtime implements ImportRuntimeAdapter {
         LinkageVerifier.requirePublicStaticField(QueryProcessor.class,
                 "instance", QueryProcessor.class);
         LinkageVerifier.requireAssignable(QueryHandler.class, QueryProcessor.class);
+        LinkageVerifier.requireAssignable(QueryHandler.class, WorkspaceQueryHandler.class);
+        LinkageVerifier.requirePublicMethod(QueryHandler.class, "parse",
+                org.apache.cassandra.cql3.CQLStatement.class, String.class,
+                QueryState.class, QueryOptions.class);
+        LinkageVerifier.requirePublicMethod(QueryHandler.class, "prepare",
+                org.apache.cassandra.transport.messages.ResultMessage.Prepared.class,
+                String.class, ClientState.class, java.util.Map.class);
     }
 
     @Override
