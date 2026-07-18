@@ -121,4 +121,31 @@ public class Cassandra311SandboxConfigTest {
         Assert.assertTrue(yaml.contains("role_manager: "
                 + "com.axonops.sstable.worker.cassandra40.OfflineRoleManager"));
     }
+
+    @Test
+    public void cassandra40SandboxConfigurationUsesLocalNoOpAuthentication() throws Exception {
+        Path source = temporary.newFolder("cassandra40-sandbox-source").toPath();
+        Files.write(source.resolve("nb-1-big-TOC.txt"), Arrays.asList(
+                "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
+        Files.write(source.resolve("nb-1-big-Data.db"), new byte[]{1});
+        Files.write(source.resolve("nb-1-big-Statistics.db"), new byte[]{2});
+        Path root = temporary.newFolder("cassandra40-sandbox-workspace").toPath();
+        WorkspaceRepository repository = WorkspaceRepository.createAt(root);
+        WorkspaceManifest manifest = WorkspaceManifest.create(SourceInventory.capture(
+                Collections.singletonList(source)));
+
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
+                    19042, TOKEN, PASSWORD, "4.0");
+        }
+
+        String yaml = new String(Files.readAllBytes(
+                root.resolve(Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("start_native_transport: true"));
+        Assert.assertFalse(yaml.contains("start_rpc:"));
+        Assert.assertTrue(yaml.contains("authenticator: AllowAllAuthenticator"));
+        Assert.assertTrue(yaml.contains("role_manager: "
+                + "com.axonops.sstable.worker.cassandra40.OfflineRoleManager"));
+    }
 }

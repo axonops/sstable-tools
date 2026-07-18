@@ -226,8 +226,8 @@ jobs:
             --cassandra-conf "${{ runner.temp }}/cassandra-rpm/etc/cassandra/default.conf" \
             --java-home "$CASSANDRA_JAVA_HOME" runtime preflight
 
-  cassandra-40-import:
-    name: Cassandra 4.0.17 stopped-SSTable import
+  cassandra-40-sandbox:
+    name: Cassandra 4.0.17 stopped-SSTable sandbox and cqlsh integration
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -262,11 +262,42 @@ jobs:
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17"
           --java-home "$JAVA_HOME"
 
+      - name: Mutate the imported SSTable through stock Cassandra 4.0 cqlsh
+        run: |
+          TOOL_JAR=workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-3.11.0-alpha12-SNAPSHOT.jar
+          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-4.0.17"
+          WORKSPACE="${{ runner.temp }}/cassandra-40-import/workspace"
+          OUTPUT="${{ runner.temp }}/cassandra-40-import/export"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --timestamp-policy after-source workspace start "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-40-import/workspace-start.log"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('sandbox-row', 'inserted', 'new') USING TIMESTAMP 2000000000000000;" \
+            workspace cqlsh "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-40-import/cqlsh-insert.log"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --execute "UPDATE ci_source.events USING TIMESTAMP 2000000000000001 SET payload = 'updated', state = 'ready' WHERE event_id = 'sandbox-row';" \
+            workspace cqlsh "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-40-import/cqlsh-update.log"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --execute "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'sandbox-row';" \
+            workspace cqlsh "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-40-import/cqlsh-select.log"
+          grep -q 'sandbox-row' "${{ runner.temp }}/cassandra-40-import/cqlsh-select.log"
+          grep -q 'updated' "${{ runner.temp }}/cassandra-40-import/cqlsh-select.log"
+          grep -q 'ready' "${{ runner.temp }}/cassandra-40-import/cqlsh-select.log"
+          java -jar "$TOOL_JAR" workspace flush "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-40-import/workspace-flush.log"
+          java -jar "$TOOL_JAR" --mode delta --output "$OUTPUT" workspace export "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-40-import/workspace-export.log"
+          java -jar "$TOOL_JAR" workspace stop "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-40-import/workspace-stop.log"
+
       - name: Upload import diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: cassandra-40-import-diagnostics
+          name: cassandra-40-sandbox-diagnostics
           if-no-files-found: warn
           retention-days: 14
           path: ${{ runner.temp }}/cassandra-40-import

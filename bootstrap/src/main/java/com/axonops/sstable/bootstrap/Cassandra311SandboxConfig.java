@@ -24,12 +24,22 @@ final class Cassandra311SandboxConfig {
                       int nativePort,
                       String controlToken,
                       String nativePassword) throws WorkspaceException {
+        write(repository, lock, workspaceId, nativePort, controlToken, nativePassword, "3.11");
+    }
+
+    static void write(WorkspaceRepository repository,
+                      WorkspaceLock lock,
+                      UUID workspaceId,
+                      int nativePort,
+                      String controlToken,
+                      String nativePassword,
+                      String releaseLine) throws WorkspaceException {
         if (nativePort < 1 || nativePort > 65535
                 || controlToken == null || !controlToken.matches("[0-9a-f]{64}")
                 || nativePassword == null || !nativePassword.matches("[0-9a-f]{64}")) {
             throw new WorkspaceException("Invalid Cassandra 3.11 sandbox endpoint inputs");
         }
-        writeConfiguration(repository, lock, workspaceId, nativePort, true, "3.11");
+        writeConfiguration(repository, lock, workspaceId, nativePort, true, releaseLine);
         repository.writeOwnedFile(lock, CONTROL_TOKEN_PATH,
                 (controlToken + "\n").getBytes(StandardCharsets.US_ASCII));
         String cqlshrc = "[authentication]\n"
@@ -68,10 +78,11 @@ final class Cassandra311SandboxConfig {
             throws WorkspaceException {
         boolean supportsThrift = "3.11".equals(releaseLine);
         Path root = repository.root();
-        String authenticator = startNativeTransport
+        boolean cassandra311 = "3.11".equals(releaseLine);
+        String authenticator = startNativeTransport && cassandra311
                 ? "com.axonops.sstable.worker.cassandra311.WorkspaceAuthenticator"
                 : "AllowAllAuthenticator";
-        String roleManager = startNativeTransport
+        String roleManager = startNativeTransport && cassandra311
                 ? "com.axonops.sstable.worker.cassandra311.WorkspaceRoleManager"
                 : "4.0".equals(releaseLine)
                 ? "com.axonops.sstable.worker.cassandra40.OfflineRoleManager"

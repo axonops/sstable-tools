@@ -243,7 +243,7 @@ public final class ChildProcessLauncher {
         Path configuration = workspace.resolve(Cassandra311SandboxConfig.CONFIG_PATH);
         List<String> command = workerCommand(installation, workspace, configuration, true);
         command.add("-Dcassandra.custom_query_handler_class="
-                + "com.axonops.sstable.worker.cassandra311.WorkspaceQueryHandler");
+                + queryHandlerClass(installation));
         command.add("-Dsstable.tools.workspace.keyspace=" + requireTarget(keyspace,
                 "keyspace"));
         command.add("-Dsstable.tools.workspace.table=" + requireTarget(table, "table"));
@@ -271,6 +271,19 @@ public final class ChildProcessLauncher {
                     "Imported workspace " + name + " is missing or invalid");
         }
         return value;
+    }
+
+    private static String queryHandlerClass(CassandraInstallation installation)
+            throws BootstrapException {
+        if ("3.11".equals(installation.version().releaseLine())) {
+            return "com.axonops.sstable.worker.cassandra311.WorkspaceQueryHandler";
+        }
+        if ("4.0".equals(installation.version().releaseLine())) {
+            return "com.axonops.sstable.worker.cassandra40.WorkspaceQueryHandler";
+        }
+        throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
+                "No workspace query handler is available for Cassandra "
+                        + installation.version().releaseLine());
     }
 
     List<String> importCommand(CassandraInstallation installation,

@@ -167,7 +167,7 @@ public final class BootstrapMain {
         out.println("Workspace commands:");
         out.println("  workspace create <path>  Inventory sources and create a validated workspace");
         out.println("  workspace import <path>  Validate and copy SSTables with native CQL disabled");
-        out.println("  workspace start <path>   Start an imported workspace sandbox (3.11 prototype)");
+        out.println("  workspace start <path>   Start an imported workspace sandbox");
         out.println("  workspace cqlsh <path>   Launch the selected installation's stock cqlsh");
         out.println("  workspace status <path>  Verify sources and print persisted lifecycle state");
         out.println("  workspace flush <path>   Quiesce CQL and flush the workspace table");

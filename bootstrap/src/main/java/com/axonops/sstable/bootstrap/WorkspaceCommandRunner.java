@@ -66,10 +66,10 @@ final class WorkspaceCommandRunner {
                AdapterMetadata adapter,
                CassandraInstallation installation,
                PrintStream out) throws WorkspaceException, BootstrapException {
-        if (!"3.11".equals(adapter.releaseLine())) {
+        if (!"3.11".equals(adapter.releaseLine()) && !"4.0".equals(adapter.releaseLine())) {
             throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
-                    "Isolated sandbox start is currently implemented only by the Cassandra "
-                            + "3.11 prototype");
+                    "Isolated sandbox start is currently implemented only for Cassandra 3.11 "
+                            + "and 4.0");
         }
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
@@ -90,6 +90,11 @@ final class WorkspaceCommandRunner {
             TimestampPolicy timestampPolicy = requireTimestampPolicy(
                     manifest, arguments.timestampPolicy(),
                     arguments.timestampPolicySpecified());
+            if ("4.0".equals(adapter.releaseLine())
+                    && timestampPolicy != TimestampPolicy.AFTER_SOURCE) {
+                throw new WorkspaceException("Cassandra 4.0 sandbox currently requires "
+                        + "--timestamp-policy after-source");
+            }
             if (!timestampPolicyRecorded) {
                 manifest = manifest.withSchemaIdentity(Collections.singletonMap(
                         TimestampPolicy.MANIFEST_KEY, timestampPolicy.value()));
@@ -107,7 +112,7 @@ final class WorkspaceCommandRunner {
             String token = randomSecret();
             String nativePassword = randomSecret();
             Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
-                    nativePort, token, nativePassword);
+                    nativePort, token, nativePassword, adapter.releaseLine());
             repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.ENDPOINT_PATH);
 
             WorkerEndpoint endpoint = null;
