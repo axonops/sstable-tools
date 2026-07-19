@@ -188,6 +188,7 @@ public final class WorkspaceQueryHandler implements QueryHandler {
 
     private static boolean isRequiredSystemRead(TableMetadata metadata) {
         return "system_schema".equals(metadata.keyspace)
+                || "system_virtual_schema".equals(metadata.keyspace)
                 || ("system".equals(metadata.keyspace)
                 && ("local".equals(metadata.name) || "peers".equals(metadata.name)
                 || "peers_v2".equals(metadata.name)));
