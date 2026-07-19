@@ -120,6 +120,18 @@ public class Cassandra311SandboxConfigTest {
         Assert.assertFalse(yaml.contains("rpc_port:"));
         Assert.assertTrue(yaml.contains("role_manager: "
                 + "com.axonops.sstable.worker.cassandra40.OfflineRoleManager"));
+
+        try (WorkspaceLock lock = repository.acquire()) {
+            Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
+                    19042, "4.1");
+        }
+
+        yaml = new String(Files.readAllBytes(
+                root.resolve(Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertFalse(yaml.contains("start_rpc:"));
+        Assert.assertFalse(yaml.contains("rpc_port:"));
+        Assert.assertTrue(yaml.contains("role_manager: "
+                + "com.axonops.sstable.worker.cassandra41.OfflineRoleManager"));
     }
 
     @Test
