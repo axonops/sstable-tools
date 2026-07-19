@@ -281,6 +281,9 @@ public final class ChildProcessLauncher {
         if ("4.0".equals(installation.version().releaseLine())) {
             return "com.axonops.sstable.worker.cassandra40.WorkspaceQueryHandler";
         }
+        if ("4.1".equals(installation.version().releaseLine())) {
+            return "com.axonops.sstable.worker.cassandra41.WorkspaceQueryHandler";
+        }
         throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
                 "No workspace query handler is available for Cassandra "
                         + installation.version().releaseLine());

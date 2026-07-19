@@ -66,10 +66,11 @@ final class WorkspaceCommandRunner {
                AdapterMetadata adapter,
                CassandraInstallation installation,
                PrintStream out) throws WorkspaceException, BootstrapException {
-        if (!"3.11".equals(adapter.releaseLine()) && !"4.0".equals(adapter.releaseLine())) {
+        if (!"3.11".equals(adapter.releaseLine()) && !"4.0".equals(adapter.releaseLine())
+                && !"4.1".equals(adapter.releaseLine())) {
             throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
                     "Isolated sandbox start is currently implemented only for Cassandra 3.11 "
-                            + "and 4.0");
+                            + "through 4.1");
         }
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
@@ -90,9 +91,9 @@ final class WorkspaceCommandRunner {
             TimestampPolicy timestampPolicy = requireTimestampPolicy(
                     manifest, arguments.timestampPolicy(),
                     arguments.timestampPolicySpecified());
-            if ("4.0".equals(adapter.releaseLine())
+            if (("4.0".equals(adapter.releaseLine()) || "4.1".equals(adapter.releaseLine()))
                     && timestampPolicy != TimestampPolicy.AFTER_SOURCE) {
-                throw new WorkspaceException("Cassandra 4.0 sandbox currently requires "
+                throw new WorkspaceException("Cassandra 4.x sandbox currently requires "
                         + "--timestamp-policy after-source");
             }
             if (!timestampPolicyRecorded) {
