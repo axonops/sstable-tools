@@ -391,3 +391,48 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: ${{ runner.temp }}/cassandra-41-import
+
+  cassandra-50-import:
+    name: Cassandra 5.0.4 stopped-SSTable import integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Cassandra Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: '**/pom.xml'
+
+      - name: Download pinned Cassandra 5.0.4 distribution
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSLO https://archive.apache.org/dist/cassandra/5.0.4/apache-cassandra-5.0.4-bin.tar.gz
+          echo '16de8bb78af94dabfd916825f492de7040a7311791bc1d630f14707d88f7132e51ae38dad7ebbaf13d2d154af0bdeefe318d680798b8e247ae4117cbc0e2f6df  apache-cassandra-5.0.4-bin.tar.gz' | sha512sum --check
+          tar -xzf apache-cassandra-5.0.4-bin.tar.gz
+
+      - name: Build Cassandra 5.0 adapter
+        run: mvn -B -ntp -pl workers/cassandra-5.0 -am package -DskipTests
+
+      - name: Import a stopped stock-cqlsh Cassandra 5.0 SSTable
+        run: >-
+          scripts/ci-real-cassandra-source
+          --image cassandra:5.0.4
+          --release 5.0
+          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-3.11.0-alpha12-SNAPSHOT.jar
+          --output-root "${{ runner.temp }}/cassandra-50-import"
+          --import-cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
+          --java-home "$JAVA_HOME"
+
+      - name: Upload import diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cassandra-50-import-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/cassandra-50-import

@@ -88,6 +88,8 @@ final class Cassandra311SandboxConfig {
                 ? "com.axonops.sstable.worker.cassandra40.OfflineRoleManager"
                 : "4.1".equals(releaseLine)
                 ? "com.axonops.sstable.worker.cassandra41.OfflineRoleManager"
+                : "5.0".equals(releaseLine)
+                ? "com.axonops.sstable.worker.cassandra50.OfflineRoleManager"
                 : "CassandraRoleManager";
         String yaml = "cluster_name: 'sstable-tools-" + workspaceId + "'\n"
                 + "authenticator: " + authenticator + "\n"
