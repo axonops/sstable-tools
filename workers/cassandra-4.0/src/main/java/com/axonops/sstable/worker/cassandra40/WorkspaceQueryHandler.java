@@ -152,7 +152,8 @@ public final class WorkspaceQueryHandler implements QueryHandler {
                 return;
             }
             throw rejected("SELECT is limited to " + keyspace + "." + table
-                    + " and cqlsh metadata tables");
+                    + " and cqlsh metadata tables; rejected " + metadata.keyspace + "."
+                    + metadata.name);
         }
         if (statement instanceof DeleteStatement) {
             throw rejected("DELETE statements are disabled");
