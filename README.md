@@ -8,10 +8,10 @@ It is under active development and is not yet an operator-ready production tool.
 
 ## Direct CQLSH
 
-The primary interface is one command. Supply one or more `Data.db` or `TOC.txt`
-paths from one table directory, a schema bundle, and the matching Cassandra
-installation. The tool opens stock `cqlsh`; on a clean exit it writes verified
-new SSTable component sets beside the supplied source files.
+The primary interface is one command. Supply one or more comma-separated
+`Data.db` or `TOC.txt` paths from one table directory, a schema bundle, and the
+matching Cassandra installation. The tool opens stock `cqlsh`; on a clean exit
+it writes verified new SSTable component sets beside the supplied source files.
 
 ```shell
 java -jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar \
@@ -19,6 +19,12 @@ java -jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHO
   --sstables /archive/acme/users-<table-id>/nb-42-big-Data.db \
   --schema /archive/acme-users.cql \
   cqlsh
+```
+
+For multiple SSTables, use one comma-separated value (or repeat `--sstables`):
+
+```shell
+--sstables /archive/acme/users-<table-id>/nb-42-big-Data.db,/archive/acme/users-<table-id>/nb-43-big-Data.db
 ```
 
 Use `--execute` for an automated statement and `--tmp-dir` to choose the parent

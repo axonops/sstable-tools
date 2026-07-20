@@ -113,7 +113,7 @@ final class BootstrapArguments {
             } else if ("--java-home".equals(argument)) {
                 javaHome = pathValue(args, ++index, argument);
             } else if ("--sstables".equals(argument)) {
-                sourceDirectories.add(pathValue(args, ++index, argument));
+                sourceDirectories.addAll(sourcePaths(args, ++index));
             } else if ("--schema".equals(argument)) {
                 schemaPath = pathValue(args, ++index, argument);
             } else if ("--timestamp-policy".equals(argument)) {
@@ -285,6 +285,25 @@ final class BootstrapArguments {
         } catch (RuntimeException e) {
             throw usage(option + " has an invalid path: " + args[index]);
         }
+    }
+
+    private static List<Path> sourcePaths(String[] args, int index) throws BootstrapException {
+        if (index >= args.length || args[index].trim().isEmpty()) {
+            throw usage("--sstables requires at least one path");
+        }
+        String[] values = args[index].split(",", -1);
+        List<Path> paths = new ArrayList<>();
+        for (String value : values) {
+            if (value.trim().isEmpty()) {
+                throw usage("--sstables contains an empty path");
+            }
+            try {
+                paths.add(Paths.get(value));
+            } catch (RuntimeException e) {
+                throw usage("--sstables has an invalid path: " + value);
+            }
+        }
+        return paths;
     }
 
     private static Path commandPath(String value) throws BootstrapException {

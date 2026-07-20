@@ -124,6 +124,21 @@ public class BootstrapArgumentsTest {
     }
 
     @Test
+    public void acceptsCommaSeparatedSstableSources() throws Exception {
+        BootstrapArguments direct = BootstrapArguments.parse(new String[]{
+                "--sstables", "source/nb-1-big-Data.db,source/nb-2-big-Data.db",
+                "--schema", "schema.cql", "cqlsh"
+        });
+        Assert.assertEquals(2, direct.sourceDirectories().size());
+        Assert.assertEquals(Paths.get("source/nb-1-big-Data.db"),
+                direct.sourceDirectories().get(0));
+        Assert.assertEquals(Paths.get("source/nb-2-big-Data.db"),
+                direct.sourceDirectories().get(1));
+        assertUsageFailure(new String[]{"--sstables", "first,,second", "--schema",
+                "schema.cql", "cqlsh"}, "contains an empty path");
+    }
+
+    @Test
     public void requiresExactUuidConfirmationOnlyForWorkspaceDestroy() throws Exception {
         UUID workspaceId = UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183");
         BootstrapArguments destroy = BootstrapArguments.parse(new String[]{
