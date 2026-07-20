@@ -119,6 +119,37 @@ Used sstables, schema, and paging settings and persisted for future use. Use the
 
 **Note:** No environment configuration is necessary for this tool to work if all components of the sstable are available but the cql create statement allows for more details.
 
+## Writable SSTable Workspaces
+
+The active development path is a separate thin JAR for Cassandra 3.11, 4.0,
+4.1, and 5.0. Deploy the JAR beside a compatible Cassandra installation; it
+uses that installation's Cassandra JARs and stock `cqlsh`, never the production
+Cassandra JVM.
+
+The workspace workflow accepts an explicitly selected `Data.db` or `TOC.txt`
+plus its sibling components and one schema bundle. It does not scan Cassandra
+data roots, keyspaces, or tables. Input must be from a stopped node, completed
+snapshot, backup, or external copy.
+
+1. `workspace create` records the selected source component identities and schema.
+2. `workspace import` validates and copies the source into private workspace storage.
+3. `workspace start` starts an isolated, loopback-only Cassandra process with
+   gossip and JMX disabled.
+4. `workspace cqlsh` launches the matching installation's stock `cqlsh` against
+   that private endpoint. Guarded `SELECT`, non-conditional `INSERT`, and
+   non-conditional `UPDATE` are supported only for the imported table.
+5. `workspace flush` closes CQL access and writes mutation deltas.
+6. `workspace export --mode delta` publishes verified delta SSTables; `snapshot`
+   publishes the complete workspace table.
+
+The workspace intentionally disables and verifies inactive auto-compaction.
+It does **not** provide a workspace compaction command or a compacted export
+mode. The legacy `compact` command described below is separate and is not a
+supported operation for these versioned writable workspaces.
+
+> **DANGER:** Do not import, mutate, compact, or export files belonging to a
+> running Cassandra process. The source must be an external completed copy.
+
 
 ## Building
 
@@ -141,15 +172,13 @@ scripts/verify-thin-jars
 The existing executable reader is written to
 `legacy-reader-3.11/target/sstable-tools-<version>.jar`. Version-specific
 workspace artifacts are written below `workers/cassandra-<line>/target/`.
-The shared workspace manifest commands are available in those thin JARs. The
-Cassandra 3.11 artifact also contains schema/header validation, copy-based
-SSTable import, isolated-daemon start, guarded table flush, status, stop, and
-crash recovery, confined workspace destroy, release verification, and atomic
-delta/snapshot export.
-Its native endpoint now requires an ephemeral workspace credential and guards
-direct and prepared CQL statements. Cross-platform live-source detection and
-broader fixture coverage remain under development, so this is not yet an
-operator-ready write workflow.
+The shared workspace manifest commands are available in all four thin JARs.
+They provide schema/header validation, copy-based SSTable import, isolated
+daemon start, guarded table flush, status, stop, recovery, confined workspace
+destroy, release verification, and atomic delta/snapshot export. The native
+endpoint is loopback-only and accepts only the workspace's guarded CQL surface.
+Cross-platform live-source detection and broader fixture coverage remain under
+development, so this is not yet an operator-ready write workflow.
 
 > **DANGER:** Never use SSTable import, mutation, compaction, or export against
 > files owned by a running production Cassandra process. Stop the owning
@@ -165,7 +194,9 @@ workspace directory. Restricted `/proc` visibility and non-Linux platforms
 cannot provide the same process evidence, so this guard does not replace the
 warning or the requirement to use an external completed copy.
 
-The current Cassandra 3.11 workflow is:
+The following is a Cassandra 3.11 example. Use the JAR, Cassandra home, and
+Java runtime matching the target release line; Cassandra 4.0, 4.1, and 5.0
+require `--timestamp-policy after-source` when starting a writable sandbox.
 
 ```shell
 java -jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-*.jar \
@@ -440,12 +471,12 @@ import, an isolated loopback sandbox, the distribution's stock `cqlsh`
 Compatibility remains deliberately conservative until the remaining release
 lines have equivalent installed-package fixtures in CI:
 
-| Artifact | Tested Cassandra patch | Supported Java runtime |
-|---|---:|---:|
-| `cassandra-3.11` | 3.11.19 | 8 |
-| `cassandra-4.0` | 4.0.17 | 8-11 |
-| `cassandra-4.1` | 4.1.3 | 11 |
-| `cassandra-5.0` | 5.0.4 | 17 |
+| Artifact | Tested Cassandra patch | Java runtime | CI-proven workspace path |
+|---|---:|---:|---|
+| `cassandra-3.11` | 3.11.19 | 8 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
+| `cassandra-4.0` | 4.0.17 | 8-11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
+| `cassandra-4.1` | 4.1.3 | 11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
+| `cassandra-5.0` | 5.0.4 | 17 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
 
 The implemented capability boundary is deliberately narrow: 3.11, 4.0, 4.1,
 and 5.0 support import plus the guarded writable sandbox. Every import uses a
@@ -672,6 +703,11 @@ Options:
 ## compact
 
 Merge multiple sstables into a single sstable. Arguments can either be sstables or a directory holding multiple sstables.
+
+This is a legacy reader command. It is not part of the guarded writable
+workspace workflow and is not CI-qualified for Cassandra 3.11, 4.0, 4.1, or
+5.0 workspace inputs or outputs. Do not use it against source files from a
+running Cassandra node.
 
 Example Output:
 
