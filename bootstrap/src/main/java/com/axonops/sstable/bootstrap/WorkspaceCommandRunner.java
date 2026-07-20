@@ -305,12 +305,14 @@ final class WorkspaceCommandRunner {
             }
             stop(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_STOP, workspace,
                     policy, false), quiet);
-            List<String> publishedDescriptors = new WorkspaceExportPublisher()
+            List<String> publishedDescriptors = flush.deltaFiles(manifest.baselineInventory())
+                    .isEmpty() ? Collections.<String>emptyList() : new WorkspaceExportPublisher()
                     .publishDeltaAdjacent(repository, manifest, flush, verification,
                             installation);
             published = true;
             out.println("published.directory=" + selectedSourceDirectory(manifest));
-            out.println("published.sstables=" + String.join(",", publishedDescriptors));
+            out.println("published.sstables=" + (publishedDescriptors.isEmpty()
+                    ? "none" : String.join(",", publishedDescriptors)));
             destroy(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_DESTROY,
                     workspace, policy, false).withConfirmation(manifest.workspaceId()), quiet);
             return 0;

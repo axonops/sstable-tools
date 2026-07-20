@@ -21,6 +21,8 @@ complete SSTable component sets beside `nb-42-big-Data.db`.  There is no
 `workspace create`, `import`, `start`, `flush`, `export`, or manually managed
 temporary directory in this normal workflow.
 
+A read-only session succeeds without creating output components.
+
 For scripts, `--execute` uses the same lifecycle:
 
 ```shell
