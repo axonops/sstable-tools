@@ -284,6 +284,9 @@ public final class ChildProcessLauncher {
         if ("4.1".equals(installation.version().releaseLine())) {
             return "com.axonops.sstable.worker.cassandra41.WorkspaceQueryHandler";
         }
+        if ("5.0".equals(installation.version().releaseLine())) {
+            return "com.axonops.sstable.worker.cassandra50.WorkspaceQueryHandler";
+        }
         throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
                 "No workspace query handler is available for Cassandra "
                         + installation.version().releaseLine());
@@ -313,6 +316,10 @@ public final class ChildProcessLauncher {
         List<String> command = new ArrayList<>();
         command.add(installation.java().executable().toString());
         appendCassandraModuleOptions(command, installation);
+        if ("5.0".equals(installation.version().releaseLine())
+                && !command.contains("--add-opens=java.base/java.io=ALL-UNNAMED")) {
+            command.add("--add-opens=java.base/java.io=ALL-UNNAMED");
+        }
         command.add("-Xms512m");
         command.add("-Xmx512m");
         command.add("-XX:+DisableAttachMechanism");

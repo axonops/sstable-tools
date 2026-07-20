@@ -408,12 +408,19 @@ jobs:
           cache: maven
           cache-dependency-path: '**/pom.xml'
 
+      - name: Set up Python for stock Cassandra cqlsh
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
       - name: Download pinned Cassandra 5.0.4 distribution
         working-directory: ${{ runner.temp }}
         run: |
           curl -fsSLO https://archive.apache.org/dist/cassandra/5.0.4/apache-cassandra-5.0.4-bin.tar.gz
           echo '16de8bb78af94dabfd916825f492de7040a7311791bc1d630f14707d88f7132e51ae38dad7ebbaf13d2d154af0bdeefe318d680798b8e247ae4117cbc0e2f6df  apache-cassandra-5.0.4-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-5.0.4-bin.tar.gz
+          python -m pip install --disable-pip-version-check --user \
+            'cassandra-driver>=3.29,<4' 'six>=1.16'
 
       - name: Build Cassandra 5.0 adapter
         run: mvn -B -ntp -pl workers/cassandra-5.0 -am package -DskipTests
@@ -427,6 +434,37 @@ jobs:
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
           --java-home "$JAVA_HOME"
+
+      - name: Mutate the imported SSTable through stock Cassandra 5.0 cqlsh
+        run: |
+          TOOL_JAR=workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-3.11.0-alpha12-SNAPSHOT.jar
+          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-5.0.4"
+          WORKSPACE="${{ runner.temp }}/cassandra-50-import/workspace"
+          OUTPUT="${{ runner.temp }}/cassandra-50-import/export"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --timestamp-policy after-source workspace start "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-50-import/workspace-start.log"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('sandbox-row', 'inserted', 'new') USING TIMESTAMP 2000000000000000;" \
+            workspace cqlsh "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-50-import/cqlsh-insert.log"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --execute "UPDATE ci_source.events USING TIMESTAMP 2000000000000001 SET payload = 'updated', state = 'ready' WHERE event_id = 'sandbox-row';" \
+            workspace cqlsh "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-50-import/cqlsh-update.log"
+          java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
+            --execute "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'sandbox-row';" \
+            workspace cqlsh "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-50-import/cqlsh-select.log"
+          grep -q 'sandbox-row' "${{ runner.temp }}/cassandra-50-import/cqlsh-select.log"
+          grep -q 'updated' "${{ runner.temp }}/cassandra-50-import/cqlsh-select.log"
+          grep -q 'ready' "${{ runner.temp }}/cassandra-50-import/cqlsh-select.log"
+          java -jar "$TOOL_JAR" workspace flush "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-50-import/workspace-flush.log"
+          java -jar "$TOOL_JAR" --mode delta --output "$OUTPUT" workspace export "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-50-import/workspace-export.log"
+          java -jar "$TOOL_JAR" workspace stop "$WORKSPACE" \
+            | tee "${{ runner.temp }}/cassandra-50-import/workspace-stop.log"
 
       - name: Upload import diagnostics
         if: failure()

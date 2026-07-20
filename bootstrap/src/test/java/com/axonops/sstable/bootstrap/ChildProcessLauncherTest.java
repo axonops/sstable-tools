@@ -145,6 +145,13 @@ public class ChildProcessLauncherTest {
         Assert.assertTrue(command.contains("--add-opens"));
         Assert.assertTrue(command.contains("java.base/java.nio=ALL-UNNAMED"));
         Assert.assertFalse(command.contains("-XX:+UseG1GC"));
+
+        CassandraInstallation cassandra50 = new CassandraInstallation(
+                home, conf, serverJar, CassandraVersion.parse("5.0.4"), java,
+                tool, Arrays.asList(tool, conf, serverJar, jamm));
+        command = new ChildProcessLauncher(false).importCommand(cassandra50, workspace,
+                UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"));
+        Assert.assertTrue(command.contains("--add-opens=java.base/java.io=ALL-UNNAMED"));
     }
 
     private static Path locationOf(Class<?> type) throws Exception {
