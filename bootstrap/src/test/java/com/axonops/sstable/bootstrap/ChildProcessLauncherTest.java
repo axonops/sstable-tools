@@ -152,6 +152,7 @@ public class ChildProcessLauncherTest {
         command = new ChildProcessLauncher(false).importCommand(cassandra50, workspace,
                 UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"));
         Assert.assertTrue(command.contains("--add-opens=java.base/java.io=ALL-UNNAMED"));
+        Assert.assertTrue(command.contains("--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"));
     }
 
     private static Path locationOf(Class<?> type) throws Exception {

@@ -316,9 +316,9 @@ public final class ChildProcessLauncher {
         List<String> command = new ArrayList<>();
         command.add(installation.java().executable().toString());
         appendCassandraModuleOptions(command, installation);
-        if ("5.0".equals(installation.version().releaseLine())
-                && !command.contains("--add-opens=java.base/java.io=ALL-UNNAMED")) {
-            command.add("--add-opens=java.base/java.io=ALL-UNNAMED");
+        if ("5.0".equals(installation.version().releaseLine())) {
+            addModuleOpen(command, "java.base/java.io");
+            addModuleOpen(command, "java.base/sun.nio.ch");
         }
         command.add("-Xms512m");
         command.add("-Xmx512m");
@@ -338,6 +338,13 @@ public final class ChildProcessLauncher {
         command.add("-cp");
         command.add(joinClasspath(installation));
         return command;
+    }
+
+    private static void addModuleOpen(List<String> command, String packageName) {
+        String option = "--add-opens=" + packageName + "=ALL-UNNAMED";
+        if (!command.contains(option)) {
+            command.add(option);
+        }
     }
 
     private static void appendCassandraModuleOptions(List<String> command,
