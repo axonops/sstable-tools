@@ -41,10 +41,10 @@ done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" cqlsh \
-  --execute "BEGIN UNLOGGED BATCH INSERT INTO ci_source.events (event_id, payload, state) VALUES ('direct-row', 'inserted', 'new') USING TIMESTAMP 2000000000000000; UPDATE ci_source.events USING TIMESTAMP 2000000000000001 SET payload = 'updated', state = 'ready' WHERE event_id = 'direct-row'; APPLY BATCH;" \
-  | tee "$output_root/direct-cqlsh-mutate.log"
+  --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('direct-row', 'inserted', 'new') USING TIMESTAMP 2000000000000000;" \
+  | tee "$output_root/direct-cqlsh-insert.log"
 
-grep -q 'published.sstables=' "$output_root/direct-cqlsh-mutate.log"
+grep -q 'published.sstables=' "$output_root/direct-cqlsh-insert.log"
 [[ $(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l) -gt $initial_tocs ]] || {
   printf 'Direct cqlsh did not create a new SSTable component set\n' >&2
   exit 1
@@ -54,6 +54,22 @@ grep -q 'published.sstables=' "$output_root/direct-cqlsh-mutate.log"
   sha256sum --check "$output_root/source-components.sha256"
 )
 
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print | sort)
+source_args=()
+for source in "${all_sources[@]}"; do
+  source_args+=(--sstables "$source")
+done
+
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" cqlsh \
+  --execute "UPDATE ci_source.events USING TIMESTAMP 2000000000000001 SET payload = 'updated', state = 'ready' WHERE event_id = 'direct-row';" \
+  | tee "$output_root/direct-cqlsh-update.log"
+
+grep -q 'published.sstables=' "$output_root/direct-cqlsh-update.log"
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/source-components.sha256"
+)
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print | sort)
 source_args=()
 for source in "${all_sources[@]}"; do
