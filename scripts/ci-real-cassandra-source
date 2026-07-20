@@ -98,6 +98,10 @@ docker stop "$container" >/dev/null
 }
 docker cp "$container:$table_dir/." "$source_dir"
 find "$source_dir" -maxdepth 1 -type f -printf '%f\n' | sort | tee "$output_root/source-components.txt"
+(
+  cd "$source_dir"
+  sha256sum -- * >"$output_root/source-components.sha256"
+)
 selected_sstable="$(find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -quit)"
 [[ -n "$selected_sstable" ]] || {
   printf 'Stopped Cassandra source did not yield Data.db\n' >&2
@@ -124,6 +128,11 @@ if [[ -n "$import_cassandra_home" ]]; then
   grep -q 'workspace.state=IMPORTED' "$output_root/workspace-import.log"
   grep -q 'source.integrity=verified' "$output_root/workspace-import-status.log"
 fi
+
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/source-components.sha256"
+)
 
 printf 'Verified Cassandra %s stock-cqlsh source generation and stopped-SSTable workspace capture.\n' \
   "$release"
