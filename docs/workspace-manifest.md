@@ -63,7 +63,7 @@ different inputs fails.
 adapters. It parses the schema with installed Cassandra classes, validates every
 selected source set, copies and loads it with native transport disabled, and
 records the table and baseline identities before committing `IMPORTED`.
-`workspace start` is currently implemented for 3.11, 4.0, and 4.1; the 4.x
+`workspace start` is implemented for 3.11, 4.0, 4.1, and 5.0; the 4.x and 5.0
 sandboxes require `--timestamp-policy after-source`. `workspace status`,
 `flush`, `stop`, and `recover` reverify source, schema, and imported baseline
 hashes.

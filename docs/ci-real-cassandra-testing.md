@@ -21,6 +21,8 @@ The `stopped-cqlsh-source` GitHub Actions matrix runs against Cassandra 3.11.19,
 7. Run the matching thin JAR's `workspace create` and `workspace status` against
    an explicitly selected `Data.db` component, asserting the recorded source
    integrity.
+8. Record SHA-256 hashes for every copied component and recheck them after the
+   workspace operation, including import where that adapter supports it.
 
 The shell implementation is `scripts/ci-real-cassandra-source`. It preserves
 the source components and logs under the job temporary directory and uploads
@@ -35,14 +37,10 @@ Only after shutdown does it copy the table into a workspace. SSTable Tools then
 executes `create`, `import`, `start`, stock-cqlsh `SELECT`/`INSERT`/`UPDATE`,
 `flush`, delta `export`, and `stop`.
 
-The 4.0.17 and 4.1.3 jobs execute the same stopped-source import sequence and
-then start guarded isolated sandboxes. They invoke the installed distribution's
-stock `cqlsh` for `INSERT`, `UPDATE`, and `SELECT`, flush, export the delta, and
-stop. The sandbox is loopback-only, disables gossip and JMX, and only permits
-writes to the imported workspace table with an explicit timestamp greater than
-the source SSTable maximum.
-
-Cassandra 5.0.4 has a separate stopped-source import job. It proves stock
-`cqlsh` source generation, source shutdown, selected-SSTable capture, schema
-validation, offline import, and source-integrity recheck. Native CQL sandbox
-support and post-export reimport/readback remain pending for that release.
+The 4.0.17, 4.1.3, and 5.0.4 jobs execute the same stopped-source import
+sequence and then start guarded isolated sandboxes. They invoke the installed
+distribution's stock `cqlsh` for `INSERT`, `UPDATE`, and `SELECT`, flush,
+export the delta, and stop. The sandbox is loopback-only, disables gossip and
+JMX, and only permits writes to the imported workspace table with an explicit
+timestamp greater than the source SSTable maximum. Post-export reimport/readback
+remains pending for all release lines.
