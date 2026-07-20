@@ -6,7 +6,7 @@
 
   <groupId>com.axonops</groupId>
   <artifactId>sstable-tools-parent</artifactId>
-  <version>3.11.0-alpha12-SNAPSHOT</version>
+  <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>SSTable Tools</name>
