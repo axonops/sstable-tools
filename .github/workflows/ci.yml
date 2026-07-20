@@ -226,6 +226,21 @@ jobs:
             --cassandra-conf "${{ runner.temp }}/cassandra-rpm/etc/cassandra/default.conf" \
             --java-home "$CASSANDRA_JAVA_HOME" runtime preflight
 
+      - name: Exercise direct Cassandra 3.11 cqlsh workflow
+        run: |
+          TOOL_JAR=workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-0.1.0-SNAPSHOT.jar
+          OUTPUT_ROOT="${{ runner.temp }}/cassandra-311-direct"
+          scripts/ci-real-cassandra-source \
+            --image cassandra:3.11.19 \
+            --release 3.11 \
+            --tool-jar "$TOOL_JAR" \
+            --output-root "$OUTPUT_ROOT"
+          scripts/ci-direct-cqlsh \
+            --tool-jar "$TOOL_JAR" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-3.11.19" \
+            --java-home "$CASSANDRA_JAVA_HOME" \
+            --output-root "$OUTPUT_ROOT"
+
   cassandra-40-sandbox:
     name: Cassandra 4.0.17 stopped-SSTable sandbox and cqlsh integration
     runs-on: ubuntu-latest
