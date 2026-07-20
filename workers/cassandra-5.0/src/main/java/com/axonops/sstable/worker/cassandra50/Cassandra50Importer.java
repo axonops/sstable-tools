@@ -143,7 +143,7 @@ final class Cassandra50Importer {
             set.verifyUnchanged();
             Version compatibleVersion = requireCompatibleVersion(
                     set.formatVersion(), set.format());
-            Descriptor descriptor = descriptor(set);
+            Descriptor descriptor = descriptor(set, metadata);
             if (!descriptor.isCompatible()
                     || !BigFormat.is(descriptor.getFormat())
                     || !compatibleVersion.toString().equals(descriptor.version.toString())) {
@@ -337,9 +337,10 @@ final class Cassandra50Importer {
         }
     }
 
-    private static Descriptor descriptor(SstableSet set) {
-        return Descriptor.fromFile(new org.apache.cassandra.io.util.File(
-                set.directory().toFile(), set.descriptor() + "-Data.db"));
+    private static Descriptor descriptor(SstableSet set, TableMetadata metadata) {
+        return Descriptor.fromFileWithComponent(new org.apache.cassandra.io.util.File(
+                set.directory().toFile(), set.descriptor() + "-Data.db"),
+                metadata.keyspace, metadata.name).left;
     }
 
     private static Set<Component> components(SstableSet set) {
