@@ -98,6 +98,32 @@ public class BootstrapArgumentsTest {
     }
 
     @Test
+    public void parsesDirectCqlshWithSelectedSstablesSchemaAndTemporaryParent()
+            throws Exception {
+        BootstrapArguments direct = BootstrapArguments.parse(new String[]{
+                "--cassandra-home", "cassandra", "--tmp-dir", "/var/tmp/sstable-tools",
+                "--sstables", "source/nb-1-big-Data.db", "--schema", "schema.cql",
+                "cqlsh", "--execute", "INSERT INTO test.items (id) VALUES (1)"
+        });
+
+        Assert.assertEquals(BootstrapArguments.Action.DIRECT_CQLSH, direct.action());
+        Assert.assertEquals(Paths.get("/var/tmp/sstable-tools"), direct.temporaryDirectory());
+        Assert.assertEquals(Paths.get("schema.cql"), direct.schemaPath());
+        Assert.assertEquals(1, direct.sourceDirectories().size());
+        Assert.assertTrue(direct.executeCql().startsWith("INSERT INTO"));
+    }
+
+    @Test
+    public void directCqlshRequiresExplicitSourcesAndSchema() throws Exception {
+        assertUsageFailure(new String[]{"cqlsh", "--schema", "schema.cql"},
+                "requires at least one --sstables");
+        assertUsageFailure(new String[]{"cqlsh", "--sstables", "source-Data.db"},
+                "requires --schema");
+        assertUsageFailure(new String[]{"workspace", "status", "workspace", "--tmp-dir",
+                "/var/tmp/sstable-tools"}, "only valid with cqlsh");
+    }
+
+    @Test
     public void requiresExactUuidConfirmationOnlyForWorkspaceDestroy() throws Exception {
         UUID workspaceId = UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183");
         BootstrapArguments destroy = BootstrapArguments.parse(new String[]{

@@ -110,10 +110,287 @@ final class WorkspaceExportPublisher {
         verifyPublished(record.outputPath(), record);
     }
 
+    /** Publishes verified delta components beside the explicitly selected source SSTables. */
+    List<String> publishDeltaAdjacent(WorkspaceRepository repository,
+                                      WorkspaceManifest manifest,
+                                      WorkspaceFlushResult flush,
+                                      WorkspaceVerificationResult verification,
+                                      CassandraInstallation installation)
+            throws WorkspaceException {
+        manifest.sourceInventory().verifyUnchanged();
+        Path target = singleSourceDirectory(manifest);
+        List<ManifestFile> selected = flush.deltaFiles(manifest.baselineInventory());
+        DescriptorInventory inventory = validateDescriptorSets(repository, selected);
+        if (!inventory.descriptors.equals(new HashSet<>(verification.deltaDescriptors()))
+                || inventory.descriptors.size() != verification.deltaSstables()) {
+            throw new WorkspaceException("Direct publication descriptors do not match Cassandra "
+                    + "verification evidence");
+        }
+
+        Map<String, List<ManifestFile>> byDescriptor = filesByDescriptor(selected,
+                inventory.descriptors);
+        boolean uuidIdentifiers = "5.0".equals(installation.version().releaseLine())
+                && uuidSstableIdentifiersEnabled(installation.conf());
+        Map<String, String> targetDescriptors = allocateDescriptors(target,
+                new ArrayList<>(byDescriptor.keySet()), uuidIdentifiers);
+        publishComponentSets(repository, target, byDescriptor, targetDescriptors);
+        manifest.sourceInventory().verifyUnchanged();
+        List<String> result = new ArrayList<>(targetDescriptors.values());
+        Collections.sort(result);
+        return result;
+    }
+
     Path resolveOutput(WorkspaceRepository repository,
                        WorkspaceManifest manifest,
                        Path requested) throws WorkspaceException {
         return canonicalOutput(repository, manifest, requested);
+    }
+
+    private static Path singleSourceDirectory(WorkspaceManifest manifest)
+            throws WorkspaceException {
+        Path target = null;
+        for (SstableSet set : manifest.sourceInventory().sets()) {
+            if (target == null) {
+                target = set.directory();
+            } else if (!target.equals(set.directory())) {
+                throw new WorkspaceException("Direct cqlsh requires all --sstables to be from "
+                        + "one table directory");
+            }
+        }
+        if (target == null || Files.isSymbolicLink(target)
+                || !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceException("Direct cqlsh source directory is unsafe: " + target);
+        }
+        try {
+            return target.toRealPath();
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot resolve direct cqlsh source directory " + target,
+                    e);
+        }
+    }
+
+    private static Map<String, List<ManifestFile>> filesByDescriptor(
+            List<ManifestFile> selected, Set<String> descriptors) throws WorkspaceException {
+        Map<String, List<ManifestFile>> result = new TreeMap<>();
+        for (String descriptor : descriptors) {
+            result.put(descriptor, new ArrayList<ManifestFile>());
+        }
+        for (ManifestFile file : selected) {
+            String name = fileName(file.relativePath());
+            String owner = null;
+            for (String descriptor : descriptors) {
+                if (name.startsWith(descriptor + "-")) {
+                    if (owner != null) {
+                        throw new WorkspaceException("Ambiguous flushed component name: " + name);
+                    }
+                    owner = descriptor;
+                }
+            }
+            if (owner == null) {
+                throw new WorkspaceException("Flushed component has no descriptor: " + name);
+            }
+            result.get(owner).add(file);
+        }
+        return result;
+    }
+
+    private static Map<String, String> allocateDescriptors(Path target,
+                                                             List<String> descriptors,
+                                                             boolean uuidIdentifiers)
+            throws WorkspaceException {
+        Set<String> occupied = tocDescriptors(target);
+        Map<String, String> result = new TreeMap<>();
+        long nextNumeric = uuidIdentifiers ? -1L : nextNumericIdentifier(occupied);
+        for (String descriptor : descriptors) {
+            DescriptorParts parts = DescriptorParts.parse(descriptor);
+            final String identifier;
+            if (uuidIdentifiers) {
+                String candidate;
+                do {
+                    candidate = UUID.randomUUID().toString();
+                } while (occupied.contains(parts.version + "-" + candidate + "-" + parts.format));
+                identifier = candidate;
+            } else {
+                identifier = Long.toString(nextNumeric++);
+            }
+            String allocated = parts.version + "-" + identifier + "-" + parts.format;
+            if (!occupied.add(allocated)) {
+                throw new WorkspaceException("SSTable identifier collision: " + allocated);
+            }
+            result.put(descriptor, allocated);
+        }
+        return result;
+    }
+
+    private static Set<String> tocDescriptors(Path target) throws WorkspaceException {
+        Set<String> result = new HashSet<>();
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(target, "*-TOC.txt")) {
+            for (Path entry : entries) {
+                if (Files.isSymbolicLink(entry) || !Files.isRegularFile(entry,
+                        LinkOption.NOFOLLOW_LINKS)) {
+                    throw new WorkspaceException("Unsafe SSTable TOC in target directory: " + entry);
+                }
+                String name = entry.getFileName().toString();
+                result.add(name.substring(0, name.length() - "-TOC.txt".length()));
+            }
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot inspect SSTable identifiers in " + target, e);
+        }
+        return result;
+    }
+
+    private static long nextNumericIdentifier(Set<String> occupied)
+            throws WorkspaceException {
+        long maximum = 0L;
+        for (String descriptor : occupied) {
+            int first = descriptor.indexOf('-');
+            int last = descriptor.lastIndexOf('-');
+            if (first <= 0 || last <= first) {
+                continue;
+            }
+            String identifier = descriptor.substring(first + 1, last);
+            try {
+                maximum = Math.max(maximum, Long.parseLong(identifier));
+            } catch (NumberFormatException ignored) {
+                // A UUID descriptor does not participate in sequence allocation.
+            }
+        }
+        if (maximum == Long.MAX_VALUE) {
+            throw new WorkspaceException("SSTable numeric identifier space is exhausted");
+        }
+        return maximum + 1L;
+    }
+
+    private static boolean uuidSstableIdentifiersEnabled(Path conf) throws WorkspaceException {
+        Path yaml = conf.resolve("cassandra.yaml");
+        if (!Files.isRegularFile(yaml, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(yaml)) {
+            throw new WorkspaceException("Cassandra 5.0 configuration is missing cassandra.yaml: "
+                    + yaml);
+        }
+        try {
+            for (String raw : Files.readAllLines(yaml, StandardCharsets.UTF_8)) {
+                String line = raw.split("#", 2)[0].trim();
+                if (line.startsWith("uuid_sstable_identifiers_enabled:")) {
+                    String value = line.substring(line.indexOf(':') + 1).trim();
+                    if ("true".equalsIgnoreCase(value)) {
+                        return true;
+                    }
+                    if ("false".equalsIgnoreCase(value)) {
+                        return false;
+                    }
+                    throw new WorkspaceException("Invalid uuid_sstable_identifiers_enabled "
+                            + "value in " + yaml);
+                }
+            }
+            return false;
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot read Cassandra configuration " + yaml, e);
+        }
+    }
+
+    private static void publishComponentSets(WorkspaceRepository repository,
+                                             Path target,
+                                             Map<String, List<ManifestFile>> source,
+                                             Map<String, String> renamed)
+            throws WorkspaceException {
+        List<Path> staging = new ArrayList<>();
+        List<Path> published = new ArrayList<>();
+        boolean complete = false;
+        try {
+            for (Map.Entry<String, List<ManifestFile>> entry : source.entrySet()) {
+                String original = entry.getKey();
+                String replacement = renamed.get(original);
+                for (ManifestFile file : entry.getValue()) {
+                    String name = fileName(file.relativePath());
+                    String component = name.substring((original + "-").length());
+                    Path destination = target.resolve(replacement + "-" + component);
+                    if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+                        throw new WorkspaceException("Target SSTable component already exists: "
+                                + destination);
+                    }
+                    Path temporary = target.resolve(".sstable-tools-" + replacement + "-"
+                            + component + ".tmp");
+                    if (Files.exists(temporary, LinkOption.NOFOLLOW_LINKS)) {
+                        throw new WorkspaceException("Stale direct publication staging file: "
+                                + temporary);
+                    }
+                    copyFile(repository.resolveInside(file.relativePath()), temporary, file);
+                    staging.add(temporary);
+                }
+            }
+            for (Map.Entry<String, List<ManifestFile>> entry : source.entrySet()) {
+                String original = entry.getKey();
+                String replacement = renamed.get(original);
+                List<ManifestFile> ordered = new ArrayList<>(entry.getValue());
+                Collections.sort(ordered, (left, right) -> {
+                    try {
+                        boolean leftToc = fileName(left.relativePath()).endsWith("-TOC.txt");
+                        boolean rightToc = fileName(right.relativePath()).endsWith("-TOC.txt");
+                        return leftToc == rightToc ? left.relativePath().compareTo(right.relativePath())
+                                : (leftToc ? 1 : -1);
+                    } catch (WorkspaceException e) {
+                        throw new IllegalStateException(e);
+                    }
+                });
+                for (ManifestFile file : ordered) {
+                    String name = fileName(file.relativePath());
+                    String component = name.substring((original + "-").length());
+                    Path temporary = target.resolve(".sstable-tools-" + replacement + "-"
+                            + component + ".tmp");
+                    Path destination = target.resolve(replacement + "-" + component);
+                    try {
+                        Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE);
+                    } catch (AtomicMoveNotSupportedException e) {
+                        throw new WorkspaceException("Direct publication requires atomic file "
+                                + "renames in " + target, e);
+                    }
+                    staging.remove(temporary);
+                    published.add(destination);
+                }
+            }
+            forceDirectory(target);
+            complete = true;
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot publish SSTable delta beside " + target, e);
+        } finally {
+            for (Path path : staging) {
+                deleteDirectPublicationFile(path);
+            }
+            if (!complete) {
+                for (Path path : published) {
+                    deleteDirectPublicationFile(path);
+                }
+            }
+        }
+    }
+
+    private static void deleteDirectPublicationFile(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // The direct command reports failure and leaves the private workspace for recovery.
+        }
+    }
+
+    private static final class DescriptorParts {
+        private final String version;
+        private final String format;
+
+        private DescriptorParts(String version, String format) {
+            this.version = version;
+            this.format = format;
+        }
+
+        private static DescriptorParts parse(String descriptor) throws WorkspaceException {
+            int first = descriptor.indexOf('-');
+            int last = descriptor.lastIndexOf('-');
+            if (first <= 0 || last <= first || last == descriptor.length() - 1) {
+                throw new WorkspaceException("Invalid flushed SSTable descriptor: " + descriptor);
+            }
+            return new DescriptorParts(descriptor.substring(0, first),
+                    descriptor.substring(last + 1));
+        }
     }
 
     private static Path canonicalOutput(WorkspaceRepository repository,

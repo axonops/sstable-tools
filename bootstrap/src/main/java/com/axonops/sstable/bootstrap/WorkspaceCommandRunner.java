@@ -16,6 +16,7 @@ import com.axonops.sstable.workspace.WorkspaceFileInventory;
 import com.axonops.sstable.workspace.WorkspaceFlushResult;
 import com.axonops.sstable.workspace.WorkspaceVerificationResult;
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -258,6 +259,113 @@ final class WorkspaceCommandRunner {
         }
         return new CqlshLauncher().run(installation, endpoint, cqlshrc,
                 arguments.executeCql());
+    }
+
+    int directCqlsh(BootstrapArguments arguments,
+                    AdapterMetadata adapter,
+                    CassandraInstallation installation,
+                    PrintStream out) throws WorkspaceException, BootstrapException {
+        Path workspace = createTemporaryWorkspace(arguments.temporaryDirectory());
+        PrintStream quiet = new PrintStream(new ByteArrayOutputStream());
+        boolean published = false;
+        try {
+            TimestampPolicy policy = arguments.timestampPolicySpecified()
+                    ? arguments.timestampPolicy() : TimestampPolicy.AFTER_SOURCE;
+            BootstrapArguments createArguments = arguments.forWorkspace(
+                    BootstrapArguments.Action.WORKSPACE_CREATE, workspace, policy, false);
+            create(createArguments, quiet);
+            importSstables(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_IMPORT,
+                    workspace, policy, false), adapter, installation, quiet);
+            start(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_START, workspace,
+                    policy, arguments.timestampPolicySpecified()), adapter, installation, quiet);
+
+            int cqlshExit = cqlsh(arguments.forWorkspace(
+                    BootstrapArguments.Action.WORKSPACE_CQLSH, workspace, policy, false),
+                    installation);
+            if (cqlshExit != 0) {
+                stopQuietly(arguments, workspace, quiet);
+                out.println("cqlsh exited with code " + cqlshExit
+                        + "; no SSTables were published. Temporary workspace retained: "
+                        + workspace);
+                return cqlshExit;
+            }
+
+            flush(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_FLUSH, workspace,
+                    policy, false), quiet);
+            WorkspaceRepository repository = WorkspaceRepository.open(workspace);
+            WorkspaceManifest manifest;
+            WorkspaceFlushResult flush;
+            WorkspaceVerificationResult verification;
+            try (WorkspaceLock lock = repository.acquire()) {
+                manifest = repository.load();
+                WorkerEndpoint endpoint = new WorkerControlClient().verify(repository,
+                        manifest.workspaceId());
+                flush = requireFlushResult(repository, manifest, endpoint.release());
+                verification = requireVerificationResult(repository, manifest, flush);
+            }
+            stop(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_STOP, workspace,
+                    policy, false), quiet);
+            List<String> publishedDescriptors = new WorkspaceExportPublisher()
+                    .publishDeltaAdjacent(repository, manifest, flush, verification,
+                            installation);
+            published = true;
+            out.println("published.directory=" + selectedSourceDirectory(manifest));
+            out.println("published.sstables=" + String.join(",", publishedDescriptors));
+            destroy(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_DESTROY,
+                    workspace, policy, false).withConfirmation(manifest.workspaceId()), quiet);
+            return 0;
+        } catch (WorkspaceException | BootstrapException e) {
+            if (!published) {
+                stopQuietly(arguments, workspace, quiet);
+                throw new WorkspaceException(e.getMessage() + "; no SSTables were published. "
+                        + "Temporary workspace retained: " + workspace, e);
+            }
+            throw e;
+        } finally {
+            quiet.close();
+        }
+    }
+
+    private static Path createTemporaryWorkspace(Path parent) throws WorkspaceException {
+        try {
+            Files.createDirectories(parent);
+            if (Files.isSymbolicLink(parent) || !Files.isDirectory(parent,
+                    LinkOption.NOFOLLOW_LINKS)) {
+                throw new WorkspaceException("Temporary directory must be a non-symlink "
+                        + "directory: " + parent);
+            }
+            return Files.createTempDirectory(parent.toRealPath(), "run-");
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot create private temporary workspace below "
+                    + parent, e);
+        }
+    }
+
+    private static void stopQuietly(BootstrapArguments arguments, Path workspace,
+                                    PrintStream quiet) {
+        try {
+            stop(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_STOP, workspace,
+                    TimestampPolicy.AFTER_SOURCE, false), quiet);
+        } catch (WorkspaceException ignored) {
+            // The retained workspace contains the endpoint and manifest for recovery.
+        }
+    }
+
+    private static Path selectedSourceDirectory(WorkspaceManifest manifest)
+            throws WorkspaceException {
+        Path directory = null;
+        for (SstableSet set : manifest.sourceInventory().sets()) {
+            if (directory == null) {
+                directory = set.directory();
+            } else if (!directory.equals(set.directory())) {
+                throw new WorkspaceException("Direct cqlsh requires all --sstables to be "
+                        + "from one table directory");
+            }
+        }
+        if (directory == null) {
+            throw new WorkspaceException("Direct cqlsh has no source SSTable directory");
+        }
+        return directory;
     }
 
     private static void create(BootstrapArguments arguments, PrintStream out)

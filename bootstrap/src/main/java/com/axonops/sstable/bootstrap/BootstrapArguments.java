@@ -14,6 +14,7 @@ final class BootstrapArguments {
         VERSION,
         RUNTIME_INSPECT,
         RUNTIME_PREFLIGHT,
+        DIRECT_CQLSH,
         WORKSPACE_CREATE,
         WORKSPACE_IMPORT,
         WORKSPACE_START,
@@ -35,6 +36,7 @@ final class BootstrapArguments {
     private final boolean timestampPolicySpecified;
     private final ExportMode exportMode;
     private final Path outputPath;
+    private final Path temporaryDirectory;
     private final String executeCql;
     private final UUID confirmedWorkspaceId;
 
@@ -47,6 +49,7 @@ final class BootstrapArguments {
                                boolean timestampPolicySpecified,
                                ExportMode exportMode,
                                Path outputPath,
+                               Path temporaryDirectory,
                                String executeCql,
                                UUID confirmedWorkspaceId) {
         this.action = action;
@@ -59,6 +62,7 @@ final class BootstrapArguments {
         this.timestampPolicySpecified = timestampPolicySpecified;
         this.exportMode = exportMode;
         this.outputPath = outputPath;
+        this.temporaryDirectory = temporaryDirectory;
         this.executeCql = executeCql;
         this.confirmedWorkspaceId = confirmedWorkspaceId;
     }
@@ -67,7 +71,7 @@ final class BootstrapArguments {
         if (args.length == 0) {
             return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
                     null, Collections.<Path>emptyList(), null, TimestampPolicy.WALL_CLOCK,
-                    false, null, null, null, null);
+                    false, null, null, Paths.get("/tmp/sstable-tools"), null, null);
         }
 
         Path cassandraHome = null;
@@ -79,6 +83,7 @@ final class BootstrapArguments {
         boolean timestampPolicySpecified = false;
         ExportMode exportMode = null;
         Path outputPath = null;
+        Path temporaryDirectory = Paths.get("/tmp/sstable-tools");
         String executeCql = null;
         UUID confirmedWorkspaceId = null;
         List<String> command = new ArrayList<>();
@@ -89,14 +94,16 @@ final class BootstrapArguments {
                 return new BootstrapArguments(Action.HELP,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath, executeCql,
+                        timestampPolicySpecified, exportMode, outputPath, temporaryDirectory,
+                        executeCql,
                         confirmedWorkspaceId);
             }
             if ("--version".equals(argument)) {
                 return new BootstrapArguments(Action.VERSION,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath, executeCql,
+                        timestampPolicySpecified, exportMode, outputPath, temporaryDirectory,
+                        executeCql,
                         confirmedWorkspaceId);
             }
             if ("--cassandra-home".equals(argument)) {
@@ -125,6 +132,8 @@ final class BootstrapArguments {
                     throw usage("--output may be specified only once");
                 }
                 outputPath = pathValue(args, ++index, argument);
+            } else if ("--tmp-dir".equals(argument)) {
+                temporaryDirectory = pathValue(args, ++index, argument);
             } else if ("--execute".equals(argument)) {
                 if (executeCql != null || ++index >= args.length
                         || args[index].trim().isEmpty()) {
@@ -156,6 +165,8 @@ final class BootstrapArguments {
         } else if (command.size() == 2 && "runtime".equals(command.get(0))
                 && "preflight".equals(command.get(1))) {
             action = Action.RUNTIME_PREFLIGHT;
+        } else if (command.size() == 1 && "cqlsh".equals(command.get(0))) {
+            action = Action.DIRECT_CQLSH;
         } else if (command.size() == 3 && "workspace".equals(command.get(0))
                 && "create".equals(command.get(1))) {
             action = Action.WORKSPACE_CREATE;
@@ -197,8 +208,8 @@ final class BootstrapArguments {
             action = Action.WORKSPACE_DESTROY;
             workspacePath = commandPath(command.get(2));
         } else {
-            throw usage("Expected 'runtime inspect', 'runtime preflight', or a supported "
-                    + "'workspace <command> <path>' command");
+            throw usage("Expected 'cqlsh', 'runtime inspect', 'runtime preflight', or a "
+                    + "supported 'workspace <command> <path>' command");
         }
 
         boolean workspaceAction = action == Action.WORKSPACE_CREATE
@@ -216,16 +227,25 @@ final class BootstrapArguments {
                 || javaHome != null)) {
             throw usage("Cassandra runtime options are not accepted by this workspace command");
         }
-        if (action == Action.WORKSPACE_CREATE && sourceDirectories.isEmpty()) {
-            throw usage("workspace create requires at least one --sstables source");
+        if ((action == Action.WORKSPACE_CREATE || action == Action.DIRECT_CQLSH)
+                && sourceDirectories.isEmpty()) {
+            throw usage(action == Action.DIRECT_CQLSH
+                    ? "cqlsh requires at least one --sstables source"
+                    : "workspace create requires at least one --sstables source");
         }
-        if (action != Action.WORKSPACE_CREATE && !sourceDirectories.isEmpty()) {
+        if (action != Action.WORKSPACE_CREATE && action != Action.DIRECT_CQLSH
+                && !sourceDirectories.isEmpty()) {
             throw usage("--sstables is only valid with workspace create");
         }
-        if (action != Action.WORKSPACE_CREATE && schemaPath != null) {
+        if (action != Action.WORKSPACE_CREATE && action != Action.DIRECT_CQLSH
+                && schemaPath != null) {
             throw usage("--schema is only valid with workspace create");
         }
-        if (action != Action.WORKSPACE_START && timestampPolicySpecified) {
+        if (action == Action.DIRECT_CQLSH && schemaPath == null) {
+            throw usage("cqlsh requires --schema <path>");
+        }
+        if (action != Action.WORKSPACE_START && action != Action.DIRECT_CQLSH
+                && timestampPolicySpecified) {
             throw usage("--timestamp-policy is only valid with workspace start");
         }
         if (action == Action.WORKSPACE_EXPORT && (exportMode == null || outputPath == null)) {
@@ -234,8 +254,13 @@ final class BootstrapArguments {
         if (action != Action.WORKSPACE_EXPORT && (exportMode != null || outputPath != null)) {
             throw usage("--mode and --output are only valid with workspace export");
         }
-        if (action != Action.WORKSPACE_CQLSH && executeCql != null) {
+        if (action != Action.WORKSPACE_CQLSH && action != Action.DIRECT_CQLSH
+                && executeCql != null) {
             throw usage("--execute is only valid with workspace cqlsh");
+        }
+        if (action != Action.DIRECT_CQLSH
+                && !Paths.get("/tmp/sstable-tools").equals(temporaryDirectory)) {
+            throw usage("--tmp-dir is only valid with cqlsh");
         }
         if (action == Action.WORKSPACE_DESTROY && confirmedWorkspaceId == null) {
             throw usage("workspace destroy requires --confirm-workspace-id <uuid>");
@@ -246,7 +271,7 @@ final class BootstrapArguments {
         return new BootstrapArguments(action,
                 new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                 workspacePath, sourceDirectories, schemaPath, timestampPolicy,
-                timestampPolicySpecified, exportMode, outputPath, executeCql,
+                timestampPolicySpecified, exportMode, outputPath, temporaryDirectory, executeCql,
                 confirmedWorkspaceId);
     }
 
@@ -313,11 +338,28 @@ final class BootstrapArguments {
         return outputPath;
     }
 
+    Path temporaryDirectory() {
+        return temporaryDirectory;
+    }
+
     String executeCql() {
         return executeCql;
     }
 
     UUID confirmedWorkspaceId() {
         return confirmedWorkspaceId;
+    }
+
+    BootstrapArguments forWorkspace(Action workspaceAction, Path path,
+                                    TimestampPolicy policy, boolean policySpecified) {
+        return new BootstrapArguments(workspaceAction, runtimeOptions, path,
+                sourceDirectories, schemaPath, policy, policySpecified, exportMode,
+                outputPath, temporaryDirectory, executeCql, confirmedWorkspaceId);
+    }
+
+    BootstrapArguments withConfirmation(UUID workspaceId) {
+        return new BootstrapArguments(action, runtimeOptions, workspacePath,
+                sourceDirectories, schemaPath, timestampPolicy, timestampPolicySpecified,
+                exportMode, outputPath, temporaryDirectory, executeCql, workspaceId);
     }
 }

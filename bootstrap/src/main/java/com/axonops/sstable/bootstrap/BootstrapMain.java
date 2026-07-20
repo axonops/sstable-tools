@@ -55,6 +55,10 @@ public final class BootstrapMain {
                 new WorkspaceCommandRunner().start(arguments, adapter, installation, out);
                 return 0;
             }
+            if (arguments.action() == BootstrapArguments.Action.DIRECT_CQLSH) {
+                return new WorkspaceCommandRunner().directCqlsh(arguments, adapter,
+                        installation, out);
+            }
             if (arguments.action() == BootstrapArguments.Action.WORKSPACE_CQLSH) {
                 return new WorkspaceCommandRunner().cqlsh(arguments, installation);
             }
@@ -98,6 +102,7 @@ public final class BootstrapMain {
 
     private static boolean requiresSstableWriteWarning(BootstrapArguments.Action action) {
         return action == BootstrapArguments.Action.WORKSPACE_CREATE
+                || action == BootstrapArguments.Action.DIRECT_CQLSH
                 || action == BootstrapArguments.Action.WORKSPACE_IMPORT
                 || action == BootstrapArguments.Action.WORKSPACE_START
                 || action == BootstrapArguments.Action.WORKSPACE_CQLSH
@@ -112,7 +117,7 @@ public final class BootstrapMain {
         err.println("Stop the owning Cassandra process, or use a completed snapshot or backup");
         err.println("copied outside every live Cassandra data directory.");
         err.println("The isolated workspace worker started by this tool is expected and writes");
-        err.println("only beneath the private workspace.");
+        err.println("only beneath a private workspace before verified output is published.");
     }
 
     private static String implementationVersion() {
@@ -151,16 +156,18 @@ public final class BootstrapMain {
         out.println("  --cassandra-conf <path>  Cassandra configuration directory to use");
         out.println("  --java-home <path>       Compatible Java installation to use");
         out.println("  --sstables <path>        Selected SSTable Data.db or TOC.txt (repeatable)");
-        out.println("  --schema <path>          UTF-8 CQL schema bundle for workspace import");
-        out.println("  --timestamp-policy <p>  wall-clock or after-source (workspace start)");
+        out.println("  --schema <path>          UTF-8 CQL schema bundle for selected SSTables");
+        out.println("  --timestamp-policy <p>  wall-clock or after-source (start/direct cqlsh)");
         out.println("  --mode <mode>           delta or snapshot (workspace export)");
         out.println("  --output <path>         Atomic publication destination (workspace export)");
-        out.println("  --execute <cql>         Execute CQL and exit (workspace cqlsh)");
+        out.println("  --tmp-dir <path>        Parent for private direct-cqlsh workspaces");
+        out.println("  --execute <cql>         Execute CQL and exit (direct or workspace cqlsh)");
         out.println("  --confirm-workspace-id <uuid> Exact UUID required by workspace destroy");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
         out.println();
         out.println("Runtime commands:");
+        out.println("  cqlsh                    Query selected SSTables and publish deltas beside them");
         out.println("  runtime inspect          Print resolved runtime paths, versions, and hashes");
         out.println("  runtime preflight        Run the release worker linkage self-test");
         out.println();

@@ -92,6 +92,29 @@ public class WorkspaceExportPublisherTest {
         Assert.assertTrue("Unexpected staging content was deleted", Files.exists(unexpected));
     }
 
+    @Test
+    public void publishesVerifiedDeltaBesideTheExplicitSourceWithNewIdentifier()
+            throws Exception {
+        Fixture fixture = createFixture();
+        Path conf = temporary.newFolder("conf").toPath();
+        Files.write(conf.resolve("cassandra.yaml"), Collections.singletonList(
+                "uuid_sstable_identifiers_enabled: false"), StandardCharsets.UTF_8);
+        CassandraInstallation installation = new CassandraInstallation(null, conf, null,
+                CassandraVersion.parse("3.11.19"), null, null,
+                Collections.<Path>emptyList());
+
+        List<String> descriptors = new WorkspaceExportPublisher().publishDeltaAdjacent(
+                fixture.repository, fixture.manifest, fixture.flush, fixture.verification,
+                installation);
+
+        Assert.assertEquals(Collections.singletonList("mc-2-big"), descriptors);
+        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("ma-1-big-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("mc-2-big-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("mc-2-big-TOC.txt")));
+        Assert.assertFalse(Files.exists(fixture.source.resolve(".sstable-tools-mc-2-big-"
+                + "Data.db.tmp")));
+    }
+
     private static void assertPublishFailure(WorkspaceExportPublisher publisher,
                                              Fixture fixture,
                                              Path output,

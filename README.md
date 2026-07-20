@@ -2,36 +2,45 @@
 
 [![CI](https://github.com/axonops/sstable-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/axonops/sstable-tools/actions/workflows/ci.yml)
 
-SSTable Tools creates isolated, writable workspaces from explicitly selected,
-stopped Cassandra SSTable component sets. It is under active development and is
-not yet an operator-ready production tool.
+SSTable Tools queries and mutates explicitly selected, stopped Cassandra
+SSTables with the matching installed Cassandra release and its stock `cqlsh`.
+It is under active development and is not yet an operator-ready production tool.
 
-## Writable SSTable Workspaces
+## Direct CQLSH
 
-The active development path is a separate thin JAR for Cassandra 3.11, 4.0,
-4.1, and 5.0. Deploy the JAR beside a compatible Cassandra installation; it
-uses that installation's Cassandra JARs and stock `cqlsh`, never the production
-Cassandra JVM.
+The primary interface is one command. Supply one or more `Data.db` or `TOC.txt`
+paths from one table directory, a schema bundle, and the matching Cassandra
+installation. The tool opens stock `cqlsh`; on a clean exit it writes verified
+new SSTable component sets beside the supplied source files.
 
-The workspace workflow accepts an explicitly selected `Data.db` or `TOC.txt`
-plus its sibling components and one schema bundle. It does not scan Cassandra
-data roots, keyspaces, or tables. Input must be from a stopped node, completed
-snapshot, backup, or external copy.
+```shell
+java -jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar \
+  --cassandra-home /opt/apache-cassandra-5.0.8 \
+  --sstables /archive/acme/users-<table-id>/nb-42-big-Data.db \
+  --schema /archive/acme-users.cql \
+  cqlsh
+```
 
-1. `workspace create` records the selected source component identities and schema.
-2. `workspace import` validates and copies the source into private workspace storage.
-3. `workspace start` starts an isolated, loopback-only Cassandra process with
-   gossip and JMX disabled.
-4. `workspace cqlsh` launches the matching installation's stock `cqlsh` against
-   that private endpoint. Guarded `SELECT`, non-conditional `INSERT`, and
-   non-conditional `UPDATE` are supported only for the imported table.
-5. `workspace flush` closes CQL access and writes mutation deltas.
-6. `workspace export --mode delta` publishes verified delta SSTables; `snapshot`
-   publishes the complete workspace table.
+Use `--execute` for an automated statement and `--tmp-dir` to choose the parent
+of the private temporary workspace. The default is `/tmp/sstable-tools/`; it is
+removed after a successful operation.
 
-The workspace intentionally disables and verifies inactive auto-compaction.
-It does **not** provide a workspace compaction command or a compacted export
-mode. Legacy compaction is outside this supported path.
+```shell
+java -jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar \
+  --tmp-dir /var/tmp/sstable-tools \
+  --cassandra-home /opt/apache-cassandra-4.1.3 \
+  --sstables /archive/acme/users-<table-id>/na-17-big-Data.db \
+  --schema /archive/acme-users.cql \
+  cqlsh --execute "INSERT INTO acme.users (id, name) VALUES (1, 'Ada');"
+```
+
+The command does not scan data roots, keyspaces, or unrelated tables. All
+selected SSTables must be in the same table directory. Cassandra 3.11, 4.0, and
+4.1 use the next numeric generation. Cassandra 5.0 uses the configured
+sequence or UUID SSTable identifier mode from `cassandra.yaml`.
+
+The former `workspace ...` commands remain available as an advanced diagnostic
+and recovery interface; they are not the normal workflow.
 
 > **DANGER:** Do not import, mutate, compact, or export files belonging to a
 > running Cassandra process. The source must be an external completed copy.
