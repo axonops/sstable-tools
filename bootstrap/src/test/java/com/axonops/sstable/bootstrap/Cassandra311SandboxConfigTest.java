@@ -145,6 +145,8 @@ public class Cassandra311SandboxConfigTest {
         Assert.assertFalse(yaml.contains("commitlog_sync_batch_window_in_ms:"));
         Assert.assertTrue(yaml.contains("role_manager: "
                 + "com.axonops.sstable.worker.cassandra50.OfflineRoleManager"));
+        Assert.assertTrue(yaml.contains("cidr_authorizer: "
+                + "com.axonops.sstable.worker.cassandra50.OfflineCIDRAuthorizer"));
     }
 
     @Test

@@ -92,10 +92,14 @@ final class Cassandra311SandboxConfig {
                 : "5.0".equals(releaseLine)
                 ? "com.axonops.sstable.worker.cassandra50.OfflineRoleManager"
                 : "CassandraRoleManager";
+        String cidrAuthorizer = "5.0".equals(releaseLine)
+                ? "com.axonops.sstable.worker.cassandra50.OfflineCIDRAuthorizer"
+                : null;
         String yaml = "cluster_name: 'sstable-tools-" + workspaceId + "'\n"
                 + "authenticator: " + authenticator + "\n"
                 + "authorizer: AllowAllAuthorizer\n"
                 + "role_manager: " + roleManager + "\n"
+                + (cidrAuthorizer == null ? "" : "cidr_authorizer: " + cidrAuthorizer + "\n")
                 + "internode_authenticator: "
                 + "org.apache.cassandra.auth.AllowAllInternodeAuthenticator\n"
                 + "partitioner: org.apache.cassandra.dht.Murmur3Partitioner\n"
