@@ -77,6 +77,7 @@ final class Cassandra311SandboxConfig {
                                            String releaseLine)
             throws WorkspaceException {
         boolean supportsThrift = "3.11".equals(releaseLine);
+        boolean supportsCommitlogBatchWindow = !"5.0".equals(releaseLine);
         Path root = repository.root();
         boolean cassandra311 = "3.11".equals(releaseLine);
         String authenticator = startNativeTransport && cassandra311
@@ -122,7 +123,8 @@ final class Cassandra311SandboxConfig {
                 + "dynamic_snitch: false\n"
                 + "internode_compression: none\n"
                 + "commitlog_sync: batch\n"
-                + "commitlog_sync_batch_window_in_ms: 2\n"
+                + (supportsCommitlogBatchWindow
+                ? "commitlog_sync_batch_window_in_ms: 2\n" : "")
                 + "commitlog_total_space_in_mb: 64\n"
                 + "commitlog_segment_size_in_mb: 16\n"
                 + "data_file_directories:\n"

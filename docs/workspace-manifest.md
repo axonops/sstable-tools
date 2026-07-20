@@ -59,10 +59,12 @@ moves the manifest from `NEW` to `VALIDATED`. Repeating create with the same
 canonical selection and byte identities is idempotent. Repeating it with
 different inputs fails.
 
-`workspace import` is currently implemented by the Cassandra 3.11 adapter. It
-parses the schema with installed Cassandra classes, validates every source set,
-copies and loads it with native transport disabled, and records the table and
-baseline identities before committing `IMPORTED`. `workspace status`, `start`,
+`workspace import` is implemented by the Cassandra 3.11, 4.0, 4.1, and 5.0
+adapters. It parses the schema with installed Cassandra classes, validates every
+selected source set, copies and loads it with native transport disabled, and
+records the table and baseline identities before committing `IMPORTED`.
+`workspace start` is currently implemented for 3.11, 4.0, and 4.1; the 4.x
+sandboxes require `--timestamp-policy after-source`. `workspace status`,
 `flush`, `stop`, and `recover` reverify source, schema, and imported baseline
 hashes.
 New delta files are allowed; changing or removing a baseline file fails closed.

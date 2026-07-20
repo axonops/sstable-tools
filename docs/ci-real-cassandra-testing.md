@@ -19,7 +19,8 @@ The `stopped-cqlsh-source` GitHub Actions matrix runs against Cassandra 3.11.19,
 5. Stop the container and assert it is no longer running.
 6. Copy only the completed table components from the stopped container.
 7. Run the matching thin JAR's `workspace create` and `workspace status` against
-   that copied component directory, asserting the recorded source integrity.
+   an explicitly selected `Data.db` component, asserting the recorded source
+   integrity.
 
 The shell implementation is `scripts/ci-real-cassandra-source`. It preserves
 the source components and logs under the job temporary directory and uploads
@@ -34,12 +35,14 @@ Only after shutdown does it copy the table into a workspace. SSTable Tools then
 executes `create`, `import`, `start`, stock-cqlsh `SELECT`/`INSERT`/`UPDATE`,
 `flush`, delta `export`, and `stop`.
 
-This is intentionally not enabled for 4.0, 4.1, or 5.0 yet. Their adapters
-currently expose version detection and linkage verification only; they do not
-implement `ImportRuntimeAdapter` or `SandboxRuntimeAdapter`. Enabling a write
-workflow test for them before that implementation exists would make CI report a
-capability that the released JARs do not have.
+The 4.0.17 and 4.1.3 jobs execute the same stopped-source import sequence and
+then start guarded isolated sandboxes. They invoke the installed distribution's
+stock `cqlsh` for `INSERT`, `UPDATE`, and `SELECT`, flush, export the delta, and
+stop. The sandbox is loopback-only, disables gossip and JMX, and only permits
+writes to the imported workspace table with an explicit timestamp greater than
+the source SSTable maximum.
 
-When each adapter gains import and sandbox support, its matrix entry must be
-promoted to the same stopped-source acceptance sequence, including a post-export
-reimport and stock-cqlsh readback.
+Cassandra 5.0.4 has a separate stopped-source import job. It proves stock
+`cqlsh` source generation, source shutdown, selected-SSTable capture, schema
+validation, offline import, and source-integrity recheck. Native CQL sandbox
+support and post-export reimport/readback remain pending for that release.

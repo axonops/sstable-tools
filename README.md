@@ -432,10 +432,11 @@ executes `INSERT` and `UPDATE`, reads the mutated row, and flushes it. The job
 then stops the source node before copying its SSTables and asks the matching
 tool JAR to create and integrity-check a workspace from that completed copy.
 This proves that each artifact accepts real, version-matched SSTable component
-sets without ever pointing the tool at a live source node. Full workspace
-import, cqlsh mutation, flush, export, and replay remain an acceptance test for
-3.11 only: the 4.0, 4.1, and 5.0 adapters currently provide runtime linkage
-verification but do not yet implement the write workflow.
+sets without ever pointing the tool at a live source node. The 4.0 and 4.1
+integration jobs extend this stopped-source sequence through workspace import,
+an isolated loopback sandbox, the distribution's stock `cqlsh` `INSERT`,
+`UPDATE`, and `SELECT`, then flush and delta export. Cassandra 5.0 has an
+equivalent stopped-SSTable import job; its native CQL sandbox is not enabled yet.
 
 Compatibility remains deliberately conservative until the remaining release
 lines have equivalent installed-package fixtures in CI:
@@ -446,6 +447,11 @@ lines have equivalent installed-package fixtures in CI:
 | `cassandra-4.0` | 4.0.17 | 8-11 |
 | `cassandra-4.1` | 4.1.3 | 11 |
 | `cassandra-5.0` | 5.0.4 | 17 |
+
+The implemented capability boundary is deliberately narrow: 3.11, 4.0, and 4.1
+support import plus the guarded writable sandbox; 5.0 supports guarded offline
+import only. Every import uses a selected `Data.db` or `TOC.txt`, never a broad
+Cassandra data-root scan.
 
 ## Design documents
 
