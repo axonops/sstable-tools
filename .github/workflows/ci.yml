@@ -324,6 +324,14 @@ jobs:
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-40-import"
 
+      - name: Migrate and mutate a legacy Cassandra 3.11 ma fixture through Cassandra 4.0
+        run: >-
+          scripts/ci-legacy-ma-cqlsh
+          --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-40-import"
+
       - name: Upload import diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
@@ -411,6 +419,14 @@ jobs:
       - name: Exercise direct Cassandra 4.1 cqlsh workflow
         run: >-
           scripts/ci-direct-cqlsh
+          --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-41-import"
+
+      - name: Migrate and mutate a legacy Cassandra 3.11 ma fixture through Cassandra 4.1
+        run: >-
+          scripts/ci-legacy-ma-cqlsh
           --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
           --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3"
           --java-home "$JAVA_HOME"
