@@ -187,7 +187,7 @@ final class Cassandra40Importer {
         try {
             candidate = BigFormat.instance.getVersion(version);
         } catch (RuntimeException e) {
-            throw new IllegalArgumentException("Unsupported Cassandra 3.11 SSTable format "
+            throw new IllegalArgumentException("Unsupported Cassandra 4.0 SSTable format "
                     + version + "-" + format, e);
         }
         if (candidate == null || !candidate.isCompatible()
@@ -200,7 +200,7 @@ final class Cassandra40Importer {
     }
 
     private static IllegalArgumentException unsupportedFormat(String version, String format) {
-        return new IllegalArgumentException("Unsupported Cassandra 3.11 SSTable format "
+        return new IllegalArgumentException("Unsupported Cassandra 4.0 SSTable format "
                 + version + "-" + format);
     }
 
