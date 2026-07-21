@@ -65,13 +65,13 @@ grep -q 'frodo' "$output_root/legacy-ma-select-base.log"
 grep -q 'pass@' "$output_root/legacy-ma-select-base.log"
 grep -q 'published.sstables=none' "$output_root/legacy-ma-select-base.log"
 
-run_cql insert "INSERT INTO fixture.users (user_name, password, gender, state, birth_year) VALUES ('samwise', 'gardener', 'male', 'shire', 1380);"
+run_cql insert "INSERT INTO fixture.users (user_name, password, gender, state, birth_year) VALUES ('samwise', 'gardener', 'male', 'shire', 1380) USING TIMESTAMP 2000000000000000;"
 [[ $(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l) -gt $initial_tocs ]] || {
   printf 'Legacy ma INSERT did not publish a delta SSTable\n' >&2
   exit 1
 }
 
-run_cql update "UPDATE fixture.users SET password = 'mayor' WHERE user_name = 'samwise';"
+run_cql update "UPDATE fixture.users USING TIMESTAMP 2000000000000001 SET password = 'mayor' WHERE user_name = 'samwise';"
 find "$source_dir" -maxdepth 1 -type f -name 'nb-*-big-Data.db' -print -quit | grep -q . || {
   printf 'Legacy ma mutation did not publish Cassandra 4.x nb SSTables\n' >&2
   exit 1
