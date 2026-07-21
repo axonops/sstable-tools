@@ -274,12 +274,12 @@ jobs:
       - name: Build Cassandra 4.0 adapter
         run: mvn -B -ntp -pl workers/cassandra-4.0 -am package -DskipTests
 
-      - name: Import a stopped Cassandra 3.11 Big ma SSTable into Cassandra 4.0
+      - name: Import a stopped Cassandra 3.11 Big me SSTable into Cassandra 4.0
         run: >-
           scripts/ci-real-cassandra-source
           --image cassandra:3.11.19
           --release 3.11
-          --expect-format ma
+          --expect-format me
           --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-40-import"
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17"
@@ -366,12 +366,12 @@ jobs:
       - name: Build Cassandra 4.1 adapter
         run: mvn -B -ntp -pl workers/cassandra-4.1 -am package -DskipTests
 
-      - name: Import a stopped Cassandra 3.11 Big ma SSTable into Cassandra 4.1
+      - name: Import a stopped Cassandra 3.11 Big me SSTable into Cassandra 4.1
         run: >-
           scripts/ci-real-cassandra-source
           --image cassandra:3.11.19
           --release 3.11
-          --expect-format ma
+          --expect-format me
           --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-41-import"
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3"
