@@ -313,8 +313,8 @@ final class WorkspaceCommandRunner {
             out.println("published.directory=" + selectedSourceDirectory(manifest));
             out.println("published.sstables=" + (publishedDescriptors.isEmpty()
                     ? "none" : String.join(",", publishedDescriptors)));
-            destroy(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_DESTROY,
-                    workspace, policy, false).withConfirmation(manifest.workspaceId()), quiet);
+            destroyTemporaryWorkspace(arguments, workspace, policy, manifest.workspaceId(),
+                    quiet);
             return 0;
         } catch (WorkspaceException | BootstrapException e) {
             if (!published) {
@@ -351,6 +351,37 @@ final class WorkspaceCommandRunner {
         } catch (WorkspaceException ignored) {
             // The retained workspace contains the endpoint and manifest for recovery.
         }
+    }
+
+    private static void destroyTemporaryWorkspace(BootstrapArguments arguments,
+                                                  Path workspace,
+                                                  TimestampPolicy policy,
+                                                  UUID workspaceId,
+                                                  PrintStream quiet) throws WorkspaceException {
+        BootstrapArguments destroyArguments = arguments.forWorkspace(
+                BootstrapArguments.Action.WORKSPACE_DESTROY, workspace, policy, false)
+                .withConfirmation(workspaceId);
+        WorkspaceException lastFailure = null;
+        for (int attempt = 0; attempt < 100; attempt++) {
+            try {
+                destroy(destroyArguments, quiet);
+                return;
+            } catch (WorkspaceException e) {
+                lastFailure = e;
+                if (!e.getMessage().contains("PID is still running")) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(100L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new WorkspaceException("Interrupted while waiting for the private "
+                            + "Cassandra worker to exit", interrupted);
+                }
+            }
+        }
+        throw new WorkspaceException("Private Cassandra worker did not exit before temporary "
+                + "workspace cleanup: " + workspace, lastFailure);
     }
 
     private static Path selectedSourceDirectory(WorkspaceManifest manifest)
