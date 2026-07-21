@@ -368,7 +368,8 @@ final class WorkspaceCommandRunner {
                 return;
             } catch (WorkspaceException e) {
                 lastFailure = e;
-                if (!e.getMessage().contains("PID is still running")) {
+                if (!e.getMessage().contains("is still running but its control endpoint "
+                        + "is unreachable")) {
                     throw e;
                 }
                 try {
