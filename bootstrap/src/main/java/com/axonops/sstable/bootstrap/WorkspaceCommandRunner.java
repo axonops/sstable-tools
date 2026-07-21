@@ -313,8 +313,7 @@ final class WorkspaceCommandRunner {
             out.println("published.directory=" + selectedSourceDirectory(manifest));
             out.println("published.sstables=" + (publishedDescriptors.isEmpty()
                     ? "none" : String.join(",", publishedDescriptors)));
-            destroyTemporaryWorkspace(arguments, workspace, policy, manifest.workspaceId(),
-                    quiet);
+            destroyTemporaryWorkspace(workspace, manifest.workspaceId());
             return 0;
         } catch (WorkspaceException | BootstrapException e) {
             if (!published) {
@@ -353,36 +352,19 @@ final class WorkspaceCommandRunner {
         }
     }
 
-    private static void destroyTemporaryWorkspace(BootstrapArguments arguments,
-                                                  Path workspace,
-                                                  TimestampPolicy policy,
-                                                  UUID workspaceId,
-                                                  PrintStream quiet) throws WorkspaceException {
-        BootstrapArguments destroyArguments = arguments.forWorkspace(
-                BootstrapArguments.Action.WORKSPACE_DESTROY, workspace, policy, false)
-                .withConfirmation(workspaceId);
-        WorkspaceException lastFailure = null;
-        for (int attempt = 0; attempt < 100; attempt++) {
-            try {
-                destroy(destroyArguments, quiet);
-                return;
-            } catch (WorkspaceException e) {
-                lastFailure = e;
-                if (!e.getMessage().contains("is still running but its control endpoint "
-                        + "is unreachable")) {
-                    throw e;
-                }
-                try {
-                    Thread.sleep(100L);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new WorkspaceException("Interrupted while waiting for the private "
-                            + "Cassandra worker to exit", interrupted);
-                }
+    private static void destroyTemporaryWorkspace(Path workspace, UUID workspaceId)
+            throws WorkspaceException {
+        WorkspaceRepository repository = WorkspaceRepository.open(workspace);
+        try (WorkspaceLock lock = repository.acquire()) {
+            WorkspaceManifest manifest = repository.load();
+            if (!workspaceId.equals(manifest.workspaceId())
+                    || manifest.state() != WorkspaceState.STOPPED) {
+                throw new WorkspaceException("Private workspace did not stop cleanly: "
+                        + workspace);
             }
+            repository.destroyContents(lock);
         }
-        throw new WorkspaceException("Private Cassandra worker did not exit before temporary "
-                + "workspace cleanup: " + workspace, lastFailure);
+        repository.deleteRootAfterDestroy();
     }
 
     private static Path selectedSourceDirectory(WorkspaceManifest manifest)
