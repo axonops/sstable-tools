@@ -279,6 +279,7 @@ jobs:
           scripts/ci-real-cassandra-source
           --image cassandra:3.11.19
           --release 3.11
+          --expect-format ma
           --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-40-import"
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17"
@@ -370,6 +371,7 @@ jobs:
           scripts/ci-real-cassandra-source
           --image cassandra:3.11.19
           --release 3.11
+          --expect-format ma
           --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-41-import"
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3"

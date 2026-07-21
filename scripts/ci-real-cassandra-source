@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path> [--import-cassandra-home <path> --java-home <path>]\n' "$0" >&2
+  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path> [--expect-format <version> --import-cassandra-home <path> --java-home <path>]\n' "$0" >&2
   exit 64
 }
 
@@ -12,6 +12,7 @@ tool_jar=''
 output_root=''
 import_cassandra_home=''
 java_home=''
+expected_format=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,6 +22,7 @@ while [[ $# -gt 0 ]]; do
     --output-root) output_root=${2:-}; shift 2 ;;
     --import-cassandra-home) import_cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
+    --expect-format) expected_format=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -107,6 +109,13 @@ selected_sstable="$(find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -qui
   printf 'Stopped Cassandra source did not yield Data.db\n' >&2
   exit 1
 }
+if [[ -n "$expected_format" ]]; then
+  selected_name=$(basename "$selected_sstable")
+  [[ "$selected_name" == "$expected_format"-*-big-Data.db ]] || {
+    printf 'Expected %s SSTable format, found %s\n' "$expected_format" "$selected_name" >&2
+    exit 1
+  }
+fi
 
 printf '%s\n' \
   "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
