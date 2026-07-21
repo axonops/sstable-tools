@@ -24,7 +24,8 @@ final class Cassandra311SandboxConfig {
                       int nativePort,
                       String controlToken,
                       String nativePassword) throws WorkspaceException {
-        write(repository, lock, workspaceId, nativePort, controlToken, nativePassword, "3.11");
+        write(repository, lock, workspaceId, nativePort, controlToken, nativePassword, "3.11",
+                "big");
     }
 
     static void write(WorkspaceRepository repository,
@@ -34,12 +35,25 @@ final class Cassandra311SandboxConfig {
                       String controlToken,
                       String nativePassword,
                       String releaseLine) throws WorkspaceException {
+        write(repository, lock, workspaceId, nativePort, controlToken, nativePassword,
+                releaseLine, "big");
+    }
+
+    static void write(WorkspaceRepository repository,
+                      WorkspaceLock lock,
+                      UUID workspaceId,
+                      int nativePort,
+                      String controlToken,
+                      String nativePassword,
+                      String releaseLine,
+                      String sstableFormat) throws WorkspaceException {
         if (nativePort < 1 || nativePort > 65535
                 || controlToken == null || !controlToken.matches("[0-9a-f]{64}")
                 || nativePassword == null || !nativePassword.matches("[0-9a-f]{64}")) {
             throw new WorkspaceException("Invalid Cassandra 3.11 sandbox endpoint inputs");
         }
-        writeConfiguration(repository, lock, workspaceId, nativePort, true, releaseLine);
+        writeConfiguration(repository, lock, workspaceId, nativePort, true, releaseLine,
+                sstableFormat);
         repository.writeOwnedFile(lock, CONTROL_TOKEN_PATH,
                 (controlToken + "\n").getBytes(StandardCharsets.US_ASCII));
         String cqlshrc = "[authentication]\n"
@@ -53,7 +67,7 @@ final class Cassandra311SandboxConfig {
                             WorkspaceLock lock,
                             UUID workspaceId,
                             int nativePort) throws WorkspaceException {
-        writeImport(repository, lock, workspaceId, nativePort, "3.11");
+        writeImport(repository, lock, workspaceId, nativePort, "3.11", "big");
     }
 
     static void writeImport(WorkspaceRepository repository,
@@ -61,12 +75,22 @@ final class Cassandra311SandboxConfig {
                             UUID workspaceId,
                             int nativePort,
                             String releaseLine) throws WorkspaceException {
+        writeImport(repository, lock, workspaceId, nativePort, releaseLine, "big");
+    }
+
+    static void writeImport(WorkspaceRepository repository,
+                            WorkspaceLock lock,
+                            UUID workspaceId,
+                            int nativePort,
+                            String releaseLine,
+                            String sstableFormat) throws WorkspaceException {
         if (nativePort < 1 || nativePort > 65535) {
             throw new WorkspaceException("Invalid Cassandra 3.11 import endpoint input");
         }
         repository.deleteOwnedFile(lock, CQLSHRC_PATH);
         repository.deleteOwnedFile(lock, WorkspaceTimestampState.WORKSPACE_PATH);
-        writeConfiguration(repository, lock, workspaceId, nativePort, false, releaseLine);
+        writeConfiguration(repository, lock, workspaceId, nativePort, false, releaseLine,
+                sstableFormat);
     }
 
     private static void writeConfiguration(WorkspaceRepository repository,
@@ -74,7 +98,8 @@ final class Cassandra311SandboxConfig {
                                            UUID workspaceId,
                                            int nativePort,
                                            boolean startNativeTransport,
-                                           String releaseLine)
+                                           String releaseLine,
+                                           String sstableFormat)
             throws WorkspaceException {
         boolean supportsThrift = "3.11".equals(releaseLine);
         boolean supportsCommitlogBatchWindow = !"5.0".equals(releaseLine);
@@ -131,6 +156,8 @@ final class Cassandra311SandboxConfig {
                 ? "commitlog_sync_batch_window_in_ms: 2\n" : "")
                 + "commitlog_total_space_in_mb: 64\n"
                 + "commitlog_segment_size_in_mb: 16\n"
+                + ("5.0".equals(releaseLine) ? "sstable:\n  selected_format: "
+                + sstableFormat + "\n" : "")
                 + "data_file_directories:\n"
                 + "  - " + quote(root.resolve("data")) + "\n"
                 + "commitlog_directory: " + quote(root.resolve("commitlog")) + "\n"

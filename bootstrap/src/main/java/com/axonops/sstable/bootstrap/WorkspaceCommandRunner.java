@@ -104,7 +104,9 @@ final class WorkspaceCommandRunner {
             }
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
-            manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity());
+            validateOutputFormat(adapter, requiredOutputFormat(manifest));
+            manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
+                    outputIdentity(requiredOutputFormat(manifest)));
             WorkspaceTimestampState.prepare(repository, lock, manifest.workspaceId(),
                     timestampPolicy, sourceMaximumMicros, !timestampPolicyRecorded);
             repository.deleteOwnedFile(lock, WorkspaceFlushResult.WORKSPACE_PATH);
@@ -115,7 +117,8 @@ final class WorkspaceCommandRunner {
             String token = randomSecret();
             String nativePassword = randomSecret();
             Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
-                    nativePort, token, nativePassword, adapter.releaseLine());
+                    nativePort, token, nativePassword, adapter.releaseLine(),
+                    requiredOutputFormat(manifest));
             repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.ENDPOINT_PATH);
 
             WorkerEndpoint endpoint = null;
@@ -185,11 +188,14 @@ final class WorkspaceCommandRunner {
             verifySchemaBundle(repository, manifest);
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
-            manifest = manifest.withRuntimeIdentity(identity.asMap(adapter), outputIdentity());
+            String outputFormat = requiredOutputFormat(manifest);
+            validateOutputFormat(adapter, outputFormat);
+            manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
+                    outputIdentity(outputFormat));
             repository.save(lock, manifest);
             int unusedNativePort = allocateLoopbackPort();
             Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
-                    unusedNativePort, adapter.releaseLine());
+                    unusedNativePort, adapter.releaseLine(), outputFormat);
             repository.deleteOwnedFile(lock, ImportResult.WORKSPACE_PATH);
 
             try {
@@ -409,8 +415,16 @@ final class WorkspaceCommandRunner {
                     throw new WorkspaceException("Workspace is already initialized with a "
                             + "different SSTable source inventory: " + repository.root());
                 }
+                String existingFormat = requiredOutputFormat(manifest);
+                String requestedFormat = arguments.sstableOutputFormat().value();
+                if (!existingFormat.equals(requestedFormat)) {
+                    throw new WorkspaceException("Workspace is already initialized with SSTable "
+                            + "output format " + existingFormat);
+                }
             } else {
                 manifest = WorkspaceManifest.create(requested);
+                manifest = manifest.withOutputIdentity(Collections.singletonMap(
+                        "sstable.format", arguments.sstableOutputFormat().value()));
                 if (schema != null) {
                     manifest = manifest.withSchemaIdentity(schema.identity());
                 }
@@ -919,7 +933,25 @@ final class WorkspaceCommandRunner {
         }
     }
 
-    private static Map<String, String> outputIdentity() {
+    private static String requiredOutputFormat(WorkspaceManifest manifest)
+            throws WorkspaceException {
+        String format = manifest.outputIdentity().get("sstable.format");
+        return format == null ? "big" : format;
+    }
+
+    private static void validateOutputFormat(AdapterMetadata adapter, String outputFormat)
+            throws BootstrapException {
+        if (!"big".equals(outputFormat) && !"bti".equals(outputFormat)) {
+            throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
+                    "Unsupported immutable SSTable output format: " + outputFormat);
+        }
+        if ("bti".equals(outputFormat) && !"5.0".equals(adapter.releaseLine())) {
+            throw new BootstrapException(BootstrapException.COMPATIBILITY_EXIT_CODE,
+                    "--output-format bti is supported only by the Cassandra 5.0 adapter");
+        }
+    }
+
+    private static Map<String, String> outputIdentity(String sstableFormat) {
         Map<String, String> output = new LinkedHashMap<>();
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
@@ -927,6 +959,7 @@ final class WorkspaceCommandRunner {
         output.put("native.query-guard", "cassandra-3.11-workspace-v4");
         output.put("flush.contract", "cassandra-3.11-quiesced-table-v1");
         output.put("import.contract", "cassandra-3.11-refresh-v2");
+        output.put("sstable.format", sstableFormat);
         return output;
     }
 

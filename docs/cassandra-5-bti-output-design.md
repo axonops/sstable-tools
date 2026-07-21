@@ -4,14 +4,14 @@
 
 The Cassandra 5.0 worker must import either Big or BTI SSTables. A writable
 workspace must also have one immutable output format: Big `oa` or BTI `da`.
-This document covers the output-selection work that follows the implemented
-BTI input validation.
+This document describes the implemented output-selection contract.
 
 ## User contract
 
 Add `--output-format big|bti` to `workspace create` and direct `cqlsh`.
 
-- It is accepted only by the Cassandra 5.0 adapter.
+- `bti` is accepted only by the Cassandra 5.0 adapter; `big` remains available
+  to every supported adapter.
 - `big` is the default for backward-compatible existing workflows.
 - `bti` selects Cassandra's configured BTI writer and publishes `da-*-bti`
   component sets.
@@ -25,15 +25,13 @@ combination. Generated deltas always use the selected writer format.
 
 ## Persistent state
 
-Add `outputFormat` to the workspace manifest and increment its schema version.
-The value is `big` or `bti`; it is written during creation before any source
-is staged. Existing v1 manifests decode as `big` only when they belong to a
-5.0 workspace and are rewritten atomically on their next controller update.
-Other release lines never persist this field.
+The value is stored as the immutable `sstable.format` output-identity entry
+during creation before any source is staged. This preserves the v1 manifest
+format and lets existing manifests resolve to `big` when first used.
 
 The controller passes the recorded value, not a caller-supplied later value,
-to every worker launch. Status displays `workspace.outputFormat` and flush
-verification records both the format family and format version of every delta.
+to every worker launch. Flush verification rejects a delta from another
+format family.
 
 ## Worker configuration
 
@@ -64,10 +62,10 @@ the workspace.
 
 ## Test plan
 
-1. Unit-test CLI parsing, manifest round trips, old-manifest migration, and
-   runtime configuration generation.
-2. Run a real Cassandra 5.0 node configured for each writer format to produce
-   immutable Big `oa` and BTI `da` fixtures.
+1. Unit-test CLI parsing, immutable output identity, and runtime configuration
+   generation.
+2. Run direct stock Cassandra 5.0 `cqlsh` with `--output-format bti` against
+   a stopped Big fixture, then verify published `da-*-bti` output.
 3. For each fixture, run direct stock `cqlsh` `SELECT`, timestamped `INSERT`,
    timestamped `UPDATE`, source-hash verification, delta publication, and a
    fresh reopen of source plus delta.

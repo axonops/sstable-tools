@@ -114,6 +114,28 @@ public class BootstrapArgumentsTest {
     }
 
     @Test
+    public void parsesSstableOutputFormatOnlyForCreationAndDirectCqlsh() throws Exception {
+        BootstrapArguments create = BootstrapArguments.parse(new String[]{
+                "workspace", "create", "workspace", "--sstables", "source-Data.db",
+                "--output-format", "bti"
+        });
+        Assert.assertEquals(BootstrapArguments.SstableOutputFormat.BTI,
+                create.sstableOutputFormat());
+
+        BootstrapArguments direct = BootstrapArguments.parse(new String[]{
+                "cqlsh", "--sstables", "source-Data.db", "--schema", "schema.cql",
+                "--output-format", "big"
+        });
+        Assert.assertEquals(BootstrapArguments.SstableOutputFormat.BIG,
+                direct.sstableOutputFormat());
+
+        assertUsageFailure(new String[]{"workspace", "start", "workspace",
+                "--output-format", "bti"}, "only valid with workspace create or cqlsh");
+        assertUsageFailure(new String[]{"cqlsh", "--sstables", "source-Data.db",
+                "--schema", "schema.cql", "--output-format", "unknown"}, "big or bti");
+    }
+
+    @Test
     public void directCqlshRequiresExplicitSourcesAndSchema() throws Exception {
         assertUsageFailure(new String[]{"cqlsh", "--schema", "schema.cql"},
                 "requires at least one --sstables");

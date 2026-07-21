@@ -157,7 +157,8 @@ public final class WorkspaceManifest {
             throw new WorkspaceException("Runtime and output identities must not be empty");
         }
         SortedMap<String, String> nextRuntime = immutableMap(runtime, "runtime identity");
-        SortedMap<String, String> nextOutput = immutableMap(output, "output identity");
+        SortedMap<String, String> nextOutput = mergeIdentity(outputIdentity, output,
+                "output identity");
         if (!runtimeIdentity.isEmpty() && !runtimeIdentity.equals(nextRuntime)) {
             throw new WorkspaceException("Workspace runtime identity cannot change");
         }
@@ -167,6 +168,19 @@ public final class WorkspaceManifest {
         return new WorkspaceManifest(formatVersion, workspaceId, state, lastStableState,
                 failureMessage, createdAt, Instant.now(), sourceInventory, schemaIdentity,
                 nextRuntime, nextOutput, baselineInventory, exports);
+    }
+
+    /** Records immutable output characteristics before a runtime is selected. */
+    public WorkspaceManifest withOutputIdentity(Map<String, String> additions)
+            throws WorkspaceException {
+        if (additions == null || additions.isEmpty()) {
+            throw new WorkspaceException("Output identity additions must not be empty");
+        }
+        SortedMap<String, String> merged = mergeIdentity(outputIdentity, additions,
+                "output identity");
+        return new WorkspaceManifest(formatVersion, workspaceId, state, lastStableState,
+                failureMessage, createdAt, Instant.now(), sourceInventory, schemaIdentity,
+                runtimeIdentity, merged, baselineInventory, exports);
     }
 
     public WorkspaceManifest withSchemaIdentity(Map<String, String> additions)

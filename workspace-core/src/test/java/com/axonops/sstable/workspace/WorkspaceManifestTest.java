@@ -167,6 +167,25 @@ public class WorkspaceManifestTest {
     }
 
     @Test
+    public void recordsImmutableOutputFormatBeforeRuntimeSelection() throws Exception {
+        Path root = temporary.newFolder("output-format").toPath();
+        WorkspaceManifest manifest = WorkspaceManifest.create(
+                WorkspaceTestFixtures.inventory(root)).withOutputIdentity(
+                Collections.singletonMap("sstable.format", "bti"));
+        WorkspaceManifest withRuntime = manifest.withRuntimeIdentity(
+                Collections.singletonMap("runtime.release", "5.0"),
+                Collections.singletonMap("sstable.format", "bti"));
+
+        Assert.assertEquals("bti", withRuntime.outputIdentity().get("sstable.format"));
+        try {
+            withRuntime.withOutputIdentity(Collections.singletonMap("sstable.format", "big"));
+            Assert.fail("Expected output format change to be rejected");
+        } catch (WorkspaceException e) {
+            Assert.assertTrue(e.getMessage().contains("output identity entry cannot change"));
+        }
+    }
+
+    @Test
     public void recordsAndRoundTripsPublishedExportIdentity() throws Exception {
         Path root = temporary.newFolder("export-record").toPath().toRealPath();
         WorkspaceManifest flushed = WorkspaceManifest.create(

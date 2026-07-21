@@ -522,6 +522,7 @@ jobs:
           --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-50-import"
+          --output-format bti
 
       - name: Upload import diagnostics
         if: failure()

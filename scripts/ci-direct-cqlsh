@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path>\n' "$0" >&2
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti]\n' "$0" >&2
   exit 64
 }
 
@@ -10,6 +10,7 @@ tool_jar=''
 cassandra_home=''
 java_home=''
 output_root=''
+output_format='big'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -17,11 +18,13 @@ while [[ $# -gt 0 ]]; do
     --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
+    --output-format) output_format=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
 
 [[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
+[[ "$output_format" == 'big' || "$output_format" == 'bti' ]] || usage
 source_dir="$output_root/source"
 schema="$output_root/schema.cql"
 tmp_parent="$output_root/private-tmp"
@@ -40,7 +43,8 @@ for source in "${initial_sources[@]}"; do
 done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
-  --java-home "$java_home" "${source_args[@]}" --schema "$schema" cqlsh \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
   --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('direct-row', 'inserted', 'new') USING TIMESTAMP 2000000000000000;" \
   | tee "$output_root/direct-cqlsh-insert.log"
 
@@ -49,6 +53,12 @@ grep -q 'published.sstables=' "$output_root/direct-cqlsh-insert.log"
   printf 'Direct cqlsh did not create a new SSTable component set\n' >&2
   exit 1
 }
+if [[ "$output_format" == 'bti' ]]; then
+  find "$source_dir" -maxdepth 1 -type f -name '*-bti-Data.db' -print -quit | grep -q . || {
+    printf 'Direct cqlsh did not publish a BTI SSTable\n' >&2
+    exit 1
+  }
+fi
 (
   cd "$source_dir"
   sha256sum --check "$output_root/source-components.sha256"
@@ -61,7 +71,8 @@ for source in "${all_sources[@]}"; do
 done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
-  --java-home "$java_home" "${source_args[@]}" --schema "$schema" cqlsh \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
   --execute "UPDATE ci_source.events USING TIMESTAMP 2000000000000001 SET payload = 'updated', state = 'ready' WHERE event_id = 'direct-row';" \
   | tee "$output_root/direct-cqlsh-update.log"
 
@@ -77,7 +88,8 @@ for source in "${all_sources[@]}"; do
 done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
-  --java-home "$java_home" "${source_args[@]}" --schema "$schema" cqlsh \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
   --execute "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'direct-row';" \
   | tee "$output_root/direct-cqlsh-select.log"
 

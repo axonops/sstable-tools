@@ -16,6 +16,27 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class Cassandra311SandboxConfigTest {
+
+    @Test
+    public void writesCassandra50BtiSelection() throws Exception {
+        Path source = temporary.newFolder("bti-source").toPath();
+        Files.write(source.resolve("oa-1-big-TOC.txt"), Arrays.asList(
+                "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
+        Files.write(source.resolve("oa-1-big-Data.db"), new byte[]{1});
+        Files.write(source.resolve("oa-1-big-Statistics.db"), new byte[]{2});
+        Path root = temporary.newFolder("bti-workspace").toPath();
+        WorkspaceRepository repository = WorkspaceRepository.createAt(root);
+        WorkspaceManifest manifest = WorkspaceManifest.create(SourceInventory.capture(
+                Collections.singletonList(source)));
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
+                    19042, "5.0", "bti");
+        }
+        String yaml = new String(Files.readAllBytes(root.resolve(
+                Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("sstable:\n  selected_format: bti\n"));
+    }
     private static final String TOKEN =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     private static final String PASSWORD =

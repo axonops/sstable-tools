@@ -27,6 +27,25 @@ final class BootstrapArguments {
         WORKSPACE_DESTROY
     }
 
+    enum SstableOutputFormat {
+        BIG,
+        BTI;
+
+        static SstableOutputFormat parse(String value) throws BootstrapException {
+            if ("big".equals(value)) {
+                return BIG;
+            }
+            if ("bti".equals(value)) {
+                return BTI;
+            }
+            throw usage("--output-format must be big or bti");
+        }
+
+        String value() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
     private final Action action;
     private final RuntimeOptions runtimeOptions;
     private final Path workspacePath;
@@ -36,6 +55,7 @@ final class BootstrapArguments {
     private final boolean timestampPolicySpecified;
     private final ExportMode exportMode;
     private final Path outputPath;
+    private final SstableOutputFormat sstableOutputFormat;
     private final Path temporaryDirectory;
     private final String executeCql;
     private final UUID confirmedWorkspaceId;
@@ -49,6 +69,7 @@ final class BootstrapArguments {
                                boolean timestampPolicySpecified,
                                ExportMode exportMode,
                                Path outputPath,
+                               SstableOutputFormat sstableOutputFormat,
                                Path temporaryDirectory,
                                String executeCql,
                                UUID confirmedWorkspaceId) {
@@ -62,6 +83,7 @@ final class BootstrapArguments {
         this.timestampPolicySpecified = timestampPolicySpecified;
         this.exportMode = exportMode;
         this.outputPath = outputPath;
+        this.sstableOutputFormat = sstableOutputFormat;
         this.temporaryDirectory = temporaryDirectory;
         this.executeCql = executeCql;
         this.confirmedWorkspaceId = confirmedWorkspaceId;
@@ -71,7 +93,8 @@ final class BootstrapArguments {
         if (args.length == 0) {
             return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
                     null, Collections.<Path>emptyList(), null, TimestampPolicy.WALL_CLOCK,
-                    false, null, null, Paths.get("/tmp/sstable-tools"), null, null);
+                    false, null, null, SstableOutputFormat.BIG,
+                    Paths.get("/tmp/sstable-tools"), null, null);
         }
 
         Path cassandraHome = null;
@@ -83,6 +106,8 @@ final class BootstrapArguments {
         boolean timestampPolicySpecified = false;
         ExportMode exportMode = null;
         Path outputPath = null;
+        SstableOutputFormat sstableOutputFormat = SstableOutputFormat.BIG;
+        boolean sstableOutputFormatSpecified = false;
         Path temporaryDirectory = Paths.get("/tmp/sstable-tools");
         String executeCql = null;
         UUID confirmedWorkspaceId = null;
@@ -94,7 +119,8 @@ final class BootstrapArguments {
                 return new BootstrapArguments(Action.HELP,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath, temporaryDirectory,
+                        timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
+                        temporaryDirectory,
                         executeCql,
                         confirmedWorkspaceId);
             }
@@ -102,7 +128,8 @@ final class BootstrapArguments {
                 return new BootstrapArguments(Action.VERSION,
                         new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                         null, sourceDirectories, schemaPath, timestampPolicy,
-                        timestampPolicySpecified, exportMode, outputPath, temporaryDirectory,
+                        timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
+                        temporaryDirectory,
                         executeCql,
                         confirmedWorkspaceId);
             }
@@ -132,6 +159,12 @@ final class BootstrapArguments {
                     throw usage("--output may be specified only once");
                 }
                 outputPath = pathValue(args, ++index, argument);
+            } else if ("--output-format".equals(argument)) {
+                if (sstableOutputFormatSpecified || ++index >= args.length) {
+                    throw usage("--output-format requires one value");
+                }
+                sstableOutputFormat = SstableOutputFormat.parse(args[index]);
+                sstableOutputFormatSpecified = true;
             } else if ("--tmp-dir".equals(argument)) {
                 temporaryDirectory = pathValue(args, ++index, argument);
             } else if ("--execute".equals(argument)) {
@@ -254,6 +287,10 @@ final class BootstrapArguments {
         if (action != Action.WORKSPACE_EXPORT && (exportMode != null || outputPath != null)) {
             throw usage("--mode and --output are only valid with workspace export");
         }
+        if (action != Action.WORKSPACE_CREATE && action != Action.DIRECT_CQLSH
+                && sstableOutputFormatSpecified) {
+            throw usage("--output-format is only valid with workspace create or cqlsh");
+        }
         if (action != Action.WORKSPACE_CQLSH && action != Action.DIRECT_CQLSH
                 && executeCql != null) {
             throw usage("--execute is only valid with workspace cqlsh");
@@ -271,7 +308,8 @@ final class BootstrapArguments {
         return new BootstrapArguments(action,
                 new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
                 workspacePath, sourceDirectories, schemaPath, timestampPolicy,
-                timestampPolicySpecified, exportMode, outputPath, temporaryDirectory, executeCql,
+                timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
+                temporaryDirectory, executeCql,
                 confirmedWorkspaceId);
     }
 
@@ -357,6 +395,10 @@ final class BootstrapArguments {
         return outputPath;
     }
 
+    SstableOutputFormat sstableOutputFormat() {
+        return sstableOutputFormat;
+    }
+
     Path temporaryDirectory() {
         return temporaryDirectory;
     }
@@ -373,12 +415,14 @@ final class BootstrapArguments {
                                     TimestampPolicy policy, boolean policySpecified) {
         return new BootstrapArguments(workspaceAction, runtimeOptions, path,
                 sourceDirectories, schemaPath, policy, policySpecified, exportMode,
-                outputPath, temporaryDirectory, executeCql, confirmedWorkspaceId);
+                outputPath, sstableOutputFormat, temporaryDirectory, executeCql,
+                confirmedWorkspaceId);
     }
 
     BootstrapArguments withConfirmation(UUID workspaceId) {
         return new BootstrapArguments(action, runtimeOptions, workspacePath,
                 sourceDirectories, schemaPath, timestampPolicy, timestampPolicySpecified,
-                exportMode, outputPath, temporaryDirectory, executeCql, workspaceId);
+                exportMode, outputPath, sstableOutputFormat, temporaryDirectory, executeCql,
+                workspaceId);
     }
 }

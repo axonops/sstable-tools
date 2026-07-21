@@ -160,6 +160,7 @@ public final class BootstrapMain {
         out.println("  --timestamp-policy <p>  wall-clock or after-source (start/direct cqlsh)");
         out.println("  --mode <mode>           delta or snapshot (workspace export)");
         out.println("  --output <path>         Atomic publication destination (workspace export)");
+        out.println("  --output-format <type>  big (default), or bti for Cassandra 5.0 output");
         out.println("  --tmp-dir <path>        Parent for private direct-cqlsh workspaces");
         out.println("  --execute <cql>         Execute CQL and exit (direct or workspace cqlsh)");
         out.println("  --confirm-workspace-id <uuid> Exact UUID required by workspace destroy");

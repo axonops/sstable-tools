@@ -10,6 +10,7 @@ import com.axonops.sstable.worker.api.SandboxRuntimeAdapter;
 import com.axonops.sstable.workspace.WorkspaceFlushResult;
 import com.axonops.sstable.workspace.ManifestFile;
 import com.axonops.sstable.workspace.WorkspaceManifest;
+import com.axonops.sstable.workspace.WorkspaceException;
 import com.axonops.sstable.workspace.WorkspaceRepository;
 import com.axonops.sstable.workspace.WorkspaceVerificationResult;
 import java.io.File;
@@ -202,6 +203,21 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
     private static void validateConfiguration(Path root,
                                               boolean startNativeTransport,
                                               int nativePort) throws IOException {
+        WorkspaceManifest manifest;
+        try {
+            manifest = WorkspaceRepository.open(root).load();
+        } catch (WorkspaceException e) {
+            throw new IllegalStateException("Cannot load workspace output identity", e);
+        }
+        String expectedFormat = manifest.outputIdentity().get("sstable.format");
+        if (expectedFormat == null) {
+            expectedFormat = "big";
+        }
+        String selectedFormat = DatabaseDescriptor.getSelectedSSTableFormat().name();
+        if (!expectedFormat.equals(selectedFormat)) {
+            throw new IllegalStateException("Configured SSTable output format " + selectedFormat
+                    + " does not match workspace output format " + expectedFormat);
+        }
         requireLoopback("listen_address", DatabaseDescriptor.getListenAddress());
         requireLoopback("rpc_address", DatabaseDescriptor.getRpcAddress());
         requireLoopback("broadcast_address", DatabaseDescriptor.getBroadcastAddress());
@@ -366,6 +382,8 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
                 liveDescriptors.add(descriptor);
                 if (deltaDescriptors.contains(descriptor)) {
                     if (!reader.descriptor.version.isLatestVersion()
+                            || !expectedOutputFormat(manifest).equals(
+                            reader.descriptor.getFormat().name())
                             || reader.getSSTableMetadata().repairedAt
                             != ActiveRepairService.UNREPAIRED_SSTABLE) {
                         throw new IllegalStateException("Generated SSTable has invalid format "
@@ -382,6 +400,11 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
                     readers.size(), deltaDescriptors.size(), logicalRows(),
                     new ArrayList<>(formats), new ArrayList<>(deltaDescriptors));
             result.writeAtomically(options.workspaceRoot());
+        }
+
+        private static String expectedOutputFormat(WorkspaceManifest manifest) {
+            String format = manifest.outputIdentity().get("sstable.format");
+            return format == null ? "big" : format;
         }
 
         @Override public boolean isVerified() {

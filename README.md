@@ -45,6 +45,9 @@ selected SSTables must be in the same table directory. Cassandra 3.11, 4.0, and
 4.1 use the next numeric generation. Cassandra 5.0 uses the configured
 sequence or UUID SSTable identifier mode from `cassandra.yaml`.
 
+On Cassandra 5.0, `--output-format bti` selects BTI `da` delta output. The
+default is Big `oa`; BTI is rejected by the 3.11, 4.0, and 4.1 JARs.
+
 The former `workspace ...` commands remain available as an advanced diagnostic
 and recovery interface; they are not the normal workflow.
 
