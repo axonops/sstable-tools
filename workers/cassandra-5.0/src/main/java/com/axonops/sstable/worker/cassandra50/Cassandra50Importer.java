@@ -23,6 +23,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -49,6 +50,7 @@ import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.sstable.format.big.BigFormat;
+import org.apache.cassandra.io.sstable.format.bti.BtiFormat;
 import org.apache.cassandra.io.sstable.metadata.MetadataComponent;
 import org.apache.cassandra.io.sstable.metadata.MetadataType;
 import org.apache.cassandra.io.sstable.metadata.StatsMetadata;
@@ -63,6 +65,8 @@ import org.apache.cassandra.utils.FBUtilities;
 /** Validates immutable source sets, stages copies, and imports them through Cassandra. */
 final class Cassandra50Importer {
     private static final String EARLIEST_ROW_STORAGE_VERSION = "ma";
+    private static final BtiFormat BTI_FORMAT = new BtiFormat(
+            Collections.<String, String>emptyMap());
 
     private Cassandra50Importer() {
     }
@@ -141,17 +145,16 @@ final class Cassandra50Importer {
         List<ValidatedSet> result = new ArrayList<>();
         for (SstableSet set : source.sets()) {
             set.verifyUnchanged();
-            Version compatibleVersion = requireCompatibleVersion(
-                    set.formatVersion(), set.format());
+            Version compatibleVersion = requireCompatibleVersion(set.formatVersion(), set.format());
             Descriptor descriptor = descriptor(set, metadata);
             if (!descriptor.isCompatible()
-                    || !BigFormat.is(descriptor.getFormat())
+                    || !matchesFormat(descriptor.getFormat(), set.format())
                     || !compatibleVersion.toString().equals(descriptor.version.toString())) {
                 throw unsupportedFormat(set.formatVersion(), set.format());
             }
             Set<Component> components = components(set);
             requireComponent(components, SSTableFormat.Components.DATA, set);
-            requireComponent(components, BigFormat.Components.PRIMARY_INDEX, set);
+            requirePrimaryComponents(components, descriptor.getFormat(), set);
             requireComponent(components, SSTableFormat.Components.STATS, set);
             requireComponent(components, SSTableFormat.Components.TOC, set);
             requireComponent(components, SSTableFormat.Components.DIGEST, set);
@@ -181,23 +184,54 @@ final class Cassandra50Importer {
     }
 
     static Version requireCompatibleVersion(String version, String format) {
-        if (!"big".equalsIgnoreCase(format)) {
-            throw unsupportedFormat(version, format);
-        }
+        SSTableFormat<?, ?> sstableFormat = formatFor(version, format);
         final Version candidate;
         try {
-            candidate = BigFormat.getInstance().getVersion(version);
+            candidate = sstableFormat.getVersion(version);
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("Unsupported Cassandra 5.0 SSTable format "
                     + version + "-" + format, e);
         }
         if (candidate == null || !candidate.isCompatible()
-                || version.compareTo(EARLIEST_ROW_STORAGE_VERSION) < 0
-                || version.compareTo(BigFormat.getInstance().getLatestVersion().toString()) > 0
+                || ("big".equalsIgnoreCase(format)
+                && (version.compareTo(EARLIEST_ROW_STORAGE_VERSION) < 0
+                || version.compareTo(BigFormat.getInstance().getLatestVersion().toString()) > 0))
+                || ("bti".equalsIgnoreCase(format)
+                && version.compareTo(BTI_FORMAT.getLatestVersion().toString()) > 0)
                 || !version.equals(candidate.toString())) {
             throw unsupportedFormat(version, format);
         }
         return candidate;
+    }
+
+    private static SSTableFormat<?, ?> formatFor(String version, String format) {
+        if ("big".equalsIgnoreCase(format)) {
+            return BigFormat.getInstance();
+        }
+        if ("bti".equalsIgnoreCase(format)) {
+            return BTI_FORMAT;
+        }
+        throw unsupportedFormat(version, format);
+    }
+
+    private static boolean matchesFormat(SSTableFormat<?, ?> format, String name) {
+        return "big".equalsIgnoreCase(name) && BigFormat.is(format)
+                || "bti".equalsIgnoreCase(name) && BtiFormat.is(format);
+    }
+
+    private static void requirePrimaryComponents(Set<Component> components,
+                                                 SSTableFormat<?, ?> format,
+                                                 SstableSet set) {
+        if (BigFormat.is(format)) {
+            requireComponent(components, BigFormat.Components.PRIMARY_INDEX, set);
+            return;
+        }
+        if (BtiFormat.is(format)) {
+            requireComponent(components, BtiFormat.Components.PARTITION_INDEX, set);
+            requireComponent(components, BtiFormat.Components.ROW_INDEX, set);
+            return;
+        }
+        throw unsupportedFormat(set.formatVersion(), set.format());
     }
 
     private static IllegalArgumentException unsupportedFormat(String version, String format) {
@@ -356,7 +390,7 @@ final class Cassandra50Importer {
     }
 
     private static Component component(SstableSet set, SourceComponent source) {
-        return Component.parse(source.name(), BigFormat.getInstance());
+        return Component.parse(source.name(), formatFor(set.formatVersion(), set.format()));
     }
 
     private static void requireComponent(Set<Component> components,
