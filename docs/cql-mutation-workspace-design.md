@@ -974,7 +974,6 @@ less code and provides the expected CQL behavior.
 - [Apache Cassandra storage engine and SSTable formats](https://cassandra.apache.org/doc/stable/cassandra/architecture/storage-engine.html)
 - [Apache Cassandra cqlsh documentation](https://cassandra.apache.org/doc/stable/cassandra/managing/tools/cqlsh.html)
 - [Apache Cassandra native protocol](https://cassandra.apache.org/doc/latest/cassandra/reference/native-protocol.html)
-- [Apache Cassandra bulk loading and CQLSSTableWriter](https://cassandra.apache.org/doc/latest/cassandra/managing/operating/bulk_loading.html)
 - [Apache Cassandra nodetool import](https://cassandra.apache.org/doc/stable/cassandra/managing/tools/nodetool/import.html)
 - [Cassandra 3.11 BigFormat source](https://github.com/apache/cassandra/blob/cassandra-3.11/src/java/org/apache/cassandra/io/sstable/format/big/BigFormat.java)
 - [Cassandra 4.0 BigFormat source](https://github.com/apache/cassandra/blob/cassandra-4.0/src/java/org/apache/cassandra/io/sstable/format/big/BigFormat.java)

@@ -265,10 +265,7 @@ The `cassandra-3.11-sandbox-it` Maven profile and GitHub Actions job:
 17. import the original `ma` base plus generated latest-format `me` delta into
     a fresh workspace, re-query all logical values, write timestamps, and TTLs,
     and prove they match the pre-export state exactly;
-18. use the installed distribution's stock `sstableloader` to stream that base
-    and delta into the clean gossip/internode-enabled Cassandra fixture, then
-    prove normal native reads return the same values and cell metadata; and
-19. reject the repository's `mb` fixture because its explicit
+18. reject the repository's `mb` fixture because its explicit
    `LocalPartitioner` conflicts with the sandbox partitioner, successfully
    import its `mc` fixture, and verify source component hashes and all
    installation file metadata are unchanged.

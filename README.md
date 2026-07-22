@@ -348,10 +348,7 @@ manifest reconciliation after an interrupted controller transition, runs
 Cassandra's extended verifier, atomically publishes a delta, and drains cleanly
 without retaining the credential file. Finally it imports the original `ma`
 base plus the generated latest-format `me` delta into a fresh workspace and
-proves all values, write timestamps, and TTLs are identical. The distribution's
-stock `sstableloader` then streams the same base and delta into the
-gossip/internode-enabled clean Cassandra fixture, where normal native reads
-prove the same cell metadata again.
+proves all values, write timestamps, and TTLs are identical.
 GitHub Actions is configured to run the same profile against a SHA-512-pinned 3.11.19 archive,
 supplies a SHA-256-pinned PyPy 2.7 runtime required by that release's `cqlsh`
 launcher, and preflights SHA-256-pinned official 3.11.19 Debian and RPM
@@ -362,7 +359,7 @@ with `/etc/cassandra`; the RPM fixture uses `/usr/share/cassandra` with
 Each CI job publishes its executed Surefire/Failsafe suites, exact test counts,
 and failures/errors/skips to both the job log and the GitHub Actions run
 summary. The live Cassandra 3.11 job includes the cqlsh mutation, recovery,
-flush, export, reopen, and clean-node-import integration suite.
+flush, export, and reopen integration suite.
 
 The `stopped-cqlsh-source` matrix additionally starts a stock Cassandra Docker
 image for every supported release line. Its stock `cqlsh` creates a table,
@@ -373,10 +370,7 @@ This proves that each artifact accepts real, version-matched SSTable component
 sets without ever pointing the tool at a live source node. The 4.0, 4.1, and
 5.0 integration jobs extend this stopped-source sequence through workspace
 import, an isolated loopback sandbox, the distribution's stock `cqlsh`
-`INSERT`, `UPDATE`, and `SELECT`, then flush and delta export. The 4.0 and 4.1
-jobs additionally bulk-load the immutable base plus exported delta into a
-fresh matching Cassandra node and verify both rows using that node's stock
-`cqlsh`.
+`INSERT`, `UPDATE`, and `SELECT`, then flush and delta export.
 
 Compatibility remains deliberately conservative until the remaining release
 lines have equivalent installed-package fixtures in CI:
@@ -384,8 +378,8 @@ lines have equivalent installed-package fixtures in CI:
 | Artifact | Tested Cassandra patch | Java runtime | CI-proven workspace path |
 |---|---:|---:|---|
 | `cassandra-3.11` | 3.11.19 | 8 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
-| `cassandra-4.0` | 4.0.17 | 8-11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export, clean-node bulk-load/readback |
-| `cassandra-4.1` | 4.1.3 | 11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export, clean-node bulk-load/readback |
+| `cassandra-4.0` | 4.0.17 | 8-11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
+| `cassandra-4.1` | 4.1.3 | 11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
 | `cassandra-5.0` | 5.0.4 | 17 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
 
 The implemented capability boundary is deliberately narrow: 3.11, 4.0, 4.1,

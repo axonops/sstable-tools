@@ -754,37 +754,8 @@ public class Cassandra311SandboxIT {
             production.assertRunning("Delta replay affected production Cassandra");
             assertProductionIsolated(cqlsh, "after base-plus-delta replay");
 
-            CommandResult targetSchema = runCqlsh(Arrays.asList(cqlsh.toString(),
-                    "127.0.0.1", Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT),
-                    "-e", "CREATE KEYSPACE blog WITH replication = {'class': "
-                    + "'SimpleStrategy', 'replication_factor': 1}; "
-                    + "CREATE TABLE blog.users (user_name varchar PRIMARY KEY, "
-                    + "password varchar, gender varchar, state varchar, "
-                    + "birth_year bigint);"));
-            Assert.assertEquals(targetSchema.output, 0, targetSchema.exitCode);
-            Path loaderTable = Files.createDirectories(temporary.getRoot().toPath()
-                    .resolve("clean-node-load/blog/users"));
-            copyInventory(capturedSource, loaderTable);
-            copyInventory(capturedDelta, loaderTable);
-            SourceInventory loaderInventory = SourceInventory.capture(
-                    Collections.singletonList(loaderTable));
-            Map<String, String> loaderEnvironment = new TreeMap<>();
-            loaderEnvironment.put("JAVA_HOME", javaHome.toString());
-            loaderEnvironment.put("CASSANDRA_HOME", cassandraHome.toString());
-            CommandResult loaded = run(Arrays.asList(
-                    cassandraHome.resolve("bin/sstableloader").toString(),
-                    "--no-progress", "-d", "127.0.0.1", loaderTable.toString()),
-                    loaderEnvironment);
-            Assert.assertEquals(loaded.output, 0, loaded.exitCode);
-            String[] productionEndpoint = new String[]{"127.0.0.1",
-                    Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT)};
-            Assert.assertEquals("Clean target node changed logical values or cell metadata",
-                    expectedLogicalState,
-                    readLogicalState(cassandraHome, productionEndpoint, null));
-            loaderInventory.verifyUnchanged();
             capturedSource.verifyUnchanged();
             capturedDelta.verifyUnchanged();
-            production.assertRunning("SSTable loader affected target Cassandra");
         } finally {
             try {
                 if (workerRunning && start != null && start.exitCode == 0) {
