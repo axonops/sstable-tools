@@ -51,7 +51,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker run -d --name "$container" -p 127.0.0.1::9042 \
+docker run -d --name "$container" -p 127.0.0.1::9042 -p 127.0.0.1::7000 \
   -e MAX_HEAP_SIZE=512M -e HEAP_NEWSIZE=128M "$image" >/dev/null
 
 ready=false
@@ -71,12 +71,15 @@ fi
 
 target_port="$(docker port "$container" 9042/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
 [[ -n "$target_port" ]] || { printf 'Could not determine clean node native port\n' >&2; exit 1; }
+storage_port="$(docker port "$container" 7000/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+[[ -n "$storage_port" ]] || { printf 'Could not determine clean node storage port\n' >&2; exit 1; }
 
 docker exec "$container" cqlsh 127.0.0.1 9042 -e \
   "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}; CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);"
 
 JAVA_HOME="$java_home" CASSANDRA_HOME="$cassandra_home" \
   "$cassandra_home/bin/sstableloader" --no-progress -d 127.0.0.1 -p "$target_port" \
+  -sp "$storage_port" \
   "$load_dir" | tee "$output_root/clean-node-sstableloader.log"
 
 verify_row() {
