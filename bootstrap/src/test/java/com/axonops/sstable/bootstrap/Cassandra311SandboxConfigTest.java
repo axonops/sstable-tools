@@ -35,6 +35,7 @@ public class Cassandra311SandboxConfigTest {
         }
         String yaml = new String(Files.readAllBytes(root.resolve(
                 Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("storage_compatibility_mode: NONE\n"));
         Assert.assertTrue(yaml.contains("sstable:\n  selected_format: bti\n"));
     }
     private static final String TOKEN =

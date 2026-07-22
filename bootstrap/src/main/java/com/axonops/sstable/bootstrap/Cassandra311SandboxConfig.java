@@ -156,6 +156,7 @@ final class Cassandra311SandboxConfig {
                 ? "commitlog_sync_batch_window_in_ms: 2\n" : "")
                 + "commitlog_total_space_in_mb: 64\n"
                 + "commitlog_segment_size_in_mb: 16\n"
+                + ("5.0".equals(releaseLine) ? "storage_compatibility_mode: NONE\n" : "")
                 + ("5.0".equals(releaseLine) ? "sstable:\n  selected_format: "
                 + sstableFormat + "\n" : "")
                 + "data_file_directories:\n"

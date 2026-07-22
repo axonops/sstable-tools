@@ -47,6 +47,11 @@ registers both formats, so selecting BTI does not prevent reading compatible
 Big input. The runtime verifies `DatabaseDescriptor.getSelectedSSTableFormat()`
 matches the manifest before importing or starting native transport.
 
+The private Cassandra 5.0 sandbox also sets
+`storage_compatibility_mode: NONE`. Cassandra 5.0 defaults to `CASSANDRA_4`,
+which rejects the BTI writer. This setting applies only to the tool's isolated
+workspace, never the stopped source node or its configuration.
+
 Import remains format-preserving for staged source descriptors. Flush output
 is validated against the selected format: Big must be `oa-big`; BTI must be
 `da-bti`, with `Data.db`, `Partitions.db`, `Rows.db`, `Statistics.db`,
