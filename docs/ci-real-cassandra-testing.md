@@ -46,9 +46,11 @@ timestamp greater than the source SSTable maximum.
 
 The 4.0.17 and 4.1.3 jobs then run `scripts/ci-clean-node-import`. The script
 combines the immutable stopped-source components with the exported delta,
-bulk-loads them using the matching distribution's `sstableloader` into a fresh
-matching Docker node, and verifies the source and sandbox rows with that
-node's stock `cqlsh`. Post-export clean-node readback remains pending for 5.0.
+mounts them read-only into a fresh matching Docker node, and runs that node's
+own `sstableloader` inside its private network namespace. The storage port is
+never exposed on the CI host. The job verifies the source and sandbox rows with
+that node's stock `cqlsh`. Post-export clean-node readback remains pending for
+5.0.
 
 The 4.0.17 and 4.1.3 jobs also run `scripts/ci-legacy-ma-cqlsh`. It copies the
 immutable checked-in Cassandra 3.11 Big `ma` user fixture, reads it with the
