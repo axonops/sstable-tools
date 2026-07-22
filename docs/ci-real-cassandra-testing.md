@@ -42,8 +42,13 @@ sequence and then start guarded isolated sandboxes. They invoke the installed
 distribution's stock `cqlsh` for `INSERT`, `UPDATE`, and `SELECT`, flush,
 export the delta, and stop. The sandbox is loopback-only, disables gossip and
 JMX, and only permits writes to the imported workspace table with an explicit
-timestamp greater than the source SSTable maximum. Post-export reimport/readback
-remains pending for all release lines.
+timestamp greater than the source SSTable maximum.
+
+The 4.0.17 and 4.1.3 jobs then run `scripts/ci-clean-node-import`. The script
+combines the immutable stopped-source components with the exported delta,
+bulk-loads them using the matching distribution's `sstableloader` into a fresh
+matching Docker node, and verifies the source and sandbox rows with that
+node's stock `cqlsh`. Post-export clean-node readback remains pending for 5.0.
 
 The 4.0.17 and 4.1.3 jobs also run `scripts/ci-legacy-ma-cqlsh`. It copies the
 immutable checked-in Cassandra 3.11 Big `ma` user fixture, reads it with the

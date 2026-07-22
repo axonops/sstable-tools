@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --image <image> --cassandra-home <path> --java-home <path> --output-root <path>\n' "$0" >&2
+  exit 64
+}
+
+image=''
+cassandra_home=''
+java_home=''
+output_root=''
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image) image=${2:-}; shift 2 ;;
+    --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
+    --java-home) java_home=${2:-}; shift 2 ;;
+    --output-root) output_root=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$image" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
+[[ -x "$cassandra_home/bin/sstableloader" && -x "$java_home/bin/java" ]] || {
+  printf 'Invalid Cassandra home or Java home\n' >&2
+  exit 1
+}
+[[ "$output_root" != / ]] || {
+  printf 'The output root must not be the filesystem root\n' >&2
+  exit 64
+}
+
+source_dir="$output_root/source"
+export_dir="$output_root/export/sstables"
+load_dir="$output_root/clean-node-load/ci_source/events"
+[[ -d "$source_dir" && -d "$export_dir" ]] || {
+  printf 'Base source or verified delta export is missing below %s\n' "$output_root" >&2
+  exit 1
+}
+
+rm -rf "$load_dir"
+mkdir -p "$load_dir"
+cp "$source_dir"/* "$load_dir/"
+cp "$export_dir"/* "$load_dir/"
+
+container="sstable-tools-clean-import-${GITHUB_RUN_ID:-local}-${RANDOM}"
+container=${container:0:63}
+cleanup() {
+  docker rm -f "$container" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker run -d --name "$container" -p 127.0.0.1::9042 \
+  -e MAX_HEAP_SIZE=512M -e HEAP_NEWSIZE=128M "$image" >/dev/null
+
+ready=false
+for attempt in $(seq 1 90); do
+  if docker exec "$container" cqlsh 127.0.0.1 9042 -e \
+      'SELECT release_version FROM system.local;' >"$output_root/clean-node-ready.log" 2>&1; then
+    ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$ready" != true ]]; then
+  docker logs "$container" >"$output_root/clean-node.log" 2>&1 || true
+  printf 'Clean Cassandra target did not become ready\n' >&2
+  exit 1
+fi
+
+target_port="$(docker port "$container" 9042/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+[[ -n "$target_port" ]] || { printf 'Could not determine clean node native port\n' >&2; exit 1; }
+
+docker exec "$container" cqlsh 127.0.0.1 9042 -e \
+  "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}; CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);"
+
+JAVA_HOME="$java_home" CASSANDRA_HOME="$cassandra_home" \
+  "$cassandra_home/bin/sstableloader" --no-progress -d 127.0.0.1 -p "$target_port" \
+  "$load_dir" | tee "$output_root/clean-node-sstableloader.log"
+
+verify_row() {
+  local event_id=$1
+  local rows
+  rows="$(docker exec "$container" cqlsh 127.0.0.1 9042 -e \
+    "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = '${event_id}';")"
+  printf '%s\n' "$rows" >>"$output_root/clean-node-select.log"
+  [[ "$rows" == *"$event_id"* && "$rows" == *updated* && "$rows" == *ready* ]] || {
+    printf 'Clean node does not expose the expected state for %s\n' "$event_id" >&2
+    exit 1
+  }
+}
+
+: >"$output_root/clean-node-select.log"
+verify_row source-row
+verify_row sandbox-row
+
+printf 'Verified base plus delta import into a clean Cassandra node.\n'

@@ -373,7 +373,10 @@ This proves that each artifact accepts real, version-matched SSTable component
 sets without ever pointing the tool at a live source node. The 4.0, 4.1, and
 5.0 integration jobs extend this stopped-source sequence through workspace
 import, an isolated loopback sandbox, the distribution's stock `cqlsh`
-`INSERT`, `UPDATE`, and `SELECT`, then flush and delta export.
+`INSERT`, `UPDATE`, and `SELECT`, then flush and delta export. The 4.0 and 4.1
+jobs additionally bulk-load the immutable base plus exported delta into a
+fresh matching Cassandra node and verify both rows using that node's stock
+`cqlsh`.
 
 Compatibility remains deliberately conservative until the remaining release
 lines have equivalent installed-package fixtures in CI:
@@ -381,8 +384,8 @@ lines have equivalent installed-package fixtures in CI:
 | Artifact | Tested Cassandra patch | Java runtime | CI-proven workspace path |
 |---|---:|---:|---|
 | `cassandra-3.11` | 3.11.19 | 8 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
-| `cassandra-4.0` | 4.0.17 | 8-11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
-| `cassandra-4.1` | 4.1.3 | 11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
+| `cassandra-4.0` | 4.0.17 | 8-11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export, clean-node bulk-load/readback |
+| `cassandra-4.1` | 4.1.3 | 11 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export, clean-node bulk-load/readback |
 | `cassandra-5.0` | 5.0.4 | 17 | Import, stock `cqlsh` `INSERT`/`UPDATE`/`SELECT`, flush, export |
 
 The implemented capability boundary is deliberately narrow: 3.11, 4.0, 4.1,

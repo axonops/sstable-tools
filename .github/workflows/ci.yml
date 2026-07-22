@@ -319,6 +319,14 @@ jobs:
           java -jar "$TOOL_JAR" workspace stop "$WORKSPACE" \
             | tee "${{ runner.temp }}/cassandra-40-import/workspace-stop.log"
 
+      - name: Import Cassandra 4.0 base plus delta into a clean node
+        run: >-
+          scripts/ci-clean-node-import
+          --image cassandra:4.0.17
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-40-import"
+
       - name: Exercise direct Cassandra 4.0 cqlsh workflow
         run: >-
           scripts/ci-direct-cqlsh
@@ -418,6 +426,14 @@ jobs:
             | tee "${{ runner.temp }}/cassandra-41-import/workspace-export.log"
           java -jar "$TOOL_JAR" workspace stop "$WORKSPACE" \
             | tee "${{ runner.temp }}/cassandra-41-import/workspace-stop.log"
+
+      - name: Import Cassandra 4.1 base plus delta into a clean node
+        run: >-
+          scripts/ci-clean-node-import
+          --image cassandra:4.1.3
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-41-import"
 
       - name: Exercise direct Cassandra 4.1 cqlsh workflow
         run: >-
