@@ -174,9 +174,10 @@ public class WorkspaceManifestTest {
                 Collections.singletonMap("sstable.format", "bti"));
         WorkspaceManifest withRuntime = manifest.withRuntimeIdentity(
                 Collections.singletonMap("runtime.release", "5.0"),
-                Collections.singletonMap("sstable.format", "bti"));
+                outputIdentity("bti"));
 
         Assert.assertEquals("bti", withRuntime.outputIdentity().get("sstable.format"));
+        Assert.assertEquals("refresh-v2", withRuntime.outputIdentity().get("import.contract"));
         try {
             withRuntime.withOutputIdentity(Collections.singletonMap("sstable.format", "big"));
             Assert.fail("Expected output format change to be rejected");
@@ -212,6 +213,13 @@ public class WorkspaceManifestTest {
         char[] hash = new char[64];
         Arrays.fill(hash, value);
         return new String(hash);
+    }
+
+    private static Map<String, String> outputIdentity(String format) {
+        Map<String, String> identity = new LinkedHashMap<>();
+        identity.put("sstable.format", format);
+        identity.put("import.contract", "refresh-v2");
+        return identity;
     }
 
     private static void assertManifestFileFailure(String path, String hash) throws Exception {

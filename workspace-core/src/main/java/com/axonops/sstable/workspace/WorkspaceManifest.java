@@ -162,9 +162,6 @@ public final class WorkspaceManifest {
         if (!runtimeIdentity.isEmpty() && !runtimeIdentity.equals(nextRuntime)) {
             throw new WorkspaceException("Workspace runtime identity cannot change");
         }
-        if (!outputIdentity.isEmpty() && !outputIdentity.equals(nextOutput)) {
-            throw new WorkspaceException("Workspace output identity cannot change");
-        }
         return new WorkspaceManifest(formatVersion, workspaceId, state, lastStableState,
                 failureMessage, createdAt, Instant.now(), sourceInventory, schemaIdentity,
                 nextRuntime, nextOutput, baselineInventory, exports);
