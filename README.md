@@ -265,6 +265,11 @@ provided/packaged boundary and the build checks that enforce it. GitHub Actions
 runs the complete reactor on Java 17 and tests each adapter on its declared Java
 runtime.
 
+The CI release bundle contains the four thin JARs, SHA-256 checksums, a
+compatibility manifest, SPDX SBOM, and third-party notices. See the
+[Cassandra node deployment guide](docs/node-deployment.md) for installation,
+preflight, operational storage, and rollback guidance.
+
 ### Runtime discovery and preflight
 
 Each thin JAR can inspect a Cassandra installation without loading Cassandra
