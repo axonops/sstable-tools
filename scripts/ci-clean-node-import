@@ -41,8 +41,8 @@ load_dir="$output_root/clean-node-load/ci_source/events"
 
 rm -rf "$load_dir"
 mkdir -p "$load_dir"
-cp "$source_dir"/* "$load_dir/"
-cp "$export_dir"/* "$load_dir/"
+find "$source_dir" -mindepth 1 -maxdepth 1 -type f -exec cp {} "$load_dir/" \;
+find "$export_dir" -mindepth 1 -maxdepth 1 -type f -exec cp {} "$load_dir/" \;
 
 container="sstable-tools-clean-import-${GITHUB_RUN_ID:-local}-${RANDOM}"
 container=${container:0:63}
