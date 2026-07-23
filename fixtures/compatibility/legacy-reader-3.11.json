@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "fixtureRoot": "legacy-reader-3.11/src/test/resources",
+  "componentChecksumFile": "fixtures/compatibility/legacy-reader-3.11-components.sha256",
+  "aggregateChecksumAlgorithm": "sha256 of sorted 'sha256sum <descriptor>-*' output",
+  "fixtures": [
+    {
+      "id": "legacy-ma-1-composites",
+      "descriptor": "ma-1-big",
+      "format": "big",
+      "formatVersion": "ma",
+      "producer": "unrecorded historical fixture",
+      "provenanceStatus": "incomplete",
+      "contractStatus": "uncovered",
+      "aggregateSha256": "6daaf124554b42a4cac6ab85e4ce035641be4778144f97e067c67a2749a9a001"
+    },
+    {
+      "id": "legacy-ma-2-users",
+      "descriptor": "ma-2-big",
+      "format": "big",
+      "formatVersion": "ma",
+      "producer": "unrecorded historical fixture",
+      "provenanceStatus": "incomplete",
+      "contractStatus": "direct-cqlsh-positive",
+      "schema": "blog.users(user_name varchar primary key, password varchar, gender varchar, state varchar, birth_year bigint)",
+      "expectedRow": "frodo/pass@/male/CA/1985",
+      "aggregateSha256": "dd3452bb6dbb74d05054663eb299ca4fb043fd3a4e8dc4a7b7aaf3a65d3c93c8"
+    },
+    {
+      "id": "legacy-ma-3-wide",
+      "descriptor": "ma-3-big",
+      "format": "big",
+      "formatVersion": "ma",
+      "producer": "unrecorded historical fixture",
+      "provenanceStatus": "incomplete",
+      "contractStatus": "uncovered",
+      "aggregateSha256": "71c765580f907fd2d60ea110b835b19cb4added16196e7206f051d6703d6799c"
+    },
+    {
+      "id": "legacy-ma-4-collections",
+      "descriptor": "ma-4-big",
+      "format": "big",
+      "formatVersion": "ma",
+      "producer": "unrecorded historical fixture",
+      "provenanceStatus": "incomplete",
+      "contractStatus": "uncovered",
+      "aggregateSha256": "2f583f6b8366eeb25c65d51752bc3a51f0eba76bd4f58d1fd9a9cf4597cd4de2"
+    },
+    {
+      "id": "legacy-mb-1-local-partitioner",
+      "descriptor": "mb-1-big",
+      "format": "big",
+      "formatVersion": "mb",
+      "producer": "unrecorded historical fixture",
+      "provenanceStatus": "incomplete",
+      "contractStatus": "partitioner-rejection",
+      "expectedFailure": "partitioner does not match",
+      "aggregateSha256": "da0c7b31e87b231b56bc8d597d87ada44ee2e142eac56ffa75530881606ae9e3"
+    },
+    {
+      "id": "legacy-mc-1-temperature",
+      "descriptor": "mc-1-big",
+      "format": "big",
+      "formatVersion": "mc",
+      "producer": "unrecorded historical fixture",
+      "provenanceStatus": "incomplete",
+      "contractStatus": "direct-cqlsh-positive",
+      "schema": "fixture.temperature_by_day(weatherstation_id text, date text, event_time timestamp, temperature float)",
+      "expectedLogicalRows": 4,
+      "aggregateSha256": "ede3c2ad05a3e82b8d996a24b7f33f322f8a95cf6709c0c2a97d9999259717bd"
+    }
+  ]
+}
