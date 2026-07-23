@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti] [--input-format big|bti] [--input-version <version>] [--timestamp-base <micros>]\n' "$0" >&2
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti] [--input-format big|bti] [--input-version <version>] [--output-version <version>] [--timestamp-base <micros>]\n' "$0" >&2
   exit 64
 }
 
@@ -13,6 +13,7 @@ output_root=''
 output_format='big'
 input_format=''
 input_version=''
+output_version=''
 timestamp_base='2000000000000000'
 
 while [[ $# -gt 0 ]]; do
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
     --output-format) output_format=${2:-}; shift 2 ;;
     --input-format) input_format=${2:-}; shift 2 ;;
     --input-version) input_version=${2:-}; shift 2 ;;
+    --output-version) output_version=${2:-}; shift 2 ;;
     --timestamp-base) timestamp_base=${2:-}; shift 2 ;;
     *) usage ;;
   esac
@@ -33,6 +35,7 @@ done
 [[ "$output_format" == 'big' || "$output_format" == 'bti' ]] || usage
 [[ -z "$input_format" || "$input_format" == 'big' || "$input_format" == 'bti' ]] || usage
 [[ -z "$input_version" || "$input_version" =~ ^[a-z][a-z]$ ]] || usage
+[[ -z "$output_version" || "$output_version" =~ ^[a-z][a-z]$ ]] || usage
 [[ "$timestamp_base" =~ ^[0-9]+$ ]] || usage
 source_dir="$output_root/source"
 schema="$output_root/schema.cql"
@@ -47,6 +50,10 @@ if [[ -n "$input_version" ]]; then
   source_pattern="${input_version}-*-${input_format:-*}-Data.db"
 elif [[ -n "$input_format" ]]; then
   source_pattern="*-${input_format}-Data.db"
+fi
+output_source_pattern="$source_pattern"
+if [[ -n "$output_version" ]]; then
+  output_source_pattern="${output_version}-*-${output_format}-Data.db"
 fi
 mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
 [[ ${#initial_sources[@]} -gt 0 ]] || { printf 'No source Data.db files found\n' >&2; exit 1; }
@@ -79,7 +86,7 @@ fi
   sha256sum --check "$output_root/source-components.sha256"
 )
 
-mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 source_args=()
 for source in "${all_sources[@]}"; do
   source_args+=(--sstables "$source")
@@ -96,7 +103,7 @@ grep -q 'published.sstables=' "$output_root/direct-cqlsh-update.log"
   cd "$source_dir"
   sha256sum --check "$output_root/source-components.sha256"
 )
-mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 source_args=()
 for source in "${all_sources[@]}"; do
   source_args+=(--sstables "$source")

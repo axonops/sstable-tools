@@ -535,6 +535,7 @@ jobs:
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --output-format big
           --input-version nb
+          --output-version oa
           --timestamp-base 2000000000000000
 
       - name: Exercise direct Cassandra 5.0 BTI cqlsh workflow
@@ -546,6 +547,7 @@ jobs:
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --output-format bti
           --input-version oa
+          --output-version da
           --timestamp-base 2000000000000010
 
       - name: Exercise Cassandra 5.0 BTI-only direct cqlsh workflow
@@ -558,6 +560,7 @@ jobs:
           --input-format bti
           --input-version da
           --output-format bti
+          --output-version da
           --timestamp-base 2000000000000020
 
       - name: Upload import diagnostics
