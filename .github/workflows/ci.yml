@@ -526,6 +526,7 @@ jobs:
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --output-format big
+          --timestamp-base 2000000000000000
 
       - name: Exercise direct Cassandra 5.0 BTI cqlsh workflow
         run: >-
@@ -535,6 +536,7 @@ jobs:
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --output-format bti
+          --timestamp-base 2000000000000010
 
       - name: Exercise Cassandra 5.0 BTI-only direct cqlsh workflow
         run: >-
@@ -545,6 +547,7 @@ jobs:
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --input-format bti
           --output-format bti
+          --timestamp-base 2000000000000020
 
       - name: Upload import diagnostics
         if: failure()
