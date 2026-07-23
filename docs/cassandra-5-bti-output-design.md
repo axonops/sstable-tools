@@ -63,7 +63,8 @@ Invalid output formats, a request on a non-5.0 adapter, a mismatch between
 the manifest and generated YAML, or a generated delta in another format fail
 before publication. A Cassandra storage-compatibility mode that prevents the
 selected writer is rejected during runtime preflight, before import changes
-the workspace.
+the workspace. Cassandra 5.0 vector types are rejected explicitly because
+they do not yet have direct-cqlsh round-trip coverage.
 
 ## Test plan
 

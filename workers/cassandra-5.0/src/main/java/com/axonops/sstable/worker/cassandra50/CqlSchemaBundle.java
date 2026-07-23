@@ -11,6 +11,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.VectorType;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.statements.schema.AlterSchemaStatement;
@@ -93,10 +95,25 @@ final class CqlSchemaBundle {
                     + keyspace);
         }
         QueryProcessor.executeInternal(idempotentTable);
-        if (Schema.instance.getTableMetadata(keyspace, rawTable.table()) == null) {
+        org.apache.cassandra.schema.TableMetadata metadata = Schema.instance
+                .getTableMetadata(keyspace, rawTable.table());
+        if (metadata == null) {
             throw new IllegalStateException("Cassandra did not install the declared table");
         }
+        for (org.apache.cassandra.schema.ColumnMetadata column : metadata.columns()) {
+            requireSupportedType(column.type, column.name.toString());
+        }
         return new CqlSchemaBundle(keyspace, rawTable.table());
+    }
+
+    static void requireSupportedType(AbstractType<?> type, String column) {
+        if (type instanceof VectorType) {
+            throw new IllegalArgumentException("Cassandra 5.0 vector type is not supported for "
+                    + "column " + column);
+        }
+        for (AbstractType<?> nested : type.subTypes()) {
+            requireSupportedType(nested, column);
+        }
     }
 
     private static String addIfNotExists(String statement, String object) {

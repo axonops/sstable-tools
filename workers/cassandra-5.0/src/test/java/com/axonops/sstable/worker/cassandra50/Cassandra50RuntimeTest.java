@@ -1,6 +1,8 @@
 package com.axonops.sstable.worker.cassandra50;
 
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.db.marshal.FloatType;
+import org.apache.cassandra.db.marshal.VectorType;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -35,6 +37,18 @@ public class Cassandra50RuntimeTest {
         assertUnsupported("ob", "big");
         assertUnsupported("db", "bti");
         assertUnsupported("da", "unknown");
+    }
+
+    @Test
+    public void rejectsVectorTypesWithAnExplicitError() {
+        try {
+            CqlSchemaBundle.requireSupportedType(VectorType.getInstance(FloatType.instance, 3),
+                    "embedding");
+            Assert.fail("Expected vector type rejection");
+        } catch (IllegalArgumentException expected) {
+            Assert.assertTrue(expected.getMessage().contains("vector type is not supported"));
+            Assert.assertTrue(expected.getMessage().contains("embedding"));
+        }
     }
 
     private static void assertUnsupported(String version, String format) {
