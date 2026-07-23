@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+report() {
+  cat <<'EOF'
+## Direct CQLSH Compatibility Report
+
+| Cassandra line | Pinned patch | Input and output evidence |
+|---|---:|---|
+| 3.11 | 3.11.19 | Stopped Big source; stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, direct reopen |
+| 4.0 | 4.0.17 | Stopped Big source; stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, direct reopen |
+| 4.1 | 4.1.3 | Stopped Big source; stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, direct reopen |
+| 5.0 | 5.0.4 | Big nb to oa, Big oa to BTI da, and BTI da direct reopen through stock cqlsh |
+
+The workflow uses explicitly selected stopped SSTables. It does not use
+sstableloader, clean-node loading, streaming, bulk loading, or cluster import.
+EOF
+}
+
+report
+
+for result in "$@"; do
+  if [[ "$result" != success ]]; then
+    printf 'Required direct-workflow job result was %s\n' "$result" >&2
+    exit 1
+  fi
+done

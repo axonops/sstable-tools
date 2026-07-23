@@ -571,3 +571,32 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           path: ${{ runner.temp }}/cassandra-50-import
+
+  compatibility-report:
+    name: Direct cqlsh compatibility report
+    if: ${{ always() }}
+    needs:
+      - verify
+      - adapter-runtime
+      - stopped-cqlsh-source
+      - cassandra-311-sandbox
+      - cassandra-40-import
+      - cassandra-41-import
+      - cassandra-50-import
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Publish compatibility report
+        run: |
+          set -o pipefail
+          scripts/ci-compatibility-report \
+            "${{ needs.verify.result }}" \
+            "${{ needs.adapter-runtime.result }}" \
+            "${{ needs.stopped-cqlsh-source.result }}" \
+            "${{ needs.cassandra-311-sandbox.result }}" \
+            "${{ needs.cassandra-40-import.result }}" \
+            "${{ needs.cassandra-41-import.result }}" \
+            "${{ needs.cassandra-50-import.result }}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
