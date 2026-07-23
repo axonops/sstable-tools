@@ -29,6 +29,14 @@ public class CqlSchemaBundleTest {
         assertInvalid("/* unterminated");
     }
 
+    @Test
+    public void disablesAutomaticCompactionForTheIsolatedTableSchema() {
+        Assert.assertEquals("ALTER TABLE blog.users WITH compaction = "
+                        + "{'class': 'org.apache.cassandra.db.compaction."
+                        + "SizeTieredCompactionStrategy', 'enabled': 'false'}",
+                CqlSchemaBundle.disableAutomaticCompactionStatement("blog", "users"));
+    }
+
     private static void assertInvalid(String cql) {
         try {
             CqlSchemaBundle.split(cql);

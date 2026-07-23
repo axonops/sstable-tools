@@ -96,7 +96,16 @@ final class CqlSchemaBundle {
         if (Schema.instance.getCFMetaData(keyspace, createTable.columnFamily()) == null) {
             throw new IllegalStateException("Cassandra did not install the declared table");
         }
+        QueryProcessor.executeInternal(disableAutomaticCompactionStatement(keyspace,
+                createTable.columnFamily()));
         return new CqlSchemaBundle(keyspace, createTable.columnFamily());
+    }
+
+    static String disableAutomaticCompactionStatement(String keyspace, String table) {
+        return "ALTER TABLE " + quoteIdentifier(keyspace) + "." + quoteIdentifier(table)
+                + " WITH compaction = {'class': "
+                + "'org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy', "
+                + "'enabled': 'false'}";
     }
 
     private static String addIfNotExists(String statement, String object) {
