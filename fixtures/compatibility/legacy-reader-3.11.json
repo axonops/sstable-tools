@@ -64,7 +64,7 @@
       "formatVersion": "mc",
       "producer": "unrecorded historical fixture",
       "provenanceStatus": "incomplete",
-      "contractStatus": "sandbox-cqlsh-positive",
+      "contractStatus": "direct-cqlsh-positive",
       "schema": "fixture.temperature_by_day(weatherstation_id text, date text, event_time timestamp, temperature float)",
       "expectedLogicalRows": 4,
       "aggregateSha256": "ede3c2ad05a3e82b8d996a24b7f33f322f8a95cf6709c0c2a97d9999259717bd"
