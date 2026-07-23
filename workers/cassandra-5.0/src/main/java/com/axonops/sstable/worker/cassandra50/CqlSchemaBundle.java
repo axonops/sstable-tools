@@ -103,7 +103,16 @@ final class CqlSchemaBundle {
         for (org.apache.cassandra.schema.ColumnMetadata column : metadata.columns()) {
             requireSupportedType(column.type, column.name.toString());
         }
+        QueryProcessor.executeInternal(disableAutomaticCompactionStatement(keyspace,
+                rawTable.table()));
         return new CqlSchemaBundle(keyspace, rawTable.table());
+    }
+
+    static String disableAutomaticCompactionStatement(String keyspace, String table) {
+        return "ALTER TABLE " + quoteIdentifier(keyspace) + "." + quoteIdentifier(table)
+                + " WITH compaction = {'class': "
+                + "'org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy', "
+                + "'enabled': 'false'}";
     }
 
     static void requireSupportedType(AbstractType<?> type, String column) {

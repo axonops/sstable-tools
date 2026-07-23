@@ -51,6 +51,14 @@ public class Cassandra50RuntimeTest {
         }
     }
 
+    @Test
+    public void disablesAutomaticCompactionForTheIsolatedTableSchema() {
+        Assert.assertEquals("ALTER TABLE ci_source.events WITH compaction = "
+                        + "{'class': 'org.apache.cassandra.db.compaction."
+                        + "SizeTieredCompactionStrategy', 'enabled': 'false'}",
+                CqlSchemaBundle.disableAutomaticCompactionStatement("ci_source", "events"));
+    }
+
     private static void assertUnsupported(String version, String format) {
         try {
             Cassandra50Importer.requireCompatibleVersion(version, format);
