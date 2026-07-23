@@ -4,8 +4,9 @@ Issue #9 uses `fixtures/compatibility/legacy-reader-3.11.json` as the
 machine-readable catalog for checked-in immutable SSTables. Its companion
 checksum inventory covers every component under the referenced fixture root.
 
-The catalog distinguishes evidence from historical data. `ma-2-big` and
-`mc-1-big` have direct workflow coverage. `mb-1-big` is intentionally a
+The catalog distinguishes evidence from historical data. `ma-2-big` has direct
+workflow coverage. `mc-1-big` currently has sandbox coverage and is being
+promoted to the direct workflow. `mb-1-big` is intentionally a
 partitioner-rejection fixture. The remaining checked-in descriptors are not
 compatibility claims until their producer provenance and direct cqlsh contract
 coverage have been recorded.
