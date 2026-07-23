@@ -259,6 +259,13 @@ jobs:
             --cassandra-home "${{ runner.temp }}/apache-cassandra-3.11.19" \
             --java-home "$CASSANDRA_JAVA_HOME" \
             --output-root "$OUTPUT_ROOT" \
+            --fixture ma-wide \
+            --output-version me
+          scripts/ci-legacy-ma-cqlsh \
+            --tool-jar "$TOOL_JAR" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-3.11.19" \
+            --java-home "$CASSANDRA_JAVA_HOME" \
+            --output-root "$OUTPUT_ROOT" \
             --fixture mc-temperature \
             --output-version me
 
