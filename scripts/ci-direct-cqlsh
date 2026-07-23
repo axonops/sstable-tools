@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti]\n' "$0" >&2
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti] [--input-format big|bti]\n' "$0" >&2
   exit 64
 }
 
@@ -11,6 +11,7 @@ cassandra_home=''
 java_home=''
 output_root=''
 output_format='big'
+input_format=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -19,12 +20,14 @@ while [[ $# -gt 0 ]]; do
     --java-home) java_home=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
     --output-format) output_format=${2:-}; shift 2 ;;
+    --input-format) input_format=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
 
 [[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
 [[ "$output_format" == 'big' || "$output_format" == 'bti' ]] || usage
+[[ -z "$input_format" || "$input_format" == 'big' || "$input_format" == 'bti' ]] || usage
 source_dir="$output_root/source"
 schema="$output_root/schema.cql"
 tmp_parent="$output_root/private-tmp"
@@ -33,7 +36,11 @@ tmp_parent="$output_root/private-tmp"
   exit 1
 }
 
-mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print | sort)
+source_pattern='*-Data.db'
+if [[ -n "$input_format" ]]; then
+  source_pattern="*-${input_format}-Data.db"
+fi
+mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
 [[ ${#initial_sources[@]} -gt 0 ]] || { printf 'No source Data.db files found\n' >&2; exit 1; }
 initial_tocs=$(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l)
 
@@ -64,7 +71,7 @@ fi
   sha256sum --check "$output_root/source-components.sha256"
 )
 
-mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print | sort)
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
 source_args=()
 for source in "${all_sources[@]}"; do
   source_args+=(--sstables "$source")
@@ -81,7 +88,7 @@ grep -q 'published.sstables=' "$output_root/direct-cqlsh-update.log"
   cd "$source_dir"
   sha256sum --check "$output_root/source-components.sha256"
 )
-mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print | sort)
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
 source_args=()
 for source in "${all_sources[@]}"; do
   source_args+=(--sstables "$source")

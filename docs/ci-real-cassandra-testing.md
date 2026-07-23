@@ -51,3 +51,8 @@ interface, verifies the original component hashes, and reopens the combined
 `ma` plus published `nb` delta set for a final `SELECT`. This separates tested
 older-format migration behavior from the current 3.11.19 producer format
 (`me`).
+
+The Cassandra 5.0.4 job asserts that its stopped stock source is Big `oa`,
+then uses direct `cqlsh` with `--output-format bti` to publish BTI `da` output.
+A second direct workflow selects only the published BTI components, performs
+`INSERT`, `UPDATE`, and `SELECT`, and publishes/reopens BTI output again.

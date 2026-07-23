@@ -482,6 +482,7 @@ jobs:
           scripts/ci-real-cassandra-source
           --image cassandra:5.0.4
           --release 5.0
+          --expect-format oa
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
@@ -525,6 +526,16 @@ jobs:
           --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-50-import"
+          --output-format bti
+
+      - name: Exercise Cassandra 5.0 BTI-only direct cqlsh workflow
+        run: >-
+          scripts/ci-direct-cqlsh
+          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-50-import"
+          --input-format bti
           --output-format bti
 
       - name: Upload import diagnostics
