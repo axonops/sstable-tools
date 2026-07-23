@@ -808,11 +808,15 @@ The same black-box suite runs against all workers:
    restart and disappear on stop or dead-worker recovery;
 5. execute `INSERT` and each supported `UPDATE` shape;
 6. verify read-your-writes before flush;
-7. export delta, reopen base plus delta in a fresh workspace, and verify identical
-   logical results and timestamps;
-8. import the export into a clean node of the declared target release;
+7. flush and publish the generated SSTables next to the selected source set;
+8. reopen the base plus generated SSTables through the direct tool and verify
+   identical logical results and timestamps;
 9. prove every source hash is unchanged;
 10. verify that forbidden statements fail without producing delta files.
+
+The contract deliberately excludes `sstableloader`, clean-node loading,
+streaming, bulk-load, and cluster-import workflows. It never discovers a
+Cassandra data root: each test supplies its exact `--sstables` set.
 
 ### 15.3 Failure tests
 
@@ -830,14 +834,10 @@ the release findings.
 
 ### 15.4 Differential tests
 
-For each target release, build the same logical dataset in two ways:
-
-- normally on a clean Cassandra node;
-- by importing the base fixture and applying mutations through a workspace.
-
-Compare logical rows, cell timestamps, TTLs, tombstones, and a subsequent
-compaction result. Component bytes are not expected to match because generation,
-flush grouping, and metadata can legitimately differ.
+For each target release, compare the base fixture with a direct reopen of that
+base plus its generated sibling SSTables. Compare logical rows, cell timestamps,
+TTLs, and tombstones. Component bytes are not expected to match because
+generation, flush grouping, and metadata can legitimately differ.
 
 ## 16. Delivery plan
 
