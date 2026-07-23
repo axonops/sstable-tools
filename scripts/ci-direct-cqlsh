@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti] [--input-format big|bti] [--timestamp-base <micros>]\n' "$0" >&2
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti] [--input-format big|bti] [--input-version <version>] [--timestamp-base <micros>]\n' "$0" >&2
   exit 64
 }
 
@@ -12,6 +12,7 @@ java_home=''
 output_root=''
 output_format='big'
 input_format=''
+input_version=''
 timestamp_base='2000000000000000'
 
 while [[ $# -gt 0 ]]; do
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     --output-root) output_root=${2:-}; shift 2 ;;
     --output-format) output_format=${2:-}; shift 2 ;;
     --input-format) input_format=${2:-}; shift 2 ;;
+    --input-version) input_version=${2:-}; shift 2 ;;
     --timestamp-base) timestamp_base=${2:-}; shift 2 ;;
     *) usage ;;
   esac
@@ -30,6 +32,7 @@ done
 [[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
 [[ "$output_format" == 'big' || "$output_format" == 'bti' ]] || usage
 [[ -z "$input_format" || "$input_format" == 'big' || "$input_format" == 'bti' ]] || usage
+[[ -z "$input_version" || "$input_version" =~ ^[a-z][a-z]$ ]] || usage
 [[ "$timestamp_base" =~ ^[0-9]+$ ]] || usage
 source_dir="$output_root/source"
 schema="$output_root/schema.cql"
@@ -40,7 +43,9 @@ tmp_parent="$output_root/private-tmp"
 }
 
 source_pattern='*-Data.db'
-if [[ -n "$input_format" ]]; then
+if [[ -n "$input_version" ]]; then
+  source_pattern="${input_version}-*-${input_format:-*}-Data.db"
+elif [[ -n "$input_format" ]]; then
   source_pattern="*-${input_format}-Data.db"
 fi
 mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)

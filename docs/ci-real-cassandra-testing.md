@@ -53,7 +53,8 @@ older-format migration behavior from the current 3.11.19 producer format
 (`me`).
 
 The Cassandra 5.0.4 job starts from the release's default stopped Big `nb`
-source. Direct `cqlsh` first publishes Big `oa`, then publishes BTI `da` with
-`--output-format bti`. A final direct workflow selects only the published BTI
-components, performs `INSERT`, `UPDATE`, and `SELECT`, and publishes/reopens
-BTI output again.
+source. Direct `cqlsh` selects that `nb` set to publish Big `oa`, then selects
+only the `oa` set to publish BTI `da` with `--output-format bti`. A final
+direct workflow selects only the published BTI set, performs `INSERT`,
+`UPDATE`, and `SELECT`, and publishes/reopens BTI output again. Mixed Big/BTI
+source sets remain outside the supported workflow.
