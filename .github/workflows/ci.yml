@@ -580,7 +580,7 @@ jobs:
       - adapter-runtime
       - stopped-cqlsh-source
       - cassandra-311-sandbox
-      - cassandra-40-import
+      - cassandra-40-sandbox
       - cassandra-41-import
       - cassandra-50-import
     runs-on: ubuntu-latest
@@ -596,7 +596,7 @@ jobs:
             "${{ needs.adapter-runtime.result }}" \
             "${{ needs.stopped-cqlsh-source.result }}" \
             "${{ needs.cassandra-311-sandbox.result }}" \
-            "${{ needs.cassandra-40-import.result }}" \
+            "${{ needs.cassandra-40-sandbox.result }}" \
             "${{ needs.cassandra-41-import.result }}" \
             "${{ needs.cassandra-50-import.result }}" \
             | tee -a "$GITHUB_STEP_SUMMARY"
