@@ -179,7 +179,9 @@ jobs:
       - name: Download pinned Cassandra 3.11.19 distribution
         working-directory: ${{ runner.temp }}
         run: |
-          curl -fsSLO https://archive.apache.org/dist/cassandra/3.11.19/apache-cassandra-3.11.19-bin.tar.gz
+          curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+            --connect-timeout 30 --max-time 600 --remote-name \
+            https://archive.apache.org/dist/cassandra/3.11.19/apache-cassandra-3.11.19-bin.tar.gz
           echo '42d7732c2b81c65a960101d1146603d430de341adcdf8d0ffc649753a340cf64dad696050f2ec01faff5f15e726f4f2a459f0b3ac281569b957f7726f51d43e0  apache-cassandra-3.11.19-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-3.11.19-bin.tar.gz
 
@@ -268,7 +270,9 @@ jobs:
       - name: Download pinned Cassandra 4.0.17 distribution
         working-directory: ${{ runner.temp }}
         run: |
-          curl -fsSLO https://archive.apache.org/dist/cassandra/4.0.17/apache-cassandra-4.0.17-bin.tar.gz
+          curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+            --connect-timeout 30 --max-time 600 --remote-name \
+            https://archive.apache.org/dist/cassandra/4.0.17/apache-cassandra-4.0.17-bin.tar.gz
           echo '7f72941dd1c73e30361cc2aad55dabd7005e95f2275c9190645fd0467cac6da67f8602ffbae53fb98367cb67116b4e271b8293381d7d5041267ce2437e8273be  apache-cassandra-4.0.17-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-4.0.17-bin.tar.gz
           python -m pip install --disable-pip-version-check --user \
@@ -368,7 +372,9 @@ jobs:
       - name: Download pinned Cassandra 4.1.3 distribution
         working-directory: ${{ runner.temp }}
         run: |
-          curl -fsSLO https://archive.apache.org/dist/cassandra/4.1.3/apache-cassandra-4.1.3-bin.tar.gz
+          curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+            --connect-timeout 30 --max-time 600 --remote-name \
+            https://archive.apache.org/dist/cassandra/4.1.3/apache-cassandra-4.1.3-bin.tar.gz
           echo '393443a5b9849645362df2f7536e734e1fc6d513aadf440fab8dda3063553394a138805098796d35f9d4d31e2899ecab630a2ec2a44d00d5e63bed549a2e844c  apache-cassandra-4.1.3-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-4.1.3-bin.tar.gz
           python -m pip install --disable-pip-version-check --user \
@@ -468,7 +474,9 @@ jobs:
       - name: Download pinned Cassandra 5.0.4 distribution
         working-directory: ${{ runner.temp }}
         run: |
-          curl -fsSLO https://archive.apache.org/dist/cassandra/5.0.4/apache-cassandra-5.0.4-bin.tar.gz
+          curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+            --connect-timeout 30 --max-time 600 --remote-name \
+            https://archive.apache.org/dist/cassandra/5.0.4/apache-cassandra-5.0.4-bin.tar.gz
           echo '16de8bb78af94dabfd916825f492de7040a7311791bc1d630f14707d88f7132e51ae38dad7ebbaf13d2d154af0bdeefe318d680798b8e247ae4117cbc0e2f6df  apache-cassandra-5.0.4-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-5.0.4-bin.tar.gz
           python -m pip install --disable-pip-version-check --user \
