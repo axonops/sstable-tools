@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path>\n' "$0" >&2
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-version <version>]\n' "$0" >&2
   exit 64
 }
 
@@ -10,6 +10,7 @@ tool_jar=''
 cassandra_home=''
 java_home=''
 output_root=''
+output_version='nb'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -17,11 +18,13 @@ while [[ $# -gt 0 ]]; do
     --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
+    --output-version) output_version=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
 
 [[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
+[[ "$output_version" =~ ^[a-z][a-z]$ ]] || usage
 [[ -f "$tool_jar" && -d "$cassandra_home" && -x "$java_home/bin/java" ]] || {
   printf 'Invalid tool, Cassandra home, or Java home\n' >&2
   exit 1
@@ -72,8 +75,8 @@ run_cql insert "INSERT INTO fixture.users (user_name, password, gender, state, b
 }
 
 run_cql update "UPDATE fixture.users USING TIMESTAMP 2000000000000001 SET password = 'mayor' WHERE user_name = 'samwise';"
-find "$source_dir" -maxdepth 1 -type f -name 'nb-*-big-Data.db' -print -quit | grep -q . || {
-  printf 'Legacy ma mutation did not publish Cassandra 4.x nb SSTables\n' >&2
+find "$source_dir" -maxdepth 1 -type f -name "${output_version}-*-big-Data.db" -print -quit | grep -q . || {
+  printf 'Legacy ma mutation did not publish Cassandra output version %s\n' "$output_version" >&2
   exit 1
 }
 
@@ -92,4 +95,5 @@ grep -q 'published.sstables=none' "$output_root/legacy-ma-select-mutated.log"
   exit 1
 }
 
-printf 'Verified legacy Cassandra 3.11 ma fixture through direct cqlsh mutation and nb publication.\n'
+printf 'Verified legacy Cassandra 3.11 ma fixture through direct cqlsh mutation and %s publication.\n' \
+  "$output_version"
