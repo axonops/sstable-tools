@@ -147,7 +147,11 @@ const crypto = require('crypto');
 const fs = require('fs');
 const [output, releaseLine, producerVersion, image, partitioner, formatVersion, format, sourceDir] = process.argv.slice(2);
 const schema = fs.readFileSync(`${require('path').dirname(output)}/schema.cql`, 'utf8');
-const components = fs.readdirSync(sourceDir).sort().map((name) => ({
+const components = fs.readdirSync(sourceDir, { withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => entry.name)
+  .sort()
+  .map((name) => ({
   name,
   sha256: crypto.createHash('sha256').update(fs.readFileSync(`${sourceDir}/${name}`)).digest('hex'),
 }));
