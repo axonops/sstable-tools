@@ -60,11 +60,18 @@ NODE
 emitted=$(find "$provenance_dir" -name emitted-format-provenance.json -print -quit)
 [[ -n "$emitted" ]] || { printf 'Missing Cassandra 5.0 emitted-format provenance\n' >&2; exit 1; }
 node - "$emitted" <<'NODE'
+const crypto = require('crypto');
 const fs = require('fs');
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const formats = manifest.transitions.map((entry) => `${entry.formatVersion} ${entry.format}`).sort().join(', ');
 if (manifest.cassandraVersion !== '5.0.4' || formats !== 'da bti, oa big' || manifest.transitions.some((entry) => !entry.components.length)) throw new Error('invalid Cassandra 5.0 emitted-format provenance');
-console.log(`Validated Cassandra 5.0 emitted-format provenance: ${formats}.`);
+console.log('\n### Cassandra 5.0 Emitted Formats\n');
+console.log('| Output format | Components | SHA-256 aggregate |');
+console.log('|---|---:|---|');
+for (const transition of manifest.transitions.sort((left, right) => left.formatVersion.localeCompare(right.formatVersion))) {
+  const aggregate = crypto.createHash('sha256').update(transition.components.map((component) => component.sha256).join('')).digest('hex').slice(0, 12);
+  console.log(`| ${transition.formatVersion} ${transition.format} | ${transition.components.length} | ${aggregate} |`);
+}
 NODE
 
 for result in "$@"; do
