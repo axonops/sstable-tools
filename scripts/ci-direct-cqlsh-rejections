@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--input-version <version>]\n' "$0" >&2
+  exit 64
+}
+
+tool_jar=''
+cassandra_home=''
+java_home=''
+output_root=''
+input_version=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tool-jar) tool_jar=${2:-}; shift 2 ;;
+    --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
+    --java-home) java_home=${2:-}; shift 2 ;;
+    --output-root) output_root=${2:-}; shift 2 ;;
+    --input-version) input_version=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -f "$tool_jar" && -d "$cassandra_home" && -x "$java_home/bin/java" && -d "$output_root/source" && -f "$output_root/schema.cql" ]] || usage
+pattern='*-Data.db'
+[[ -z "$input_version" ]] || pattern="${input_version}-*-Data.db"
+source_data=$(find "$output_root/source" -maxdepth 1 -type f -name "$pattern" -print -quit)
+[[ -n "$source_data" ]] || { printf 'No source SSTable matched %s\n' "$pattern" >&2; exit 1; }
+descriptor=${source_data%-Data.db}
+rejection_root="$output_root/direct-rejections"
+missing_dir="$rejection_root/missing-index"
+mismatch_schema="$rejection_root/schema-mismatch.cql"
+mkdir -p "$missing_dir"
+cp "${descriptor}-"* "$missing_dir/"
+rm "$missing_dir/$(basename "$descriptor")-Index.db"
+sed -i '/Index\.db/d' "$missing_dir/$(basename "$descriptor")-TOC.txt"
+
+printf '%s\n' \
+  "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+  'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload bigint, state text);' \
+  >"$mismatch_schema"
+
+expect_rejection() {
+  local name=$1 source=$2 schema=$3
+  if java -jar "$tool_jar" --tmp-dir "$rejection_root/tmp-$name" \
+      --cassandra-home "$cassandra_home" --java-home "$java_home" \
+      --sstables "$source" --schema "$schema" cqlsh \
+      --execute "SELECT event_id FROM ci_source.events WHERE event_id = 'source-row';" \
+      >"$rejection_root/$name.log" 2>&1; then
+    printf '%s malformed input was accepted\n' "$name" >&2
+    exit 1
+  fi
+  [[ -z "$(find "$(dirname "$source")" -maxdepth 1 -type f -name '*-Data.db' -newer "$source" -print -quit)" ]] || {
+    printf '%s malformed input published an SSTable\n' "$name" >&2
+    exit 1
+  }
+}
+
+expect_rejection missing-index "$missing_dir/$(basename "$source_data")" "$output_root/schema.cql"
+expect_rejection schema-mismatch "$source_data" "$mismatch_schema"
+printf 'Verified direct cqlsh rejects missing components and schema mismatches before writes.\n'
