@@ -11,7 +11,7 @@
       "formatVersion": "ma",
       "producer": "unrecorded historical fixture",
       "provenanceStatus": "incomplete",
-      "contractStatus": "uncovered",
+      "contractStatus": "direct-cqlsh-positive",
       "aggregateSha256": "6daaf124554b42a4cac6ab85e4ce035641be4778144f97e067c67a2749a9a001"
     },
     {
@@ -43,7 +43,7 @@
       "formatVersion": "ma",
       "producer": "unrecorded historical fixture",
       "provenanceStatus": "incomplete",
-      "contractStatus": "uncovered",
+      "contractStatus": "direct-cqlsh-positive",
       "aggregateSha256": "2f583f6b8366eeb25c65d51752bc3a51f0eba76bd4f58d1fd9a9cf4597cd4de2"
     },
     {
