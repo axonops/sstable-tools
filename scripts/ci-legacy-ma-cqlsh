@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--fixture ma-users|ma-wide|ma-collections|mc-temperature] [--output-version <version>]\n' "$0" >&2
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--fixture ma-composites|ma-users|ma-wide|ma-collections|mc-temperature] [--output-version <version>]\n' "$0" >&2
   exit 64
 }
 
@@ -27,7 +27,7 @@ done
 
 [[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
 [[ "$output_version" =~ ^[a-z][a-z]$ ]] || usage
-[[ "$fixture" == 'ma-users' || "$fixture" == 'ma-wide' || "$fixture" == 'ma-collections' || "$fixture" == 'mc-temperature' ]] || usage
+[[ "$fixture" == 'ma-composites' || "$fixture" == 'ma-users' || "$fixture" == 'ma-wide' || "$fixture" == 'ma-collections' || "$fixture" == 'mc-temperature' ]] || usage
 [[ -f "$tool_jar" && -d "$cassandra_home" && -x "$java_home/bin/java" ]] || {
   printf 'Invalid tool, Cassandra home, or Java home\n' >&2
   exit 1
@@ -47,6 +47,19 @@ select_statement=''
 select_expectations=()
 
 case "$fixture" in
+  ma-composites)
+    source_prefix='ma-1-big'
+    base_statement='SELECT COUNT(*) FROM fixture.composites;'
+    base_expectations=('2')
+    insert_statement="INSERT INTO fixture.composites (key1, key2, ckey1, ckey2, value) VALUES ('direct-key', 'direct-partition', 'first', 'entry', 1) USING TIMESTAMP 2000000000000000;"
+    update_statement="UPDATE fixture.composites USING TIMESTAMP 2000000000000001 SET value = 2 WHERE key1 = 'direct-key' AND key2 = 'direct-partition' AND ckey1 = 'first' AND ckey2 = 'entry';"
+    select_statement="SELECT key1, key2, ckey1, ckey2, value FROM fixture.composites WHERE key1 = 'direct-key' AND key2 = 'direct-partition' AND ckey1 = 'first' AND ckey2 = 'entry';"
+    select_expectations=('direct-key' 'direct-partition' 'first' 'entry' '2')
+    printf '%s\n' \
+      "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+      'CREATE TABLE fixture.composites (key1 varchar, key2 varchar, ckey1 varchar, ckey2 varchar, value bigint, PRIMARY KEY ((key1, key2), ckey1, ckey2));' \
+      >"$schema"
+    ;;
   ma-users)
     source_prefix='ma-2-big'
     base_statement="SELECT user_name, password, gender, state, birth_year FROM fixture.users WHERE user_name = 'frodo';"
