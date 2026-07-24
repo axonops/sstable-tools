@@ -154,6 +154,15 @@ jobs:
           retention-days: 14
           path: ${{ runner.temp }}/cassandra-source-${{ matrix.release }}
 
+      - name: Upload fixture provenance
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cassandra-${{ matrix.release }}-fixture-provenance
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ runner.temp }}/cassandra-source-${{ matrix.release }}/fixture-provenance.json
+
   cassandra-311-sandbox:
     name: Cassandra 3.11.19 sandbox and cqlsh integration
     runs-on: ubuntu-latest
@@ -625,10 +634,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Download stopped-source provenance
+        uses: actions/download-artifact@v7
+        with:
+          pattern: cassandra-*-fixture-provenance
+          path: target/fixture-provenance
+
       - name: Publish compatibility report
         run: |
           set -o pipefail
           scripts/ci-compatibility-report \
+            --provenance-dir target/fixture-provenance \
             "${{ needs.verify.result }}" \
             "${{ needs.adapter-runtime.result }}" \
             "${{ needs.stopped-cqlsh-source.result }}" \

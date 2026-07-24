@@ -24,6 +24,13 @@ The `stopped-cqlsh-source` GitHub Actions matrix runs against Cassandra 3.11.19,
 8. Record SHA-256 hashes for every copied component and recheck them after the
    workspace operation, including import where that adapter supports it.
 
+Each successful source job also publishes a `fixture-provenance.json` artifact.
+It records the exact producer patch and image, partitioner, detected SSTable
+descriptor format, schema bundle, source CQL mutation sequence, expected row,
+and SHA-256 for every copied component. The compatibility-report job downloads
+all four artifacts and refuses to publish its matrix unless it has one complete
+record for each supported release line.
+
 The shell implementation is `scripts/ci-real-cassandra-source`. It preserves
 the source components and logs under the job temporary directory and uploads
 them when a matrix entry fails.

@@ -1,23 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-report() {
-  cat <<'EOF'
-## Direct CQLSH Compatibility Report
-
-| Cassandra line | Pinned patch | Input and output evidence |
-|---|---:|---|
-| 3.11 | 3.11.19 | Stopped Big source; stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, direct reopen |
-| 4.0 | 4.0.17 | Stopped Big source; stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, direct reopen |
-| 4.1 | 4.1.3 | Stopped Big source; stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, direct reopen |
-| 5.0 | 5.0.4 | Big nb to oa, Big oa to BTI da, and BTI da direct reopen through stock cqlsh |
-
-The workflow uses explicitly selected stopped SSTables. It does not use
-sstableloader, clean-node loading, streaming, bulk loading, or cluster import.
-EOF
+usage() {
+  printf 'Usage: %s --provenance-dir <path> <required-job-result>...\n' "$0" >&2
+  exit 64
 }
 
-report
+[[ ${1:-} == '--provenance-dir' && -d ${2:-} ]] || usage
+provenance_dir=$2
+shift 2
+
+node - "$provenance_dir" <<'NODE'
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const directory = process.argv[2];
+const expected = new Set(['3.11', '4.0', '4.1', '5.0']);
+function findManifests(current) {
+  return fs.readdirSync(current, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(current, entry.name);
+    return entry.isDirectory() ? findManifests(entryPath) : entry.name === 'fixture-provenance.json' ? [entryPath] : [];
+  });
+}
+const manifests = findManifests(directory)
+  .map((filename) => JSON.parse(fs.readFileSync(filename, 'utf8')))
+  .sort((left, right) => left.producer.releaseLine.localeCompare(right.producer.releaseLine));
+if (manifests.length !== expected.size) throw new Error(`expected ${expected.size} provenance manifests, found ${manifests.length}`);
+for (const manifest of manifests) {
+  const { producer, sstable, schema, sourceMutationScript, expectedLogicalRows } = manifest;
+  if (!expected.delete(producer.releaseLine)) throw new Error(`unexpected or duplicate release line: ${producer.releaseLine}`);
+  if (!producer.version.startsWith(`${producer.releaseLine}.`) || !producer.image || !producer.partitioner) {
+    throw new Error(`incomplete producer provenance for ${producer.releaseLine}`);
+  }
+  if (!['big', 'bti'].includes(sstable.format) || !/^[a-z]{2}$/.test(sstable.formatVersion) || !sstable.components.length) {
+    throw new Error(`incomplete SSTable provenance for ${producer.releaseLine}`);
+  }
+  if (new Set(sstable.components.map((component) => component.name)).size !== sstable.components.length
+      || sstable.components.some((component) => !/^[a-f0-9]{64}$/.test(component.sha256))) {
+    throw new Error(`invalid component hashes for ${producer.releaseLine}`);
+  }
+  if (!schema.includes('CREATE TABLE ci_source.events') || sourceMutationScript.length !== 2 || expectedLogicalRows.length !== 1) {
+    throw new Error(`incomplete CQL contract provenance for ${producer.releaseLine}`);
+  }
+}
+if (expected.size) throw new Error(`missing provenance for ${[...expected].join(', ')}`);
+console.log('## Direct CQLSH Compatibility Report\n');
+console.log('| Cassandra line | Producer | Stopped SSTable evidence |');
+console.log('|---|---|---|');
+for (const manifest of manifests) {
+  const aggregate = crypto.createHash('sha256')
+    .update(manifest.sstable.components.map((component) => component.sha256).join(''))
+    .digest('hex').slice(0, 12);
+  console.log(`| ${manifest.producer.releaseLine} | ${manifest.producer.version} (${manifest.producer.image}) | ${manifest.sstable.formatVersion} ${manifest.sstable.format}; ${manifest.sstable.components.length} components; SHA-256 aggregate ${aggregate} |`);
+}
+console.log('\nEach row is generated from a matching stopped Cassandra node. The direct workflow uses explicit SSTable paths, stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, and direct reopen.');
+console.log('It does not use sstableloader, clean-node loading, streaming, bulk loading, or cluster import.');
+NODE
 
 for result in "$@"; do
   if [[ "$result" != success ]]; then

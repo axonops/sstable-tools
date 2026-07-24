@@ -43,6 +43,7 @@ container=${container:0:63}
 source_dir="$output_root/source"
 workspace="$output_root/workspace"
 schema="$output_root/schema.cql"
+provenance="$output_root/fixture-provenance.json"
 mkdir -p "$source_dir"
 
 cleanup() {
@@ -89,6 +90,17 @@ printf '%s\n' "$selected"
   exit 1
 }
 
+producer_info="$(docker exec "$container" cqlsh 127.0.0.1 9042 -e \
+  'SELECT release_version, partitioner FROM system.local;')"
+printf '%s\n' "$producer_info" | tee "$output_root/producer-info.log"
+producer_version="$(printf '%s\n' "$producer_info" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"
+partitioner="$(printf '%s\n' "$producer_info" | grep -Eo 'org\.apache\.cassandra\.dht\.[A-Za-z0-9_.]+' | head -n 1)"
+[[ -n "$producer_version" && "$producer_version" == "$release".* ]] || {
+  printf 'Could not verify Cassandra %s producer version\n' "$release" >&2
+  exit 1
+}
+[[ -n "$partitioner" ]] || { printf 'Could not record producer partitioner\n' >&2; exit 1; }
+
 docker exec "$container" nodetool flush ci_source events
 table_dir="$(docker exec "$container" sh -c \
   "find /var/lib/cassandra/data/ci_source -mindepth 1 -maxdepth 1 -type d -name 'events-*' | head -n 1")"
@@ -116,11 +128,50 @@ if [[ -n "$expected_format" ]]; then
     exit 1
   }
 fi
+selected_name=$(basename "$selected_sstable")
+IFS=- read -r format_version _ format <<<"$selected_name"
+[[ "$format" == 'big' || "$format" == 'bti' ]] || {
+  printf 'Could not parse SSTable format from %s\n' "$selected_name" >&2
+  exit 1
+}
 
 printf '%s\n' \
   "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
   'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);' \
   >"$schema"
+
+node - "$provenance" "$release" "$producer_version" "$image" "$partitioner" "$format_version" "$format" "$source_dir" <<'NODE'
+const crypto = require('crypto');
+const fs = require('fs');
+const [output, releaseLine, producerVersion, image, partitioner, formatVersion, format, sourceDir] = process.argv.slice(2);
+const schema = fs.readFileSync(`${require('path').dirname(output)}/schema.cql`, 'utf8');
+const components = fs.readdirSync(sourceDir).sort().map((name) => ({
+  name,
+  sha256: crypto.createHash('sha256').update(fs.readFileSync(`${sourceDir}/${name}`)).digest('hex'),
+}));
+const manifest = {
+  formatVersion: 1,
+  producer: {
+    releaseLine,
+    version: producerVersion,
+    image,
+    partitioner,
+  },
+  sstable: {
+    format,
+    formatVersion,
+    compression: 'default Cassandra table compression',
+    components,
+  },
+  schema,
+  sourceMutationScript: [
+    "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('source-row', 'seed', 'new');",
+    "UPDATE ci_source.events SET payload = 'updated', state = 'ready' WHERE event_id = 'source-row';",
+  ],
+  expectedLogicalRows: [{ event_id: 'source-row', payload: 'updated', state: 'ready' }],
+};
+fs.writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
 
 java -jar "$tool_jar" workspace create "$workspace" --sstables "$selected_sstable" --schema "$schema" \
   | tee "$output_root/workspace-create.log"
