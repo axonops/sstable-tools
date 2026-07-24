@@ -129,11 +129,13 @@ if [[ -n "$expected_format" ]]; then
   }
 fi
 selected_name=$(basename "$selected_sstable")
-IFS=- read -r format_version _ format <<<"$selected_name"
-[[ "$format" == 'big' || "$format" == 'bti' ]] || {
+if [[ "$selected_name" =~ ^([a-z][a-z])-[0-9]+-(big|bti)-Data\.db$ ]]; then
+  format_version=${BASH_REMATCH[1]}
+  format=${BASH_REMATCH[2]}
+else
   printf 'Could not parse SSTable format from %s\n' "$selected_name" >&2
   exit 1
-}
+fi
 
 printf '%s\n' \
   "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
