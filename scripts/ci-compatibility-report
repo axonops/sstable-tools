@@ -57,6 +57,16 @@ console.log('\nEach row is generated from a matching stopped Cassandra node. The
 console.log('It does not use sstableloader, clean-node loading, streaming, bulk loading, or cluster import.');
 NODE
 
+emitted=$(find "$provenance_dir" -name emitted-format-provenance.json -print -quit)
+[[ -n "$emitted" ]] || { printf 'Missing Cassandra 5.0 emitted-format provenance\n' >&2; exit 1; }
+node - "$emitted" <<'NODE'
+const fs = require('fs');
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const formats = manifest.transitions.map((entry) => `${entry.formatVersion} ${entry.format}`).sort().join(', ');
+if (manifest.cassandraVersion !== '5.0.4' || formats !== 'da bti, oa big' || manifest.transitions.some((entry) => !entry.components.length)) throw new Error('invalid Cassandra 5.0 emitted-format provenance');
+console.log(`Validated Cassandra 5.0 emitted-format provenance: ${formats}.`);
+NODE
+
 for result in "$@"; do
   if [[ "$result" != success ]]; then
     printf 'Required direct-workflow job result was %s\n' "$result" >&2

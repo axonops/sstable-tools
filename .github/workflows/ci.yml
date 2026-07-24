@@ -632,6 +632,17 @@ jobs:
           --output-version da
           --timestamp-base 2000000000000020
 
+      - name: Record Cassandra 5.0 emitted format provenance
+        run: scripts/ci-emitted-format-provenance "${{ runner.temp }}/cassandra-50-import"
+
+      - name: Upload Cassandra 5.0 emitted format provenance
+        uses: actions/upload-artifact@v7
+        with:
+          name: cassandra-50-emitted-format-provenance
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ runner.temp }}/cassandra-50-import/emitted-format-provenance.json
+
       - name: Upload import diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
@@ -662,6 +673,12 @@ jobs:
         with:
           pattern: cassandra-*-fixture-provenance
           path: target/fixture-provenance
+
+      - name: Download emitted-format provenance
+        uses: actions/download-artifact@v7
+        with:
+          name: cassandra-50-emitted-format-provenance
+          path: target/fixture-provenance/emitted
 
       - name: Publish compatibility report
         run: |
