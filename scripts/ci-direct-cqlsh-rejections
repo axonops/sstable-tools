@@ -30,11 +30,14 @@ source_data=$(find "$output_root/source" -maxdepth 1 -type f -name "$pattern" -p
 descriptor=${source_data%-Data.db}
 rejection_root="$output_root/direct-rejections"
 missing_dir="$rejection_root/missing-index"
+truncated_dir="$rejection_root/truncated-data"
 mismatch_schema="$rejection_root/schema-mismatch.cql"
-mkdir -p "$missing_dir"
+mkdir -p "$missing_dir" "$truncated_dir"
 cp "${descriptor}-"* "$missing_dir/"
+cp "${descriptor}-"* "$truncated_dir/"
 rm "$missing_dir/$(basename "$descriptor")-Index.db"
 sed -i '/Index\.db/d' "$missing_dir/$(basename "$descriptor")-TOC.txt"
+truncate -s -1 "$truncated_dir/$(basename "$source_data")"
 
 printf '%s\n' \
   "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
@@ -58,5 +61,6 @@ expect_rejection() {
 }
 
 expect_rejection missing-index "$missing_dir/$(basename "$source_data")" "$output_root/schema.cql"
+expect_rejection truncated-data "$truncated_dir/$(basename "$source_data")" "$output_root/schema.cql"
 expect_rejection schema-mismatch "$source_data" "$mismatch_schema"
-printf 'Verified direct cqlsh rejects missing components and schema mismatches before writes.\n'
+printf 'Verified direct cqlsh rejects missing components, truncated data, and schema mismatches before writes.\n'
