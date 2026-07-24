@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--fixture ma-users|ma-wide|mc-temperature] [--output-version <version>]\n' "$0" >&2
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--fixture ma-users|ma-wide|ma-collections|mc-temperature] [--output-version <version>]\n' "$0" >&2
   exit 64
 }
 
@@ -27,7 +27,7 @@ done
 
 [[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
 [[ "$output_version" =~ ^[a-z][a-z]$ ]] || usage
-[[ "$fixture" == 'ma-users' || "$fixture" == 'ma-wide' || "$fixture" == 'mc-temperature' ]] || usage
+[[ "$fixture" == 'ma-users' || "$fixture" == 'ma-wide' || "$fixture" == 'ma-collections' || "$fixture" == 'mc-temperature' ]] || usage
 [[ -f "$tool_jar" && -d "$cassandra_home" && -x "$java_home/bin/java" ]] || {
   printf 'Invalid tool, Cassandra home, or Java home\n' >&2
   exit 1
@@ -71,6 +71,19 @@ case "$fixture" in
     printf '%s\n' \
       "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
       'CREATE TABLE fixture.wide (key text, key2 text, val text, PRIMARY KEY (key, key2));' \
+      >"$schema"
+    ;;
+  ma-collections)
+    source_prefix='ma-4-big'
+    base_statement='SELECT COUNT(*) FROM fixture.collections;'
+    base_expectations=('1')
+    insert_statement="INSERT INTO fixture.collections (key1, listval, mapval, setval) VALUES ('direct-key', ['seed'], {'first': 'one'}, {'seed'}) USING TIMESTAMP 2000000000000000;"
+    update_statement="UPDATE fixture.collections USING TIMESTAMP 2000000000000001 SET listval = ['updated'], mapval = {'first': 'updated'}, setval = {'updated'} WHERE key1 = 'direct-key';"
+    select_statement="SELECT key1, listval, mapval, setval FROM fixture.collections WHERE key1 = 'direct-key';"
+    select_expectations=('direct-key' 'updated')
+    printf '%s\n' \
+      "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+      'CREATE TABLE fixture.collections (key1 varchar PRIMARY KEY, listval list<text>, mapval map<text, text>, setval set<text>);' \
       >"$schema"
     ;;
   mc-temperature)
