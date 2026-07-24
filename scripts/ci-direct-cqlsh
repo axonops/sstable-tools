@@ -103,6 +103,35 @@ grep -q 'published.sstables=' "$output_root/direct-cqlsh-update.log"
   cd "$source_dir"
   sha256sum --check "$output_root/source-components.sha256"
 )
+
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
+source_args=()
+for source in "${all_sources[@]}"; do
+  source_args+=(--sstables "$source")
+done
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
+  --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('ttl-row', 'expiring', 'new') USING TIMESTAMP $((timestamp_base + 2)) AND TTL 600;" \
+  | tee "$output_root/direct-cqlsh-ttl.log"
+grep -q 'published.sstables=' "$output_root/direct-cqlsh-ttl.log"
+
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
+source_args=()
+for source in "${all_sources[@]}"; do
+  source_args+=(--sstables "$source")
+done
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
+  --execute "DELETE FROM ci_source.events USING TIMESTAMP $((timestamp_base + 3)) WHERE event_id = 'ttl-row';" \
+  | tee "$output_root/direct-cqlsh-delete.log"
+grep -q 'published.sstables=' "$output_root/direct-cqlsh-delete.log"
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/source-components.sha256"
+)
+
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 source_args=()
 for source in "${all_sources[@]}"; do
@@ -119,6 +148,12 @@ grep -q 'direct-row' "$output_root/direct-cqlsh-select.log"
 grep -q 'updated' "$output_root/direct-cqlsh-select.log"
 grep -q 'ready' "$output_root/direct-cqlsh-select.log"
 grep -q 'published.sstables=none' "$output_root/direct-cqlsh-select.log"
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
+  --execute "SELECT event_id FROM ci_source.events WHERE event_id = 'ttl-row';" \
+  | tee "$output_root/direct-cqlsh-tombstone-select.log"
+! grep -q 'ttl-row' "$output_root/direct-cqlsh-tombstone-select.log"
 [[ ! -d "$tmp_parent" || -z "$(find "$tmp_parent" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print -quit)" ]] || {
   printf 'Direct cqlsh left a successful private workspace behind\n' >&2
   exit 1
