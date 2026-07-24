@@ -33,7 +33,7 @@
       "formatVersion": "ma",
       "producer": "unrecorded historical fixture",
       "provenanceStatus": "incomplete",
-      "contractStatus": "uncovered",
+      "contractStatus": "direct-cqlsh-positive",
       "aggregateSha256": "71c765580f907fd2d60ea110b835b19cb4added16196e7206f051d6703d6799c"
     },
     {
