@@ -134,6 +134,18 @@ grep -q 'published.sstables=' "$output_root/direct-cqlsh-delete.log"
 
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 source_args=()
+for source in "${all_sources[@]}"; do source_args+=(--sstables "$source"); done
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" --output-format "$output_format" cqlsh \
+  --execute "INSERT INTO ci_source.events (event_id, labels, location, details) VALUES ('complex-row', {'seed'}, ('north', 1), {label: 'seed', attempts: 1}) USING TIMESTAMP $((timestamp_base + 4));" \
+  | tee "$output_root/direct-cqlsh-complex-insert.log"
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" --output-format "$output_format" cqlsh \
+  --execute "UPDATE ci_source.events USING TIMESTAMP $((timestamp_base + 5)) SET labels = {'updated'}, location = ('south', 2), details = {label: 'updated', attempts: 2} WHERE event_id = 'complex-row';" \
+  | tee "$output_root/direct-cqlsh-complex-update.log"
+
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
+source_args=()
 for source in "${all_sources[@]}"; do
   source_args+=(--sstables "$source")
 done
@@ -154,6 +166,15 @@ java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home"
   --execute "SELECT event_id FROM ci_source.events WHERE event_id = 'ttl-row';" \
   | tee "$output_root/direct-cqlsh-tombstone-select.log"
 ! grep -q 'ttl-row' "$output_root/direct-cqlsh-tombstone-select.log"
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
+source_args=()
+for source in "${all_sources[@]}"; do source_args+=(--sstables "$source"); done
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" --output-format "$output_format" cqlsh \
+  --execute "SELECT labels, location, details FROM ci_source.events WHERE event_id = 'complex-row';" \
+  | tee "$output_root/direct-cqlsh-complex-select.log"
+grep -q 'updated' "$output_root/direct-cqlsh-complex-select.log"
+grep -q 'south' "$output_root/direct-cqlsh-complex-select.log"
 [[ ! -d "$tmp_parent" || -z "$(find "$tmp_parent" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print -quit)" ]] || {
   printf 'Direct cqlsh left a successful private workspace behind\n' >&2
   exit 1

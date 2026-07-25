@@ -79,7 +79,8 @@ run_cqlsh() {
 }
 
 run_cqlsh "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};"
-run_cqlsh 'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);'
+run_cqlsh 'CREATE TYPE ci_source.event_details (label text, attempts int);'
+run_cqlsh 'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text, labels set<text>, location tuple<text, int>, details frozen<event_details>);'
 run_cqlsh "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('source-row', 'seed', 'new');"
 run_cqlsh "UPDATE ci_source.events SET payload = 'updated', state = 'ready' WHERE event_id = 'source-row';"
 selected="$(docker exec "$container" cqlsh 127.0.0.1 9042 -e \
@@ -139,7 +140,8 @@ fi
 
 printf '%s\n' \
   "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
-  'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);' \
+  'CREATE TYPE ci_source.event_details (label text, attempts int);' \
+  'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text, labels set<text>, location tuple<text, int>, details frozen<event_details>);' \
   >"$schema"
 
 node - "$provenance" "$release" "$producer_version" "$image" "$partitioner" "$format_version" "$format" "$source_dir" <<'NODE'
