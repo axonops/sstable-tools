@@ -109,22 +109,6 @@ source_args=()
 for source in "${all_sources[@]}"; do
   source_args+=(--sstables "$source")
 done
-java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
-  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
-  --output-format "$output_format" cqlsh \
-  --execute "DELETE FROM ci_source.events USING TIMESTAMP $((timestamp_base + 3)) WHERE event_id = 'ttl-row';" \
-  | tee "$output_root/direct-cqlsh-delete.log"
-grep -q 'published.sstables=' "$output_root/direct-cqlsh-delete.log"
-(
-  cd "$source_dir"
-  sha256sum --check "$output_root/source-components.sha256"
-)
-
-mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
-source_args=()
-for source in "${all_sources[@]}"; do
-  source_args+=(--sstables "$source")
-done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
