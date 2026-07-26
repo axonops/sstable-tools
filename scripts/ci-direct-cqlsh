@@ -51,9 +51,10 @@ if [[ -n "$input_version" ]]; then
 elif [[ -n "$input_format" ]]; then
   source_pattern="*-${input_format}-Data.db"
 fi
-output_source_pattern="$source_pattern"
 if [[ -n "$output_version" ]]; then
   output_source_pattern="${output_version}-*-${output_format}-Data.db"
+else
+  output_source_pattern='*-Data.db'
 fi
 mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
 [[ ${#initial_sources[@]} -gt 0 ]] || { printf 'No source Data.db files found\n' >&2; exit 1; }
