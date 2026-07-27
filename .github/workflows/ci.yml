@@ -36,7 +36,11 @@ jobs:
         run: scripts/mvn-retry -B -ntp verify
 
       - name: Package release bundle
-        run: scripts/package-release --output target/release
+        run: |
+          scripts/package-release --output target/release
+          scripts/verify-release-bundle target/release/sstable-tools-0.1.0-SNAPSHOT
+          scripts/package-release --output target/release-versioned --version 0.1.0
+          scripts/verify-release-bundle target/release-versioned/sstable-tools-0.1.0
 
       - name: Publish executed test results
         if: always()

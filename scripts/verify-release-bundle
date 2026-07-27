@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s <release-directory>\n' "$0" >&2
+  exit 64
+}
+
+[[ $# -eq 1 ]] || usage
+release_dir=$1
+manifest="$release_dir/compatibility-manifest.json"
+checksums="$release_dir/SHA256SUMS"
+
+[[ -d "$release_dir" && -f "$manifest" && -f "$checksums" \
+    && -f "$release_dir/sbom.spdx.json" \
+    && -f "$release_dir/THIRD-PARTY-NOTICES.txt" ]] || {
+  printf 'Release bundle is incomplete: %s\n' "$release_dir" >&2
+  exit 1
+}
+
+mapfile -t artifacts < <(sed -n 's/.*"artifact": "\([^"]*\)".*/\1/p' "$manifest")
+[[ ${#artifacts[@]} -eq 4 ]] || {
+  printf 'Release manifest must list exactly four adapter artifacts\n' >&2
+  exit 1
+}
+
+for artifact in "${artifacts[@]}"; do
+  [[ "$artifact" != */* && -f "$release_dir/$artifact" ]] || {
+    printf 'Release manifest artifact is missing or unsafe: %s\n' "$artifact" >&2
+    exit 1
+  }
+  if jar tf "$release_dir/$artifact" | grep -q '^org/apache/cassandra/'; then
+    printf 'Release artifact contains Cassandra classes: %s\n' "$artifact" >&2
+    exit 1
+  fi
+done
+
+(
+  cd "$release_dir"
+  sha256sum --check SHA256SUMS
+)
+
+printf 'Verified release bundle: %s\n' "$release_dir"
