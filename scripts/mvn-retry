@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+attempts=4
+for ((attempt = 1; attempt <= attempts; attempt++)); do
+  if mvn "$@"; then
+    exit 0
+  fi
+
+  if (( attempt == attempts )); then
+    printf 'Maven failed after %d attempts\n' "$attempts" >&2
+    exit 1
+  fi
+
+  delay=$((attempt * 15))
+  printf 'Maven failed; retrying in %d seconds (%d/%d)\n' \
+    "$delay" "$attempt" "$attempts" >&2
+  sleep "$delay"
+done

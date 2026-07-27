@@ -33,7 +33,7 @@ jobs:
           cache-dependency-path: '**/pom.xml'
 
       - name: Build, test, and verify thin JARs
-        run: mvn -B -ntp verify
+        run: scripts/mvn-retry -B -ntp verify
 
       - name: Package release bundle
         run: scripts/package-release --output target/release
@@ -135,7 +135,7 @@ jobs:
           cache-dependency-path: '**/pom.xml'
 
       - name: Build matching thin JAR
-        run: mvn -B -ntp -pl "${{ matrix.module }}" -am package -DskipTests
+        run: scripts/mvn-retry -B -ntp -pl "${{ matrix.module }}" -am package -DskipTests
 
       - name: Generate SSTables through stock cqlsh after source shutdown
         run: >-
@@ -221,7 +221,7 @@ jobs:
 
       - name: Test isolated daemon, cqlsh mutations, and crash recovery
         run: >-
-          mvn -B -ntp clean verify
+          scripts/mvn-retry -B -ntp clean verify
           -pl workers/cassandra-3.11 -am
           -Pcassandra-3.11-sandbox-it
           -Dcassandra311.home=${{ runner.temp }}/apache-cassandra-3.11.19
@@ -330,7 +330,7 @@ jobs:
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
       - name: Build Cassandra 4.0 adapter
-        run: mvn -B -ntp -pl workers/cassandra-4.0 -am package -DskipTests
+        run: scripts/mvn-retry -B -ntp -pl workers/cassandra-4.0 -am package -DskipTests
 
       - name: Import a stopped Cassandra 3.11 Big me SSTable into Cassandra 4.0
         run: >-
@@ -438,7 +438,7 @@ jobs:
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
       - name: Build Cassandra 4.1 adapter
-        run: mvn -B -ntp -pl workers/cassandra-4.1 -am package -DskipTests
+        run: scripts/mvn-retry -B -ntp -pl workers/cassandra-4.1 -am package -DskipTests
 
       - name: Import a stopped Cassandra 3.11 Big me SSTable into Cassandra 4.1
         run: >-
@@ -546,7 +546,7 @@ jobs:
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
       - name: Build Cassandra 5.0 adapter
-        run: mvn -B -ntp -pl workers/cassandra-5.0 -am package -DskipTests
+        run: scripts/mvn-retry -B -ntp -pl workers/cassandra-5.0 -am package -DskipTests
 
       - name: Import a stopped stock-cqlsh Cassandra 5.0 SSTable
         run: >-
