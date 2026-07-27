@@ -39,7 +39,8 @@ for release_line in "${release_lines[@]}"; do
       "$release_line" "$artifact_dir" >&2
     exit 1
   fi
-  cp "${artifacts[0]}" "$release_dir/"
+  cp "${artifacts[0]}" \
+    "$release_dir/sstable-tools-cassandra-$release_line-$version.jar"
 done
 
 revision="unknown"
