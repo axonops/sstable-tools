@@ -88,6 +88,10 @@ fi
 )
 
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
+if [[ -z "$output_version" && ${#all_sources[@]} -le ${#initial_sources[@]} ]]; then
+  printf 'Direct cqlsh reopen did not include published sibling SSTables\n' >&2
+  exit 1
+fi
 source_args=()
 for source in "${all_sources[@]}"; do
   source_args+=(--sstables "$source")

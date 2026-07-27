@@ -48,6 +48,12 @@ sequence or UUID SSTable identifier mode from `cassandra.yaml`.
 On Cassandra 5.0, `--output-format bti` selects BTI `da` delta output. The
 default is Big `oa`; BTI is rejected by the 3.11, 4.0, and 4.1 JARs.
 
+After a successful direct mutation, later direct commands for that table should
+select both the original files and the published sibling SSTables. This is the
+default when `--output-version` is omitted. Supplying `--output-version`
+deliberately restricts a command to that version and format family, which is
+useful for Cassandra 5.0 Big-to-BTI transitions.
+
 The former `workspace ...` commands remain available as an advanced diagnostic
 and recovery interface; they are not the normal workflow.
 
