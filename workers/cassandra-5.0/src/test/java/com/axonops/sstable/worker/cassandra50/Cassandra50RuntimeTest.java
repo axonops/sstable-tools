@@ -1,5 +1,7 @@
 package com.axonops.sstable.worker.cassandra50;
 
+import com.axonops.sstable.bootstrap.AdapterMetadata;
+import com.axonops.sstable.bootstrap.CassandraVersion;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.marshal.FloatType;
 import org.apache.cassandra.db.marshal.VectorType;
@@ -17,8 +19,17 @@ public class Cassandra50RuntimeTest {
     public void pinnedRuntimeSatisfiesLinkageContract() {
         Cassandra50Runtime runtime = new Cassandra50Runtime();
 
-        Assert.assertEquals("5.0.4", runtime.installedVersion());
+        Assert.assertEquals("5.0.8", runtime.installedVersion());
         runtime.verifyLinkage();
+    }
+
+    @Test
+    public void adapterMetadataAcceptsDocumentedPatchRange() throws Exception {
+        AdapterMetadata metadata = AdapterMetadata.loadRequired(
+                Cassandra50RuntimeTest.class.getClassLoader());
+
+        metadata.validate(CassandraVersion.parse("5.0.4"), 17);
+        metadata.validate(CassandraVersion.parse("5.0.8"), 17);
     }
 
     @Test

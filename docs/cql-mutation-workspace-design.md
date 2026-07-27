@@ -752,7 +752,7 @@ The initial adapter compile contracts are:
 | 3.11 | 3.11.19 | Java 8 |
 | 4.0 | 4.0.17 | Java 8 |
 | 4.1 | 4.1.3 | Java 11 |
-| 5.0 | 5.0.4 | Java 17 |
+| 5.0 | 5.0.4-5.0.8 | Java 17 |
 
 These pins prove build isolation; they are not the final installed patch support
 ranges. Runtime discovery and linkage tests must define and enforce those ranges

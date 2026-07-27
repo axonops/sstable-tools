@@ -43,7 +43,7 @@ The compile pins are:
 | 3.11 | 3.11.19 | Java 8 (52) |
 | 4.0 | 4.0.17 | Java 8 (52) |
 | 4.1 | 4.1.3 | Java 11 (55) |
-| 5.0 | 5.0.4 | Java 17 (61) |
+| 5.0 | 5.0.4-5.0.8 | Java 17 (61) |
 
 ## Enforcement and reports
 

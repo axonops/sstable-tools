@@ -123,7 +123,7 @@ jobs:
             image: cassandra:4.1.3
             module: workers/cassandra-4.1
           - release: '5.0'
-            image: cassandra:5.0.4
+            image: cassandra:5.0.8
             module: workers/cassandra-5.0
 
     steps:
@@ -518,7 +518,7 @@ jobs:
           path: ${{ runner.temp }}/cassandra-41-import
 
   cassandra-50-import:
-    name: Cassandra 5.0.4 stopped-SSTable import integration
+    name: Cassandra 5.0.8 stopped-SSTable import integration
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -538,14 +538,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download pinned Cassandra 5.0.4 distribution
+      - name: Download pinned Cassandra 5.0.8 distribution
         working-directory: ${{ runner.temp }}
         run: |
           curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
             --connect-timeout 30 --max-time 600 --remote-name \
-            https://archive.apache.org/dist/cassandra/5.0.4/apache-cassandra-5.0.4-bin.tar.gz
-          echo '16de8bb78af94dabfd916825f492de7040a7311791bc1d630f14707d88f7132e51ae38dad7ebbaf13d2d154af0bdeefe318d680798b8e247ae4117cbc0e2f6df  apache-cassandra-5.0.4-bin.tar.gz' | sha512sum --check
-          tar -xzf apache-cassandra-5.0.4-bin.tar.gz
+            https://archive.apache.org/dist/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
+          echo '06b7af18c8f41dc13dbfdae186d565a5f91e71ea413c3c5373aec8a4e5074c6dee5632a0e5e98c21665f08f7291d7ca384f61a323c02610c6bca51e074b5a0c4  apache-cassandra-5.0.8-bin.tar.gz' | sha512sum --check
+          tar -xzf apache-cassandra-5.0.8-bin.tar.gz
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
@@ -555,17 +555,17 @@ jobs:
       - name: Import a stopped stock-cqlsh Cassandra 5.0 SSTable
         run: >-
           scripts/ci-real-cassandra-source
-          --image cassandra:5.0.4
+          --image cassandra:5.0.8
           --release 5.0
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-50-import"
-          --import-cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
+          --import-cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
           --java-home "$JAVA_HOME"
 
       - name: Mutate the imported SSTable through stock Cassandra 5.0 cqlsh
         run: |
           TOOL_JAR=workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
-          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-5.0.4"
+          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-5.0.8"
           WORKSPACE="${{ runner.temp }}/cassandra-50-import/workspace"
           OUTPUT="${{ runner.temp }}/cassandra-50-import/export"
           java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
@@ -597,13 +597,13 @@ jobs:
         run: |
           scripts/ci-direct-cqlsh-rejections \
             --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar \
-            --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8" \
             --java-home "$JAVA_HOME" \
             --output-root "${{ runner.temp }}/cassandra-50-import" \
             --input-version nb
           scripts/ci-direct-cqlsh \
             --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar \
-            --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8" \
             --java-home "$JAVA_HOME" \
             --output-root "${{ runner.temp }}/cassandra-50-import" \
             --output-format big \
@@ -615,7 +615,7 @@ jobs:
         run: >-
           scripts/ci-direct-cqlsh
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
-          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --output-format bti
@@ -627,7 +627,7 @@ jobs:
         run: >-
           scripts/ci-direct-cqlsh
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
-          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.4"
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --input-format bti

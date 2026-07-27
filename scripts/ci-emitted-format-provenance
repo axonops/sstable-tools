@@ -13,5 +13,5 @@ function record(version, format) {
     .map((name) => ({name, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, name))).digest('hex')}));
   return {formatVersion: version, format, components};
 }
-fs.writeFileSync(output, `${JSON.stringify({cassandraVersion:'5.0.4', transitions:[record('oa','big'), record('da','bti')]}, null, 2)}\n`);
+fs.writeFileSync(output, `${JSON.stringify({cassandraVersion:'5.0.8', transitions:[record('oa','big'), record('da','bti')]}, null, 2)}\n`);
 NODE

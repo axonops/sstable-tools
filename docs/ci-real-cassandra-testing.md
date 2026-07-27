@@ -9,7 +9,7 @@ its SSTables are copied into a workspace or passed to SSTable Tools.
 ## Source lifecycle matrix
 
 The `stopped-cqlsh-source` GitHub Actions matrix runs against Cassandra 3.11.19,
-4.0.17, 4.1.3, and 5.0.4. Each matrix entry performs this sequence:
+4.0.17, 4.1.3, and 5.0.8. Each matrix entry performs this sequence:
 
 1. Start the matching official Cassandra Docker image.
 2. Use that image's stock `cqlsh` to create `ci_source.events`.
@@ -44,7 +44,7 @@ Only after shutdown does it copy the table into a workspace. SSTable Tools then
 executes `create`, `import`, `start`, stock-cqlsh `SELECT`/`INSERT`/`UPDATE`,
 `flush`, delta `export`, and `stop`.
 
-The 4.0.17, 4.1.3, and 5.0.4 jobs execute the same stopped-source import
+The 4.0.17, 4.1.3, and 5.0.8 jobs execute the same stopped-source import
 sequence and then start guarded isolated sandboxes. They invoke the installed
 distribution's stock `cqlsh` for `INSERT`, `UPDATE`, and `SELECT`, flush,
 export the delta, and stop. The sandbox is loopback-only, disables gossip and
@@ -59,7 +59,7 @@ interface, verifies the original component hashes, and reopens the combined
 older-format migration behavior from the current 3.11.19 producer format
 (`me`).
 
-The Cassandra 5.0.4 job starts from the release's default stopped Big `nb`
+The Cassandra 5.0.8 job starts from the release's default stopped Big `nb`
 source. Direct `cqlsh` selects that `nb` set to publish Big `oa`, then selects
 only the `oa` set to publish BTI `da` with `--output-format bti`. A final
 direct workflow selects only the published BTI set, performs `INSERT`,

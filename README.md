@@ -95,7 +95,7 @@ source component hashes.
 | `cassandra-3.11` | 3.11.19 | 8 | Big `me` |
 | `cassandra-4.0` | 4.0.17 | 8-11 | Big `nb` |
 | `cassandra-4.1` | 4.1.3 | 11 | Big `nb` |
-| `cassandra-5.0` | 5.0.4 | 17 | Big `oa`, BTI `da` |
+| `cassandra-5.0` | 5.0.4-5.0.8 | 17 | Big `oa`, BTI `da` |
 
 The direct workflow intentionally has no `sstableloader`, streaming, clean-node
 import, or broad filesystem discovery.
