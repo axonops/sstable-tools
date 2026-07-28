@@ -137,7 +137,7 @@ WRITE_CQL="UPDATE acme.users USING TIMESTAMP $NOW_MICROS SET name = 'Grace' WHER
 
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
   --tmp-dir /var/tmp/sstable-tools \
-  --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
+  --output-dir /archive/acme/users-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/acme-users.cql \
   cqlsh --execute "$WRITE_CQL"
 ```
@@ -174,24 +174,24 @@ a microsecond value above the reported source maximum instead.
 
 ### Query or update a system table
 
-Explicit stopped SSTables from Cassandra's built-in `system` keyspace are
-supported. The schema bundle identifies exactly one fully qualified built-in
-table; the matching Cassandra runtime supplies its actual metadata.
+Stopped SSTables from Cassandra's built-in `system` keyspace are supported.
+The schema bundle identifies exactly one fully qualified built-in table; the
+matching Cassandra runtime supplies its actual metadata.
 
 ```shell
 NOW_MICROS=$(date +%s%6N)
 SYSTEM_CQL="UPDATE system.local USING TIMESTAMP $NOW_MICROS SET cluster_name = 'recovered-cluster' WHERE key = 'local';"
 
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
-  --sstables /archive/system/local-7ad54392bcdd35a684174e047860b377/da-41-bti-Data.db \
+  --output-dir /archive/system/local-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/system.local.cql \
   --output-format bti \
   cqlsh --execute "$SYSTEM_CQL"
 ```
 
-This changes only the isolated copy and publishes sibling SSTables beside the
-selected stopped source. It does not change a running node or Cassandra
-installation.
+This inventories the complete stopped table directory, changes only the
+isolated copy, and publishes verified sibling SSTables into the same directory.
+It does not change a running node or Cassandra installation.
 
 ### Write Cassandra 5.0 BTI output
 
