@@ -413,8 +413,9 @@ separate release-version file. Untagged development builds use the default
 
 ### Build a release candidate locally
 
-Release packaging requires Java 17, nFPM, `dpkg-deb`, `rpm`, `rpm2cpio`, and
-`cpio`. CI pins nFPM `v2.47.0`; install the same version with:
+Release packaging requires Java 17, Go 1.26.4 or newer, nFPM, `dpkg-deb`,
+`rpm`, `rpm2cpio`, and `cpio`. CI pins Go `1.26.4` and nFPM `v2.47.0`;
+install the same nFPM version with:
 
 ```shell
 go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
