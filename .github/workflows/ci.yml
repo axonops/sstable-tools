@@ -24,6 +24,9 @@ jobs:
       - name: Verify immutable fixture catalog
         run: scripts/verify-fixture-catalog
 
+      - name: Test release security scan orchestration
+        run: scripts/test-release-security-scan
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:

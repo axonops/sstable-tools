@@ -473,8 +473,20 @@ git push origin "v$RELEASE_VERSION"
 The [Release workflow](.github/workflows/release.yml) validates the tag, builds
 and tests every adapter with that exact Maven revision, rejects mismatched
 embedded JAR versions, creates and extracts both Linux packages, verifies their
-payloads and checksums, and publishes the resulting directory as a workflow
-artifact and GitHub Release.
+payloads and checksums, runs the release security gate, and publishes the
+resulting directory as a workflow artifact and GitHub Release.
+
+The security gate scans the built release with ClamAV, analyzes Java source with
+CodeQL `security-extended`, checks source secrets and configuration with Trivy,
+records the full Maven build/compatibility graph, and scans the published SPDX
+SBOM for known dependency vulnerabilities. The full Maven graph is report-only
+because it includes Cassandra compatibility and provided dependencies that are
+not shipped. Malware, scanner errors, missing reports, or HIGH/CRITICAL CodeQL,
+source-security, or published-SBOM findings block publication. The workflow
+always retains diagnostic reports when the scan step runs; successful GitHub
+Releases include
+`sstable-tools-<version>-security-reports.tar.gz` with the Markdown summary,
+tool metadata, ClamAV logs, CodeQL SARIF, Trivy JSON, and Maven dependency trees.
 
 If the `RELEASE_GPG_PRIVATE_KEY` repository secret is configured, the workflow
 imports it and signs the final checksum file. The workflow can also be started

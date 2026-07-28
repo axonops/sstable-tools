@@ -1,0 +1,387 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: release-security-scan \
+  --version <version> \
+  --release-dir <directory> \
+  --release-archive <path> \
+  --reports-dir <directory> \
+  --reports-archive <path> \
+  --codeql-dir <directory> \
+  [--source-dir <directory>]
+EOF
+  exit 64
+}
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source_dir="$root_dir"
+version=
+release_dir=
+release_archive=
+reports_dir=
+reports_archive=
+codeql_dir=
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version) version=${2:-}; shift 2 ;;
+    --release-dir) release_dir=${2:-}; shift 2 ;;
+    --release-archive) release_archive=${2:-}; shift 2 ;;
+    --reports-dir) reports_dir=${2:-}; shift 2 ;;
+    --reports-archive) reports_archive=${2:-}; shift 2 ;;
+    --codeql-dir) codeql_dir=${2:-}; shift 2 ;;
+    --source-dir) source_dir=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$version" && -n "$release_dir" && -n "$release_archive" \
+    && -n "$reports_dir" && -n "$reports_archive" && -n "$codeql_dir" ]] \
+  || usage
+[[ -d "$release_dir" ]] || {
+  printf 'Release directory does not exist: %s\n' "$release_dir" >&2
+  exit 1
+}
+[[ -f "$release_archive" ]] || {
+  printf 'Release archive does not exist: %s\n' "$release_archive" >&2
+  exit 1
+}
+[[ -d "$source_dir" ]] || {
+  printf 'Source directory does not exist: %s\n' "$source_dir" >&2
+  exit 1
+}
+source_dir="$(cd "$source_dir" && pwd)"
+
+for tool in clamscan freshclam git jq tar trivy; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf '%s is required for release security scanning\n' "$tool" >&2
+    exit 1
+  }
+done
+
+mkdir -p "$reports_dir" "$(dirname "$reports_archive")"
+reports_dir="$(cd "$reports_dir" && pwd)"
+reports_archive="$(cd "$(dirname "$reports_archive")" && pwd)/$(basename "$reports_archive")"
+codeql_dir="$(cd "$codeql_dir" 2>/dev/null && pwd)" || codeql_dir=
+
+generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+source_revision="$(git -C "$source_dir" rev-parse HEAD)"
+trivy_cache_dir="$root_dir/target/trivy-cache"
+mkdir -p "$trivy_cache_dir"
+
+clamav_update_report="$reports_dir/clamav-update.txt"
+clamav_report="$reports_dir/clamav-scan.txt"
+trivy_security_report="$reports_dir/trivy-source-security.json"
+trivy_source_dependencies_report="$reports_dir/trivy-source-dependencies.json"
+trivy_release_dependencies_report="$reports_dir/trivy-release-dependencies.json"
+
+clam_db="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$clam_db"
+}
+trap cleanup EXIT
+
+set +e
+freshclam --stdout --datadir="$clam_db" >"$clamav_update_report" 2>&1
+freshclam_status=$?
+set -e
+
+clamscan_status=2
+if [[ $freshclam_status -eq 0 ]]; then
+  set +e
+  clamscan \
+    --database="$clam_db" \
+    --official-db-only=yes \
+    --recursive \
+    --infected \
+    --log="$clamav_report" \
+    "$release_dir" "$release_archive"
+  clamscan_status=$?
+  set -e
+else
+  printf 'ClamAV scan skipped because freshclam exited %d.\n' \
+    "$freshclam_status" >"$clamav_report"
+fi
+
+set +e
+trivy fs \
+  --cache-dir "$trivy_cache_dir" \
+  --exit-code 0 \
+  --format json \
+  --no-progress \
+  --output "$trivy_security_report" \
+  --scanners secret,misconfig \
+  --skip-version-check \
+  --skip-dirs "$source_dir/.git" \
+  --skip-dirs '**/target' \
+  "$source_dir"
+trivy_security_status=$?
+
+trivy fs \
+  --cache-dir "$trivy_cache_dir" \
+  --exit-code 0 \
+  --format json \
+  --no-progress \
+  --output "$trivy_source_dependencies_report" \
+  --scanners vuln \
+  --skip-version-check \
+  --skip-dirs "$source_dir/.git" \
+  --skip-dirs '**/target' \
+  "$source_dir"
+trivy_source_dependencies_status=$?
+
+trivy sbom \
+  --cache-dir "$trivy_cache_dir" \
+  --exit-code 0 \
+  --format json \
+  --no-progress \
+  --output "$trivy_release_dependencies_report" \
+  --scanners vuln \
+  --skip-version-check \
+  "$release_dir/sbom.spdx.json"
+trivy_release_dependencies_status=$?
+set -e
+
+count_trivy_security() {
+  jq '[
+    .Results[]?
+    | (.Misconfigurations[]?, .Secrets[]?)
+    | select(.Severity == "HIGH" or .Severity == "CRITICAL")
+  ] | length' "$1"
+}
+
+count_trivy_vulnerabilities() {
+  jq '[
+    .Results[]?.Vulnerabilities[]?
+    | select(.Severity == "HIGH" or .Severity == "CRITICAL")
+  ] | length' "$1"
+}
+
+trivy_security_findings=0
+if [[ $trivy_security_status -ne 0 ]] \
+    || ! trivy_security_findings="$(count_trivy_security "$trivy_security_report")"; then
+  trivy_security_result=ERROR
+else
+  trivy_security_result=PASS
+  [[ $trivy_security_findings -eq 0 ]] || trivy_security_result=FAIL
+fi
+
+trivy_source_dependencies_findings=0
+if [[ $trivy_source_dependencies_status -ne 0 ]] \
+    || ! trivy_source_dependencies_findings="$(
+      count_trivy_vulnerabilities "$trivy_source_dependencies_report"
+    )"; then
+  trivy_source_dependencies_result=ERROR
+else
+  trivy_source_dependencies_result=PASS
+  [[ $trivy_source_dependencies_findings -eq 0 ]] \
+    || trivy_source_dependencies_result=REVIEW
+fi
+
+trivy_release_dependencies_findings=0
+if [[ $trivy_release_dependencies_status -ne 0 ]] \
+    || ! trivy_release_dependencies_findings="$(
+      count_trivy_vulnerabilities "$trivy_release_dependencies_report"
+    )"; then
+  trivy_release_dependencies_result=ERROR
+else
+  trivy_release_dependencies_result=PASS
+  [[ $trivy_release_dependencies_findings -eq 0 ]] \
+    || trivy_release_dependencies_result=FAIL
+fi
+
+clamav_infected="$(
+  awk -F: '/^Infected files:/ {
+    gsub(/[[:space:]]/, "", $2)
+    print $2
+  }' "$clamav_report" | tail -n 1
+)"
+clamav_infected=${clamav_infected:-0}
+if [[ $freshclam_status -ne 0 || $clamscan_status -gt 1 ]]; then
+  clamav_result=ERROR
+elif [[ $clamscan_status -eq 1 || $clamav_infected -gt 0 ]]; then
+  clamav_result=FAIL
+else
+  clamav_result=PASS
+fi
+
+mapfile -d '' codeql_files < <(
+  if [[ -n "$codeql_dir" ]]; then
+    find "$codeql_dir" -type f \
+      \( -name '*.sarif' -o -name '*.sarif.json' \) -print0
+  fi
+)
+codeql_findings=0
+codeql_result=PASS
+if [[ ${#codeql_files[@]} -eq 0 ]]; then
+  codeql_result=ERROR
+else
+  for sarif in "${codeql_files[@]}"; do
+    if ! count="$(
+      jq '[
+        .runs[]?
+        | (
+            [.tool.driver.rules[]?]
+            + [.tool.extensions[]?.rules[]?]
+          ) as $rules
+        | .results[]?
+        | .ruleId as $rule_id
+        | (
+            $rules[]?
+            | select(.id == $rule_id)
+            | .properties["security-severity"]
+          ) as $score
+        | select((($score // "0") | tonumber) >= 7.0)
+      ] | length' "$sarif"
+    )"; then
+      codeql_result=ERROR
+      break
+    fi
+    codeql_findings=$((codeql_findings + count))
+  done
+  if [[ "$codeql_result" == PASS && $codeql_findings -gt 0 ]]; then
+    codeql_result=FAIL
+  fi
+fi
+
+dependency_trees_dir="$reports_dir/maven-dependency-trees"
+mkdir -p "$dependency_trees_dir"
+dependency_tree_count=0
+while IFS= read -r -d '' tree; do
+  relative="${tree#"$source_dir"/}"
+  destination="${relative//\//__}"
+  cp "$tree" "$dependency_trees_dir/$destination"
+  dependency_tree_count=$((dependency_tree_count + 1))
+done < <(
+  find "$source_dir" -type f -path '*/target/dependency-tree.txt' -print0
+)
+if [[ $dependency_tree_count -eq 0 ]]; then
+  dependency_trees_result=ERROR
+else
+  dependency_trees_result=PASS
+fi
+
+overall_result=PASS
+for result in \
+  "$clamav_result" \
+  "$codeql_result" \
+  "$trivy_security_result" \
+  "$trivy_source_dependencies_result" \
+  "$trivy_release_dependencies_result" \
+  "$dependency_trees_result"; do
+  [[ "$result" == PASS || "$result" == REVIEW ]] || overall_result=FAIL
+done
+
+clamav_version="$(clamscan --version 2>&1)"
+clamav_version="${clamav_version%%$'\n'*}"
+trivy_version="$(trivy --version 2>&1)"
+trivy_version="${trivy_version%%$'\n'*}"
+codeql_version=unknown
+if [[ ${#codeql_files[@]} -gt 0 ]]; then
+  codeql_version="$(
+    jq -r '
+      .runs[0].tool.driver.semanticVersion
+      // .runs[0].tool.driver.version
+      // "unknown"
+    ' "${codeql_files[0]}" 2>/dev/null || printf unknown
+  )"
+fi
+
+cat >"$reports_dir/SUMMARY.md" <<EOF
+# SSTable Tools $version Security Report
+
+Generated: $generated_at
+
+Source revision: \`$source_revision\`
+
+| Check | Result | HIGH/CRITICAL findings |
+|---|---:|---:|
+| ClamAV release-artifact scan | $clamav_result | $clamav_infected infected files |
+| CodeQL Java security-extended | $codeql_result | $codeql_findings |
+| Trivy source secrets and misconfiguration | $trivy_security_result | $trivy_security_findings |
+| Trivy build/compatibility dependency inventory (report-only) | $trivy_source_dependencies_result | $trivy_source_dependencies_findings |
+| Trivy published SBOM dependency vulnerabilities | $trivy_release_dependencies_result | $trivy_release_dependencies_findings |
+| Maven runtime dependency inventories | $dependency_trees_result | $dependency_tree_count reports |
+
+Overall release security gate: **$overall_result**
+
+Release publication is blocked when malware is detected, a scanner or required
+report fails, or CodeQL, source security scanning, or the published SBOM reports
+a HIGH or CRITICAL finding. The full reactor dependency graph is report-only
+because it contains compatibility and provided dependencies that are not
+distributed. JSON and SARIF files contain the complete scanner output, including
+findings below the publication threshold.
+EOF
+
+jq -n \
+  --arg schemaVersion "1" \
+  --arg version "$version" \
+  --arg generatedAt "$generated_at" \
+  --arg sourceRevision "$source_revision" \
+  --arg overallResult "$overall_result" \
+  --arg clamavVersion "$clamav_version" \
+  --arg clamavResult "$clamav_result" \
+  --argjson clamavInfected "$clamav_infected" \
+  --arg codeqlVersion "$codeql_version" \
+  --arg codeqlResult "$codeql_result" \
+  --argjson codeqlFindings "$codeql_findings" \
+  --arg trivyVersion "$trivy_version" \
+  --arg trivySecurityResult "$trivy_security_result" \
+  --argjson trivySecurityFindings "$trivy_security_findings" \
+  --arg trivySourceDependenciesResult "$trivy_source_dependencies_result" \
+  --argjson trivySourceDependenciesFindings \
+    "$trivy_source_dependencies_findings" \
+  --arg trivyReleaseDependenciesResult "$trivy_release_dependencies_result" \
+  --argjson trivyReleaseDependenciesFindings \
+    "$trivy_release_dependencies_findings" \
+  --arg dependencyTreesResult "$dependency_trees_result" \
+  --argjson dependencyTreeCount "$dependency_tree_count" \
+  '{
+    schemaVersion: ($schemaVersion | tonumber),
+    version: $version,
+    generatedAt: $generatedAt,
+    sourceRevision: $sourceRevision,
+    overallResult: $overallResult,
+    tools: {
+      clamav: {version: $clamavVersion},
+      codeql: {version: $codeqlVersion},
+      trivy: {version: $trivyVersion}
+    },
+    checks: {
+      clamav: {
+        result: $clamavResult,
+        infectedFiles: $clamavInfected
+      },
+      codeql: {
+        result: $codeqlResult,
+        highOrCriticalFindings: $codeqlFindings
+      },
+      trivySourceSecurity: {
+        result: $trivySecurityResult,
+        highOrCriticalFindings: $trivySecurityFindings
+      },
+      trivySourceDependencies: {
+        result: $trivySourceDependenciesResult,
+        highOrCriticalFindings: $trivySourceDependenciesFindings
+      },
+      trivyReleaseDependencies: {
+        result: $trivyReleaseDependenciesResult,
+        highOrCriticalFindings: $trivyReleaseDependenciesFindings
+      },
+      mavenDependencyTrees: {
+        result: $dependencyTreesResult,
+        reportCount: $dependencyTreeCount
+      }
+    }
+  }' >"$reports_dir/metadata.json"
+
+tar -C "$(dirname "$reports_dir")" -czf "$reports_archive" \
+  "$(basename "$reports_dir")"
+
+printf 'security.reports.directory=%s\n' "$reports_dir"
+printf 'security.reports.archive=%s\n' "$reports_archive"
+printf 'security.result=%s\n' "$overall_result"
+
+[[ "$overall_result" == PASS ]]

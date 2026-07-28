@@ -22,8 +22,19 @@ The `Release` GitHub Actions workflow:
 4. creates the release bundle, DEB, and RPM;
 5. extracts and verifies both packages;
 6. writes final SHA-256 checksums and optionally signs them; and
-7. uploads the directory as an immutable workflow artifact and a GitHub
-   Release.
+7. scans release artifacts with ClamAV;
+8. runs CodeQL source analysis plus Trivy source, configuration, secret, and
+   published-SBOM dependency vulnerability scans, while recording the full
+   Maven build/compatibility dependency graph; and
+9. uploads the release and its security report archive as immutable workflow
+   artifacts and GitHub Release assets.
+
+Release publication fails on malware, scanner errors, missing reports, or
+HIGH/CRITICAL CodeQL, source-security, or published-SBOM findings. The full
+Maven graph is report-only because it includes compatibility and provided
+dependencies that are not distributed. Security reports are uploaded as a
+workflow artifact even when the security gate fails, so the failure can be
+diagnosed without publishing unapproved binaries.
 
 The workflow can also be dispatched manually with an explicit version. This is
 intended for release testing or recovery; tagged releases remain the normal
@@ -55,6 +66,23 @@ SHA256SUMS.asc
 
 The GitHub Release also contains `sstable-tools-1.2.3.tar.gz`, a reproducible
 standalone archive of that directory which preserves executable launcher modes.
+It additionally contains `sstable-tools-1.2.3-security-reports.tar.gz`, with:
+
+```text
+security-reports/SUMMARY.md
+security-reports/metadata.json
+security-reports/clamav-update.txt
+security-reports/clamav-scan.txt
+security-reports/codeql/*.sarif
+security-reports/trivy-source-security.json
+security-reports/trivy-source-dependencies.json
+security-reports/trivy-release-dependencies.json
+security-reports/maven-dependency-trees/*.txt
+```
+
+CodeQL Action `v4.36.0` and the remediated Trivy setup action `v0.2.6` are
+pinned by full commit SHA. Trivy is pinned to the known-safe immutable
+`v0.69.3` binary rather than a mutable `latest` reference.
 
 `SHA256SUMS.asc` is present only when `RELEASE_GPG_PRIVATE_KEY` is configured
 for the repository. `PACKAGE-CONTENTS-SHA256SUMS` is embedded in the DEB and
@@ -83,3 +111,8 @@ scripts/verify-release-bundle "target/release/sstable-tools-$VERSION"
 Pass `--sign` to `scripts/package-linux-packages` only after the appropriate
 GPG private key is available. Signing is deliberately the last packaging step
 because the Linux packages are included in the final checksum file.
+
+The complete security gate additionally requires ClamAV, `jq`, Trivy `v0.69.3`,
+Maven runtime dependency-tree reports, and CodeQL SARIF output. The release
+workflow provisions those tools and invokes `scripts/release-security-scan`
+after package verification.

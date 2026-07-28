@@ -58,8 +58,12 @@ The compile pins are:
   without Cassandra.
 
 The CI workflow runs the same verification and generates Maven runtime
-dependency trees for every reactor module. The four thin JARs and dependency
-reports are retained with the release bundles as a workflow artifact.
+dependency trees for every reactor module. The release workflow also scans the
+source dependency graph and published SPDX SBOM with Trivy, retaining complete
+JSON results and the Maven dependency trees in the versioned security report
+archive. The full source graph is report-only because it contains compatibility
+and provided dependencies that are not packaged. HIGH or CRITICAL findings in
+the published SBOM block release publication.
 
 ## DEB and RPM payload
 

@@ -12,13 +12,14 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
   publish:
     name: Build and publish release bundle
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Check out release source
         uses: actions/checkout@v6
@@ -31,18 +32,31 @@ jobs:
           cache: maven
           cache-dependency-path: '**/pom.xml'
 
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          languages: java-kotlin
+          build-mode: none
+          queries: security-extended
+
       - name: Set up Go for nFPM
         uses: actions/setup-go@v6
         with:
           go-version: '1.26.4'
           cache: false
 
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.69.3
+          cache: true
+
       - name: Install Linux package tooling
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           sudo apt-get update
-          sudo apt-get install --yes cpio rpm rpm2cpio
+          sudo apt-get install --yes clamav clamav-freshclam cpio rpm rpm2cpio
 
       - name: Resolve release version
         id: release
@@ -64,6 +78,15 @@ jobs:
         run: >-
           mvn -B -ntp clean verify
           -Drevision=${{ steps.release.outputs.version }}
+
+      - name: Analyze Java security with CodeQL
+        id: codeql
+        continue-on-error: true
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        with:
+          output: target/security-reports/codeql
+          upload: never
+          upload-database: false
 
       - name: Import release signing key
         env:
@@ -91,6 +114,48 @@ jobs:
           scripts/verify-linux-packages "$release_dir"
           scripts/verify-release-bundle "$release_dir"
 
+      - name: Generate Maven runtime dependency inventories
+        run: >-
+          mvn -B -ntp dependency:tree
+          -Drevision=${{ steps.release.outputs.version }}
+          -Dscope=runtime
+          -DoutputFile=target/dependency-tree.txt
+
+      - name: Scan release security
+        id: security
+        continue-on-error: true
+        run: |
+          version="${{ steps.release.outputs.version }}"
+          set +e
+          scripts/release-security-scan \
+            --version "$version" \
+            --release-dir "target/release/sstable-tools-$version" \
+            --release-archive "target/release/sstable-tools-$version.tar.gz" \
+            --reports-dir target/security-reports \
+            --reports-archive \
+              "target/release/sstable-tools-$version-security-reports.tar.gz" \
+            --codeql-dir target/security-reports/codeql
+          scan_status=$?
+          set -e
+          cat target/security-reports/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$scan_status"
+
+      - name: Upload security reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sstable-tools-${{ steps.release.outputs.version }}-security-reports
+          if-no-files-found: warn
+          path: |
+            target/security-reports/
+            target/release/sstable-tools-${{ steps.release.outputs.version }}-security-reports.tar.gz
+
+      - name: Enforce release security gate
+        if: ${{ always() && steps.security.outcome != 'success' }}
+        run: |
+          echo "Release security scanning failed; inspect the uploaded reports."
+          exit 1
+
       - name: Upload immutable workflow artifact
         uses: actions/upload-artifact@v7
         with:
@@ -107,6 +172,7 @@ jobs:
           gh release create "${{ steps.release.outputs.tag }}" \
             target/release/sstable-tools-${{ steps.release.outputs.version }}/* \
             target/release/sstable-tools-${{ steps.release.outputs.version }}.tar.gz \
+            target/release/sstable-tools-${{ steps.release.outputs.version }}-security-reports.tar.gz \
             --target "$GITHUB_SHA" \
             --title "SSTable Tools ${{ steps.release.outputs.version }}" \
             --generate-notes
