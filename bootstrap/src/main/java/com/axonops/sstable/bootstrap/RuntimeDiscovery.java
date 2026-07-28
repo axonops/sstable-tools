@@ -63,7 +63,7 @@ public final class RuntimeDiscovery {
         Path home = resolveHome(options.cassandraHome());
         List<Path> jars = listRuntimeJars(home);
         ServerJar server = findServerJar(jars);
-        Path conf = resolveConfiguration(options.cassandraConf(), home);
+        Path supportDirectory = resolveSupportDirectory(home);
         JavaInstallation java = JavaInstallation.discover(
                 options.javaHome(), environment, systemProperties);
         adapter.validate(server.version, java.majorVersion());
@@ -71,10 +71,12 @@ public final class RuntimeDiscovery {
         Path realToolPath = canonicalExisting(toolPath, "tool artifact");
         List<Path> classpath = new ArrayList<>();
         classpath.add(realToolPath);
-        classpath.add(conf);
+        if (supportDirectory != null) {
+            classpath.add(supportDirectory);
+        }
         classpath.addAll(jars);
 
-        return new CassandraInstallation(home, conf, server.path, server.version,
+        return new CassandraInstallation(home, supportDirectory, server.path, server.version,
                 java, realToolPath, classpath);
     }
 
@@ -106,48 +108,26 @@ public final class RuntimeDiscovery {
         return candidates.get(0);
     }
 
-    private Path resolveConfiguration(Path explicitConf, Path home) throws BootstrapException {
-        if (explicitConf != null) {
-            return validateConfiguration(explicitConf, "Cassandra configuration");
-        }
-
-        String environmentConf = environment.get("CASSANDRA_CONF");
-        if (hasText(environmentConf)) {
-            return validateConfiguration(Paths.get(environmentConf), "CASSANDRA_CONF");
-        }
-
+    private Path resolveSupportDirectory(Path home) throws BootstrapException {
         Path tarballConf = home.resolve("conf");
-        if (Files.isRegularFile(tarballConf.resolve("cassandra.yaml"))) {
-            return validateConfiguration(tarballConf, "Cassandra tarball configuration");
+        if (Files.isDirectory(tarballConf)) {
+            return canonicalDirectory(tarballConf, "Cassandra tarball support directory");
         }
 
         List<Path> candidates = new ArrayList<>();
         for (Path candidate : knownConfigurations) {
-            if (Files.isRegularFile(candidate.resolve("cassandra.yaml"))) {
-                candidates.add(validateConfiguration(candidate,
-                        "Cassandra package configuration"));
+            if (Files.isDirectory(candidate)) {
+                candidates.add(canonicalDirectory(candidate,
+                        "Cassandra package support directory"));
             }
         }
-        if (candidates.isEmpty()) {
-            throw new BootstrapException(BootstrapException.DISCOVERY_EXIT_CODE,
-                    "Cannot locate cassandra.yaml; use --cassandra-conf or CASSANDRA_CONF");
+        if (candidates.size() == 1) {
+            return candidates.get(0);
         }
-        if (candidates.size() > 1) {
-            throw new BootstrapException(BootstrapException.DISCOVERY_EXIT_CODE,
-                    "Multiple Cassandra configuration directories were found: " + candidates
-                            + "; select one with --cassandra-conf");
-        }
-        return candidates.get(0);
-    }
-
-    private static Path validateConfiguration(Path path, String description)
-            throws BootstrapException {
-        Path directory = canonicalDirectory(path, description);
-        if (!Files.isRegularFile(directory.resolve("cassandra.yaml"))) {
-            throw new BootstrapException(BootstrapException.DISCOVERY_EXIT_CODE,
-                    description + " does not contain cassandra.yaml: " + directory);
-        }
-        return directory;
+        // Configuration is optional. The worker uses a generated workspace-owned
+        // cassandra.yaml; an unambiguous support directory is used only for optional
+        // distribution JVM module options and client resources.
+        return null;
     }
 
     private static boolean containsServerJar(Path home) throws BootstrapException {

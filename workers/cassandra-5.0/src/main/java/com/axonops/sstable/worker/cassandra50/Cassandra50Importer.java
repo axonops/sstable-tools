@@ -45,7 +45,6 @@ import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.IVerifier;
 import org.apache.cassandra.io.sstable.ISSTableScanner;
-import org.apache.cassandra.io.sstable.SequenceBasedSSTableId;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.Version;
@@ -93,20 +92,26 @@ final class Cassandra50Importer {
                 .toAbsolutePath().normalize();
         requireOwnedTableDirectory(options.workspaceRoot(), tableDirectory);
         try {
+            disableAndQuiesceCompaction(cfs);
+            if ("system".equals(schema.keyspace())) {
+                // Cassandra creates private system.local state while activating the isolated
+                // daemon. This worker is disposable, so reset its tracker rather than truncate:
+                // truncation writes another private system.local SSTable during its own flush.
+                cfs.clearUnsafe();
+                // clearUnsafe only removes the bootstrap SSTables from Cassandra's tracker.
+                // Remove their components as well, while the path is still proven to be owned
+                // by this private workspace before the explicit source set is attached.
+                deleteTree(tableDirectory);
+            }
             if (!cfs.getLiveSSTables().isEmpty()) {
                 throw new IllegalStateException("Import target already contains live SSTables");
             }
 
             List<ValidatedSet> validated = validateAll(source, metadata, cfs);
             source.verifyUnchanged();
-            cfs.disableAutoCompaction();
-            if (!cfs.isAutoCompactionDisabled()) {
-                throw new IllegalStateException("Cassandra did not disable automatic compaction");
-            }
 
             for (int i = 0; i < validated.size(); i++) {
-                importOne(options.workspaceRoot(), cfs, validated.get(i), tableDirectory,
-                        nextGeneration(tableDirectory), i);
+                importOne(options.workspaceRoot(), cfs, validated.get(i), tableDirectory, i);
             }
             source.verifyUnchanged();
 
@@ -128,7 +133,8 @@ final class Cassandra50Importer {
                     metadata.id.asUUID(), metadata.partitioner.getClass().getCanonicalName(),
                     relativeTable, validated.size(), liveSstables, logicalRows,
                     maximumSourceTimestamp(validated),
-                    cfs.isAutoCompactionDisabled(), false);
+                    cfs.isAutoCompactionDisabled(), false,
+                    systemClusterName(schema.keyspace(), schema.table()));
         } catch (Exception failure) {
             try {
                 deleteTree(tableDirectory);
@@ -284,7 +290,7 @@ final class Cassandra50Importer {
     }
 
     private static long maximumSourceTimestamp(List<ValidatedSet> validated) {
-        long maximum = Long.MIN_VALUE;
+        long maximum = 0L;
         for (ValidatedSet set : validated) {
             maximum = Math.max(maximum, set.maxTimestamp);
         }
@@ -307,11 +313,9 @@ final class Cassandra50Importer {
                                   ColumnFamilyStore cfs,
                                   ValidatedSet source,
                                   Path targetDirectory,
-                                  int generation,
                                   int index) throws Exception {
-        Descriptor target = new Descriptor(source.descriptor.version,
-                new org.apache.cassandra.io.util.File(targetDirectory),
-                cfs.keyspace.getName(), cfs.name, new SequenceBasedSSTableId(generation));
+        Descriptor target = workspaceDescriptor(source.descriptor, targetDirectory,
+                cfs.keyspace.getName(), cfs.name);
         Path staging = workspace.resolve("staging/import-" + UUID.randomUUID()
                 + "/set-" + index).normalize();
         if (!staging.startsWith(workspace) || Files.exists(staging, LinkOption.NOFOLLOW_LINKS)) {
@@ -350,7 +354,13 @@ final class Cassandra50Importer {
                 published.add(destination);
             }
             int before = cfs.getLiveSSTables().size();
-            cfs.loadNewSSTables();
+            // importNewSSTables deliberately assigns a fresh local identifier and therefore
+            // renames an otherwise collision-free descriptor. Open the staged descriptor
+            // directly instead: the workspace owns the directory, has already verified the
+            // complete component set, and must retain the caller's SSTable identifier.
+            SSTableReader reader = SSTableReader.open(cfs, target, staged.keySet(),
+                    TableMetadataRef.forOfflineTools(cfs.metadata()), true, true);
+            cfs.addSSTable(reader);
             int after = cfs.getLiveSSTables().size();
             if (after != before + 1) {
                 throw new IllegalStateException("Cassandra did not load exactly one staged "
@@ -403,31 +413,23 @@ final class Cassandra50Importer {
         }
     }
 
-    static int nextGeneration(Path directory) throws IOException {
-        int maximum = 0;
-        if (Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
-            try (java.nio.file.DirectoryStream<Path> entries = Files.newDirectoryStream(
-                    directory)) {
-                for (Path path : entries) {
-                    String[] parts = path.getFileName().toString().split("-", 4);
-                    if (parts.length != 4) {
-                        continue;
-                    }
-                    try {
-                        int generation = Integer.parseInt(parts[1]);
-                        if (generation > 0) {
-                            maximum = Math.max(maximum, generation);
-                        }
-                    } catch (NumberFormatException ignored) {
-                        // Non-SSTable files do not reserve a generation.
-                    }
-                }
-            }
+    static Descriptor workspaceDescriptor(Descriptor source,
+                                          Path targetDirectory,
+                                          String keyspace,
+                                          String table) {
+        return new Descriptor(source.version, new org.apache.cassandra.io.util.File(targetDirectory),
+                keyspace, table, source.id);
+    }
+
+    private static void disableAndQuiesceCompaction(ColumnFamilyStore cfs) {
+        cfs.disableAutoCompaction();
+        List<ColumnFamilyStore> stores = Collections.singletonList(cfs);
+        CompactionManager.instance.interruptCompactionForCFs(stores, reader -> true, true);
+        CompactionManager.instance.waitForCessation(stores, reader -> true);
+        if (!cfs.isAutoCompactionDisabled()
+                || CompactionManager.instance.isCompacting(stores, reader -> true)) {
+            throw new IllegalStateException("Cassandra did not disable automatic compaction");
         }
-        if (maximum == Integer.MAX_VALUE) {
-            throw new IOException("SSTable generation space is exhausted");
-        }
-        return maximum + 1;
     }
 
     private static long logicalRows(String keyspace, String table) {
@@ -437,6 +439,26 @@ final class Cassandra50Importer {
             throw new IllegalStateException("Cassandra did not return an import row count");
         }
         return result.one().getLong("count");
+    }
+
+    private static String systemClusterName(String keyspace, String table) {
+        if (!"system".equals(keyspace) || !"local".equals(table)) {
+            return null;
+        }
+        UntypedResultSet result = QueryProcessor.executeInternal(
+                "SELECT cluster_name FROM system.local");
+        if (result == null || result.isEmpty()) {
+            throw new IllegalStateException("Cassandra did not return system.local cluster_name");
+        }
+        UntypedResultSet.Row row = result.one();
+        if (!row.has("cluster_name")) {
+            throw new IllegalStateException("Cassandra did not return system.local cluster_name");
+        }
+        String clusterName = row.getString("cluster_name");
+        if (clusterName == null || clusterName.trim().isEmpty()) {
+            throw new IllegalStateException("Imported system.local has no cluster_name");
+        }
+        return clusterName;
     }
 
     private static String quoteIdentifier(String identifier) {

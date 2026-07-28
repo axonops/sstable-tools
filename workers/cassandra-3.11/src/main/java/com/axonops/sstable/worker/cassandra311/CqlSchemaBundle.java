@@ -58,9 +58,35 @@ final class CqlSchemaBundle {
                         + parsed.getClass().getSimpleName());
             }
         }
-        if (keyspace == null || tableStatement == null) {
+        if (tableStatement == null) {
             throw new IllegalArgumentException("Schema bundle must declare exactly one keyspace "
                     + "and exactly one table");
+        }
+
+        String idempotentTable = addIfNotExists(tableStatement, "TABLE");
+        CreateTableStatement.RawStatement rawTable = (CreateTableStatement.RawStatement)
+                QueryProcessor.parseStatement(idempotentTable);
+        if (keyspace == null && isBuiltInSystemKeyspace(rawTable.keyspace())) {
+            keyspace = rawTable.keyspace();
+        }
+        if (keyspace == null) {
+            throw new IllegalArgumentException("Schema bundle must declare exactly one keyspace "
+                    + "and exactly one table");
+        }
+        if (!keyspace.equals(rawTable.keyspace())) {
+            throw new IllegalArgumentException("Table must be explicitly declared in keyspace "
+                    + keyspace);
+        }
+        if (isBuiltInSystemKeyspace(keyspace)) {
+            if (!types.isEmpty()) {
+                throw new IllegalArgumentException("System keyspace schema bundles cannot "
+                        + "declare UDTs");
+            }
+            if (Schema.instance.getCFMetaData(keyspace, rawTable.columnFamily()) == null) {
+                throw new IllegalArgumentException("Unknown built-in system table "
+                        + keyspace + "." + rawTable.columnFamily());
+            }
+            return new CqlSchemaBundle(keyspace, rawTable.columnFamily());
         }
 
         QueryProcessor.executeInternal("CREATE KEYSPACE IF NOT EXISTS "
@@ -79,7 +105,6 @@ final class CqlSchemaBundle {
                     QueryProcessor.makeInternalOptions(prepared, new Object[0]));
         }
 
-        String idempotentTable = addIfNotExists(tableStatement, "TABLE");
         ParsedStatement.Prepared prepared = QueryProcessor.parseStatement(
                 idempotentTable, QueryState.forInternalCalls());
         if (!(prepared.statement instanceof CreateTableStatement)) {
@@ -99,6 +124,10 @@ final class CqlSchemaBundle {
         QueryProcessor.executeInternal(disableAutomaticCompactionStatement(keyspace,
                 createTable.columnFamily()));
         return new CqlSchemaBundle(keyspace, createTable.columnFamily());
+    }
+
+    private static boolean isBuiltInSystemKeyspace(String keyspace) {
+        return "system".equals(keyspace);
     }
 
     static String disableAutomaticCompactionStatement(String keyspace, String table) {

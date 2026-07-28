@@ -153,9 +153,9 @@ public final class BootstrapMain {
         out.println();
         out.println("Options:");
         out.println("  --cassandra-home <path>  Cassandra installation to use");
-        out.println("  --cassandra-conf <path>  Cassandra configuration directory to use");
         out.println("  --java-home <path>       Compatible Java installation to use");
         out.println("  --sstables <path>        Selected SSTable Data.db or TOC.txt (repeatable)");
+        out.println("  --output-dir <path>      Existing table directory for direct CQL output");
         out.println("  --schema <path>          UTF-8 CQL schema bundle for selected SSTables");
         out.println("  --timestamp-policy <p>  wall-clock or after-source (start/direct cqlsh)");
         out.println("  --mode <mode>           delta or snapshot (workspace export)");
@@ -168,7 +168,7 @@ public final class BootstrapMain {
         out.println("  --help                   Print this help");
         out.println();
         out.println("Runtime commands:");
-        out.println("  cqlsh                    Query selected SSTables and publish deltas beside them");
+        out.println("  cqlsh                    Query SSTables or publish writes into --output-dir");
         out.println("  runtime inspect          Print resolved runtime paths, versions, and hashes");
         out.println("  runtime preflight        Run the release worker linkage self-test");
         out.println();

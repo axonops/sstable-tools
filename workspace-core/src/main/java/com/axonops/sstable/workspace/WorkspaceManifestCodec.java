@@ -175,9 +175,6 @@ public final class WorkspaceManifestCodec {
             throws WorkspaceException {
         requireOnly(object, "sourceInventory", "sets");
         JsonArray values = requiredArray(object, "sets");
-        if (values.size() == 0) {
-            throw new WorkspaceException("sourceInventory.sets must not be empty");
-        }
         List<SstableSet> sets = new ArrayList<>();
         Set<String> descriptorPaths = new HashSet<>();
         for (int index = 0; index < values.size(); index++) {

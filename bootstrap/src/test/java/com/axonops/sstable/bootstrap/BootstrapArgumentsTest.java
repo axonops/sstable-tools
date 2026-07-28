@@ -136,13 +136,40 @@ public class BootstrapArgumentsTest {
     }
 
     @Test
-    public void directCqlshRequiresExplicitSourcesAndSchema() throws Exception {
+    public void directCqlshRequiresOneInputModeAndSchema() throws Exception {
         assertUsageFailure(new String[]{"cqlsh", "--schema", "schema.cql"},
-                "requires at least one --sstables");
+                "exactly one of --sstables or --output-dir");
         assertUsageFailure(new String[]{"cqlsh", "--sstables", "source-Data.db"},
                 "requires --schema");
+        assertUsageFailure(new String[]{"cqlsh", "--sstables", "source-Data.db",
+                "--output-dir", "output", "--schema", "schema.cql"},
+                "exactly one of --sstables or --output-dir");
         assertUsageFailure(new String[]{"workspace", "status", "workspace", "--tmp-dir",
                 "/var/tmp/sstable-tools"}, "only valid with cqlsh");
+    }
+
+    @Test
+    public void parsesDirectOutputDirectoryWithoutSstableSelection() throws Exception {
+        BootstrapArguments direct = BootstrapArguments.parse(new String[]{
+                "--output-dir", "output", "--schema", "schema.cql",
+                "--output-format", "bti", "cqlsh", "--execute",
+                "INSERT INTO test.items (id) VALUES (1) USING TIMESTAMP 123"
+        });
+
+        Assert.assertTrue(direct.sourceDirectories().isEmpty());
+        Assert.assertEquals(Paths.get("output"), direct.directOutputDirectory());
+        Assert.assertEquals(BootstrapArguments.SstableOutputFormat.BTI,
+                direct.sstableOutputFormat());
+        assertUsageFailure(new String[]{"workspace", "create", "workspace",
+                "--sstables", "source-Data.db", "--output-dir", "output"},
+                "only valid with direct cqlsh");
+    }
+
+    @Test
+    public void rejectsRemovedCassandraConfOption() throws Exception {
+        assertUsageFailure(new String[]{
+                "--cassandra-conf", "conf", "runtime", "inspect"
+        }, "Unknown option: --cassandra-conf");
     }
 
     @Test

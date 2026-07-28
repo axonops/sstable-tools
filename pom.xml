@@ -6,7 +6,7 @@
 
   <groupId>com.axonops</groupId>
   <artifactId>sstable-tools-parent</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>${revision}</version>
   <packaging>pom</packaging>
 
   <name>SSTable Tools</name>
@@ -25,6 +25,7 @@
   </modules>
 
   <properties>
+    <revision>0.1.0-SNAPSHOT</revision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <maven.compiler.plugin.version>3.13.0</maven.compiler.plugin.version>

@@ -36,6 +36,19 @@ public class ImportResultTest {
     }
 
     @Test
+    public void acceptsAnEmptyImportedBaseline() {
+        ImportResult result = new ImportResult(WorkerProtocol.CURRENT_VERSION,
+                UUID.randomUUID(), "5.0.8", "blog", "users", UUID.randomUUID(),
+                "org.apache.cassandra.dht.Murmur3Partitioner",
+                "data/blog/users-0123456789abcdef", 0, 0, 0, 0,
+                true, false);
+
+        Assert.assertEquals(0, result.sourceSets());
+        Assert.assertEquals(0, result.liveSstables());
+        Assert.assertEquals(0, result.sourceMaxTimestampMicros());
+    }
+
+    @Test
     public void rejectsUnsafeOrUnprovenResults() throws Exception {
         assertInvalid("../outside", true, false);
         assertInvalid("data/blog/users-id", false, false);

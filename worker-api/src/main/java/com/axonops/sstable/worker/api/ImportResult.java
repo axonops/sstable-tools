@@ -27,7 +27,7 @@ public final class ImportResult {
             "protocol", "workspace.id", "release", "keyspace", "table", "table.id",
             "partitioner", "table.directory", "source.sets", "live.sstables",
             "logical.rows", "source.max-timestamp-micros", "auto.compaction.disabled",
-            "native.transport.started"));
+            "native.transport.started", "system.cluster-name"));
 
     private final int protocol;
     private final UUID workspaceId;
@@ -43,6 +43,7 @@ public final class ImportResult {
     private final long sourceMaxTimestampMicros;
     private final boolean autoCompactionDisabled;
     private final boolean nativeTransportStarted;
+    private final String systemClusterName;
 
     public ImportResult(int protocol,
                         UUID workspaceId,
@@ -58,6 +59,26 @@ public final class ImportResult {
                         long sourceMaxTimestampMicros,
                         boolean autoCompactionDisabled,
                         boolean nativeTransportStarted) {
+        this(protocol, workspaceId, release, keyspace, table, tableId, partitioner,
+                tableDirectory, sourceSets, liveSstables, logicalRows,
+                sourceMaxTimestampMicros, autoCompactionDisabled, nativeTransportStarted, null);
+    }
+
+    public ImportResult(int protocol,
+                        UUID workspaceId,
+                        String release,
+                        String keyspace,
+                        String table,
+                        UUID tableId,
+                        String partitioner,
+                        String tableDirectory,
+                        int sourceSets,
+                        int liveSstables,
+                        long logicalRows,
+                        long sourceMaxTimestampMicros,
+                        boolean autoCompactionDisabled,
+                        boolean nativeTransportStarted,
+                        String systemClusterName) {
         Path relative;
         try {
             relative = Paths.get(tableDirectory == null ? "" : tableDirectory);
@@ -69,7 +90,7 @@ public final class ImportResult {
                 || isBlank(partitioner) || relative.isAbsolute() || relative.getNameCount() < 3
                 || !"data".equals(relative.getName(0).toString())
                 || !relative.equals(relative.normalize()) || tableDirectory.indexOf('\\') >= 0
-                || sourceSets < 1 || liveSstables < sourceSets || logicalRows < 0
+                || sourceSets < 0 || liveSstables < sourceSets || logicalRows < 0
                 || !autoCompactionDisabled || nativeTransportStarted) {
             throw new IllegalArgumentException("Invalid import result");
         }
@@ -87,6 +108,7 @@ public final class ImportResult {
         this.sourceMaxTimestampMicros = sourceMaxTimestampMicros;
         this.autoCompactionDisabled = autoCompactionDisabled;
         this.nativeTransportStarted = nativeTransportStarted;
+        this.systemClusterName = systemClusterName;
     }
 
     public void writeAtomically(Path path) throws IOException {
@@ -146,7 +168,8 @@ public final class ImportResult {
                     Long.parseLong(required(values, "logical.rows")),
                     Long.parseLong(required(values, "source.max-timestamp-micros")),
                     bool(values, "auto.compaction.disabled"),
-                    bool(values, "native.transport.started"));
+                    bool(values, "native.transport.started"),
+                    optional(values, "system.cluster-name"));
         } catch (IllegalArgumentException e) {
             throw new IOException("Import result contains invalid values", e);
         }
@@ -170,6 +193,7 @@ public final class ImportResult {
         values.setProperty("auto.compaction.disabled",
                 Boolean.toString(autoCompactionDisabled));
         values.setProperty("native.transport.started", Boolean.toString(nativeTransportStarted));
+        values.setProperty("system.cluster-name", systemClusterName == null ? "" : systemClusterName);
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         values.store(output, "sstable-tools import result");
         return output.toByteArray();
@@ -181,6 +205,11 @@ public final class ImportResult {
             throw new IOException("Missing import result field " + name);
         }
         return value;
+    }
+
+    private static String optional(Properties values, String name) {
+        String value = values.getProperty(name);
+        return isBlank(value) ? null : value;
     }
 
     private static int integer(Properties values, String name) throws IOException {
@@ -268,5 +297,9 @@ public final class ImportResult {
 
     public boolean nativeTransportStarted() {
         return nativeTransportStarted;
+    }
+
+    public String systemClusterName() {
+        return systemClusterName;
     }
 }

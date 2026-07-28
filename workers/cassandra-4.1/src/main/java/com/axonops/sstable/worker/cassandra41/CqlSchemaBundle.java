@@ -59,9 +59,35 @@ final class CqlSchemaBundle {
                         + parsed.getClass().getSimpleName());
             }
         }
-        if (keyspace == null || tableStatement == null) {
+        if (tableStatement == null) {
             throw new IllegalArgumentException("Schema bundle must declare exactly one keyspace "
                     + "and exactly one table");
+        }
+
+        String idempotentTable = addIfNotExists(tableStatement, "TABLE");
+        CreateTableStatement.Raw rawTable = (CreateTableStatement.Raw) QueryProcessor
+                .parseStatement(idempotentTable);
+        if (keyspace == null && isBuiltInSystemKeyspace(rawTable.keyspace())) {
+            keyspace = rawTable.keyspace();
+        }
+        if (keyspace == null) {
+            throw new IllegalArgumentException("Schema bundle must declare exactly one keyspace "
+                    + "and exactly one table");
+        }
+        if (!keyspace.equals(rawTable.keyspace())) {
+            throw new IllegalArgumentException("Table must be explicitly declared in keyspace "
+                    + keyspace);
+        }
+        if (isBuiltInSystemKeyspace(keyspace)) {
+            if (!types.isEmpty()) {
+                throw new IllegalArgumentException("System keyspace schema bundles cannot "
+                        + "declare UDTs");
+            }
+            if (Schema.instance.getTableMetadata(keyspace, rawTable.table()) == null) {
+                throw new IllegalArgumentException("Unknown built-in system table "
+                        + keyspace + "." + rawTable.table());
+            }
+            return new CqlSchemaBundle(keyspace, rawTable.table());
         }
 
         QueryProcessor.executeInternal("CREATE KEYSPACE IF NOT EXISTS "
@@ -79,24 +105,21 @@ final class CqlSchemaBundle {
             QueryProcessor.executeInternal(addIfNotExists(type, "TYPE"));
         }
 
-        String idempotentTable = addIfNotExists(tableStatement, "TABLE");
         CQLStatement prepared = QueryProcessor.parseStatement(idempotentTable)
                 .prepare(ClientState.forInternalCalls());
         if (!(prepared instanceof CreateTableStatement)) {
             throw new IllegalArgumentException("Schema bundle table did not prepare as CREATE "
                     + "TABLE");
         }
-        CreateTableStatement.Raw rawTable = (CreateTableStatement.Raw) QueryProcessor
-                .parseStatement(idempotentTable);
-        if (!keyspace.equals(rawTable.keyspace())) {
-            throw new IllegalArgumentException("Table must be explicitly declared in keyspace "
-                    + keyspace);
-        }
         QueryProcessor.executeInternal(idempotentTable);
         if (Schema.instance.getTableMetadata(keyspace, rawTable.table()) == null) {
             throw new IllegalStateException("Cassandra did not install the declared table");
         }
         return new CqlSchemaBundle(keyspace, rawTable.table());
+    }
+
+    private static boolean isBuiltInSystemKeyspace(String keyspace) {
+        return "system".equals(keyspace);
     }
 
     private static String addIfNotExists(String statement, String object) {

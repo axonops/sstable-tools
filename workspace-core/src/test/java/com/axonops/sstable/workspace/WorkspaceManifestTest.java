@@ -32,6 +32,24 @@ public class WorkspaceManifestTest {
     }
 
     @Test
+    public void roundTripsEmptySourceAndBaselineForFirstSstableCreation() throws Exception {
+        Path output = temporary.newFolder("empty-output").toPath();
+        WorkspaceManifest manifest = WorkspaceManifest.create(
+                        SourceInventory.captureDirectoryAllowEmpty(output))
+                .transitionTo(WorkspaceState.VALIDATED)
+                .withImportResult(Collections.singletonMap("table", "users"),
+                        Collections.<ManifestFile>emptyList())
+                .transitionTo(WorkspaceState.IMPORTED);
+        WorkspaceManifestCodec codec = new WorkspaceManifestCodec();
+
+        WorkspaceManifest decoded = codec.decode(codec.encode(manifest));
+
+        Assert.assertTrue(decoded.sourceInventory().sets().isEmpty());
+        Assert.assertTrue(decoded.baselineInventory().isEmpty());
+        Assert.assertEquals(manifest, decoded);
+    }
+
+    @Test
     public void rejectsMalformedAndUnknownManifestFields() throws Exception {
         WorkspaceManifestCodec codec = new WorkspaceManifestCodec();
         assertDecodeFailure(codec, "{not json", "Malformed workspace manifest JSON");

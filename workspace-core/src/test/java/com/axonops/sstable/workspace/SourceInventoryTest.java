@@ -31,6 +31,17 @@ public class SourceInventoryTest {
     }
 
     @Test
+    public void capturesAnEmptyOutputDirectory() throws Exception {
+        Path output = temporary.newFolder("empty-output").toPath();
+
+        SourceInventory inventory = SourceInventory.captureDirectoryAllowEmpty(output);
+
+        Assert.assertTrue(inventory.sets().isEmpty());
+        Assert.assertEquals(0, inventory.componentCount());
+        inventory.verifyUnchanged();
+    }
+
+    @Test
     public void capturesOnlyExplicitlySelectedDataDescriptor() throws Exception {
         Path source = WorkspaceTestFixtures.completeSstableDirectory(
                 temporary.newFolder("selected").toPath());

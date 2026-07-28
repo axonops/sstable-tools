@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import org.junit.Assert;
@@ -36,6 +37,8 @@ public class WorkspaceFlushResultTest {
         restored.verifyCompleteInventory(workspace);
         Assert.assertEquals(2, restored.files().size());
         Assert.assertEquals(1, restored.deltaFiles(baseline).size());
+        Assert.assertEquals(2, restored.deltaFiles(
+                Collections.<ManifestFile>emptyList()).size());
 
         Files.write(table.resolve("mc-2-big-Data.db"), new byte[]{3});
         try {

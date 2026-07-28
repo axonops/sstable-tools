@@ -20,10 +20,11 @@ public class Cassandra311SandboxConfigTest {
     @Test
     public void writesCassandra50BtiSelection() throws Exception {
         Path source = temporary.newFolder("bti-source").toPath();
-        Files.write(source.resolve("oa-1-big-TOC.txt"), Arrays.asList(
+        String identifier = "1234_0001_000010000000000001";
+        Files.write(source.resolve("oa-" + identifier + "-big-TOC.txt"), Arrays.asList(
                 "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
-        Files.write(source.resolve("oa-1-big-Data.db"), new byte[]{1});
-        Files.write(source.resolve("oa-1-big-Statistics.db"), new byte[]{2});
+        Files.write(source.resolve("oa-" + identifier + "-big-Data.db"), new byte[]{1});
+        Files.write(source.resolve("oa-" + identifier + "-big-Statistics.db"), new byte[]{2});
         Path root = temporary.newFolder("bti-workspace").toPath();
         WorkspaceRepository repository = WorkspaceRepository.createAt(root);
         WorkspaceManifest manifest = WorkspaceManifest.create(SourceInventory.capture(
@@ -31,11 +32,14 @@ public class Cassandra311SandboxConfigTest {
         try (WorkspaceLock lock = repository.acquire()) {
             repository.initialize(lock, manifest);
             Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
-                    19042, "5.0", "bti");
+                    19042, "5.0", "bti",
+                    SstableIdentifierStyle.infer(manifest.sourceInventory())
+                            .usesUuidIdentifiers());
         }
         String yaml = new String(Files.readAllBytes(root.resolve(
                 Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
         Assert.assertTrue(yaml.contains("storage_compatibility_mode: NONE\n"));
+        Assert.assertTrue(yaml.contains("uuid_sstable_identifiers_enabled: true\n"));
         Assert.assertTrue(yaml.contains("sstable:\n  selected_format: bti\n"));
     }
     private static final String TOKEN =
@@ -119,6 +123,36 @@ public class Cassandra311SandboxConfigTest {
     }
 
     @Test
+    public void deferredNativeTransportConfigurationKeepsSandboxCredentials() throws Exception {
+        Path source = temporary.newFolder("deferred-source").toPath();
+        Files.write(source.resolve("da-41-bti-TOC.txt"), Arrays.asList(
+                "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
+        Files.write(source.resolve("da-41-bti-Data.db"), new byte[]{1});
+        Files.write(source.resolve("da-41-bti-Statistics.db"), new byte[]{2});
+        Path root = temporary.newFolder("deferred-workspace").toPath();
+        WorkspaceRepository repository = WorkspaceRepository.createAt(root);
+        WorkspaceManifest manifest = WorkspaceManifest.create(SourceInventory.capture(
+                Collections.singletonList(source)));
+
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            Cassandra311SandboxConfig.writeWithDeferredNativeTransport(repository, lock,
+                    manifest.workspaceId(), 19042, TOKEN, PASSWORD, "5.0", "bti", "hayato");
+        }
+
+        String yaml = new String(Files.readAllBytes(
+                root.resolve(Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("cluster_name: 'hayato'\n"));
+        Assert.assertTrue(yaml.contains("start_native_transport: false\n"));
+        Assert.assertTrue(yaml.contains("native_transport_port: 19042\n"));
+        Assert.assertEquals(TOKEN + "\n", new String(Files.readAllBytes(
+                root.resolve(Cassandra311SandboxConfig.CONTROL_TOKEN_PATH)),
+                StandardCharsets.US_ASCII));
+        Assert.assertTrue(Files.isRegularFile(root.resolve(
+                Cassandra311SandboxConfig.CQLSHRC_PATH)));
+    }
+
+    @Test
     public void cassandra40ImportConfigurationOmitsRemovedThriftProperties() throws Exception {
         Path source = temporary.newFolder("cassandra40-source").toPath();
         Files.write(source.resolve("nb-1-big-TOC.txt"), Arrays.asList(
@@ -154,6 +188,7 @@ public class Cassandra311SandboxConfigTest {
         Assert.assertFalse(yaml.contains("rpc_port:"));
         Assert.assertTrue(yaml.contains("role_manager: "
                 + "com.axonops.sstable.worker.cassandra41.OfflineRoleManager"));
+        Assert.assertTrue(yaml.contains("uuid_sstable_identifiers_enabled: false\n"));
 
         try (WorkspaceLock lock = repository.acquire()) {
             Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
@@ -169,6 +204,7 @@ public class Cassandra311SandboxConfigTest {
                 + "com.axonops.sstable.worker.cassandra50.OfflineRoleManager"));
         Assert.assertTrue(yaml.contains("cidr_authorizer: "
                 + "com.axonops.sstable.worker.cassandra50.OfflineCIDRAuthorizer"));
+        Assert.assertTrue(yaml.contains("uuid_sstable_identifiers_enabled: false\n"));
     }
 
     @Test

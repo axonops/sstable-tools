@@ -26,7 +26,6 @@ public class CqlshLauncherTest {
                 "#!/bin/sh\n".getBytes(StandardCharsets.US_ASCII));
         executable.toFile().setExecutable(true, true);
         Path conf = Files.createDirectory(root.resolve("conf"));
-        Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
         Path server = Files.write(root.resolve("cassandra-all-3.11.19.jar"), new byte[0]);
         Path tool = Files.write(root.resolve("tool.jar"), new byte[0]);
         Path cqlshrc = Files.write(root.resolve("cqlshrc"), Arrays.asList(

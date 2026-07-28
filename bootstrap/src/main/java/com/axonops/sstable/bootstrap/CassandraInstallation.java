@@ -4,11 +4,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /** Fully resolved runtime needed to start one release-specific worker child. */
 public final class CassandraInstallation {
     private final Path home;
-    private final Path conf;
+    private final Optional<Path> supportDirectory;
     private final Path serverJar;
     private final CassandraVersion version;
     private final JavaInstallation java;
@@ -16,14 +17,14 @@ public final class CassandraInstallation {
     private final List<Path> classpath;
 
     public CassandraInstallation(Path home,
-                                 Path conf,
+                                 Path supportDirectory,
                                  Path serverJar,
                                  CassandraVersion version,
                                  JavaInstallation java,
                                  Path toolPath,
                                  List<Path> classpath) {
         this.home = home;
-        this.conf = conf;
+        this.supportDirectory = Optional.ofNullable(supportDirectory);
         this.serverJar = serverJar;
         this.version = version;
         this.java = java;
@@ -35,8 +36,8 @@ public final class CassandraInstallation {
         return home;
     }
 
-    public Path conf() {
-        return conf;
+    public Optional<Path> supportDirectory() {
+        return supportDirectory;
     }
 
     public Path serverJar() {

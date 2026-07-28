@@ -33,7 +33,12 @@ public final class ChildProcessLauncher {
     public int runPreflight(CassandraInstallation installation) throws BootstrapException {
         ProcessBuilder builder = new ProcessBuilder(preflightCommand(installation));
         builder.environment().put("CASSANDRA_HOME", installation.home().toString());
-        builder.environment().put("CASSANDRA_CONF", installation.conf().toString());
+        if (installation.supportDirectory().isPresent()) {
+            builder.environment().put("CASSANDRA_CONF",
+                    installation.supportDirectory().get().toString());
+        } else {
+            builder.environment().remove("CASSANDRA_CONF");
+        }
         builder.environment().put("JAVA_HOME", installation.java().home().toString());
         if (inheritIo) {
             builder.inheritIO();
@@ -81,9 +86,13 @@ public final class ChildProcessLauncher {
                                        String keyspace,
                                        String table,
                                        TimestampPolicy timestampPolicy,
-                                       long sourceMaximumMicros) throws BootstrapException {
-        List<String> command = sandboxCommand(installation, workspace, workspaceId, nativePort,
-                keyspace, table, timestampPolicy, sourceMaximumMicros);
+                                       long sourceMaximumMicros,
+                                       boolean importBeforeStart) throws BootstrapException {
+        List<String> command = importBeforeStart
+                ? importedSandboxCommand(installation, workspace, workspaceId, nativePort,
+                        keyspace, table, timestampPolicy)
+                : sandboxCommand(installation, workspace, workspaceId, nativePort,
+                        keyspace, table, timestampPolicy, sourceMaximumMicros);
         ProcessBuilder builder = new ProcessBuilder(command);
         Path logs = prepareOwnedDirectory(workspace, "logs");
         Path runtime = prepareOwnedDirectory(workspace, "runtime");
@@ -308,6 +317,35 @@ public final class ChildProcessLauncher {
         return Collections.unmodifiableList(command);
     }
 
+    List<String> importedSandboxCommand(CassandraInstallation installation,
+                                         Path workspace,
+                                         UUID workspaceId,
+                                         int nativePort,
+                                         String keyspace,
+                                         String table,
+                                         TimestampPolicy timestampPolicy)
+            throws BootstrapException {
+        Path configuration = workspace.resolve(Cassandra311SandboxConfig.CONFIG_PATH);
+        List<String> command = workerCommand(installation, workspace, configuration, false);
+        command.add("-Dcassandra.custom_query_handler_class=" + queryHandlerClass(installation));
+        command.add("-Dsstable.tools.workspace.keyspace=" + requireTarget(keyspace, "keyspace"));
+        command.add("-Dsstable.tools.workspace.table=" + requireTarget(table, "table"));
+        command.add("-Dsstable.tools.workspace.id=" + workspaceId);
+        command.add("-Dsstable.tools.workspace.timestamp-policy=" + timestampPolicy.value());
+        command.add("-Dsstable.tools.workspace.source-max-timestamp-micros=0");
+        command.add(WORKER_MAIN);
+        command.add("--sandbox-import");
+        command.add("--expected-version");
+        command.add(installation.version().toString());
+        command.add("--workspace");
+        command.add(workspace.toString());
+        command.add("--workspace-id");
+        command.add(workspaceId.toString());
+        command.add("--native-port");
+        command.add(Integer.toString(nativePort));
+        return Collections.unmodifiableList(command);
+    }
+
     private List<String> workerCommand(CassandraInstallation installation,
                                        Path workspace,
                                        Path configuration,
@@ -353,7 +391,10 @@ public final class ChildProcessLauncher {
         if (installation.java().majorVersion() < 9) {
             return;
         }
-        Path options = installation.conf().resolve("jvm11-server.options");
+        if (!installation.supportDirectory().isPresent()) {
+            return;
+        }
+        Path options = installation.supportDirectory().get().resolve("jvm11-server.options");
         if (!Files.isRegularFile(options, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }

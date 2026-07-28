@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s <release-directory>\n' "$0" >&2
+  exit 64
+}
+
+[[ $# -eq 1 ]] || usage
+release_dir=$1
+[[ -d "$release_dir" ]] || usage
+release_dir="$(cd "$release_dir" && pwd -P)"
+
+manifest="$release_dir/compatibility-manifest.json"
+version="$(sed -n 's/^[[:space:]]*"toolVersion": "\([^"]*\)",[[:space:]]*$/\1/p' \
+  "$manifest")"
+[[ -n "$version" ]] || {
+  printf 'Cannot resolve package version from %s\n' "$manifest" >&2
+  exit 1
+}
+
+for required_command in dpkg-deb rpm rpm2cpio cpio java tar; do
+  command -v "$required_command" >/dev/null 2>&1 || {
+    printf '%s is required to verify Linux packages\n' "$required_command" >&2
+    exit 1
+  }
+done
+
+mapfile -t debs < <(find "$release_dir" -maxdepth 1 -type f -name 'sstable-tools_*.deb')
+mapfile -t rpms < <(find "$release_dir" -maxdepth 1 -type f -name 'sstable-tools-*.rpm')
+[[ ${#debs[@]} -eq 1 && ${#rpms[@]} -eq 1 ]] || {
+  printf 'Expected exactly one SSTable Tools DEB and RPM in %s\n' "$release_dir" >&2
+  exit 1
+}
+deb=${debs[0]}
+rpm_package=${rpms[0]}
+archive="${release_dir}.tar.gz"
+[[ -f "$archive" ]] || {
+  printf 'Standalone release archive is missing: %s\n' "$archive" >&2
+  exit 1
+}
+
+[[ "$(dpkg-deb -f "$deb" Package)" == "sstable-tools" \
+    && "$(dpkg-deb -f "$deb" Architecture)" == "all" ]] || {
+  printf 'Debian package identity is invalid: %s\n' "$deb" >&2
+  exit 1
+}
+[[ "$(rpm -qp --qf '%{NAME}' "$rpm_package")" == "sstable-tools" \
+    && "$(rpm -qp --qf '%{ARCH}' "$rpm_package")" == "noarch" ]] || {
+  printf 'RPM package identity is invalid: %s\n' "$rpm_package" >&2
+  exit 1
+}
+deb_version="$(dpkg-deb -f "$deb" Version)"
+deb_release=${deb_version#"$version-"}
+rpm_release="$(rpm -qp --qf '%{RELEASE}' "$rpm_package")"
+[[ "$deb_version" == "$version-"* \
+    && "$deb_release" =~ ^[1-9][0-9]*$ \
+    && "$rpm_release" == "$deb_release" ]] || {
+  printf 'DEB/RPM package versions or revisions do not match release %s\n' \
+    "$version" >&2
+  exit 1
+}
+[[ "$(rpm -qp --qf '%{VERSION}' "$rpm_package")" == "$version" ]] || {
+  printf 'RPM package version does not match release %s\n' "$version" >&2
+  exit 1
+}
+[[ "$(dpkg-deb -f "$deb" Depends)" == *"java17-runtime-headless"* ]] || {
+  printf 'Debian package does not declare its Java runtime dependency\n' >&2
+  exit 1
+}
+[[ "$(rpm -qp --requires "$rpm_package")" == *"java-headless"* ]] || {
+  printf 'RPM package does not declare its Java runtime dependency\n' >&2
+  exit 1
+}
+
+temporary="$(mktemp -d)"
+trap 'rm -rf "$temporary"' EXIT
+deb_root="$temporary/deb"
+rpm_root="$temporary/rpm"
+mkdir -p "$deb_root" "$rpm_root"
+dpkg-deb -x "$deb" "$deb_root"
+# rpm2cpio from RPM 4.17 can return 1 for an otherwise complete nFPM payload.
+# Let cpio determine whether extraction succeeded; the exact manifest and byte
+# comparisons below reject incomplete or malformed output.
+set +o pipefail
+rpm2cpio "$rpm_package" \
+  | (cd "$rpm_root" && cpio -idm --quiet --no-absolute-filenames)
+set -o pipefail
+
+expected_common() {
+  printf '%s\n' \
+    /usr/bin/sstable-tools-cassandra-3.11 \
+    /usr/bin/sstable-tools-cassandra-4.0 \
+    /usr/bin/sstable-tools-cassandra-4.1 \
+    /usr/bin/sstable-tools-cassandra-5.0 \
+    /usr/bin/sstable-tools \
+    /usr/share/doc/sstable-tools/PACKAGE-CONTENTS-SHA256SUMS \
+    /usr/share/doc/sstable-tools/README.md \
+    /usr/share/doc/sstable-tools/THIRD-PARTY-NOTICES.txt \
+    /usr/share/doc/sstable-tools/compatibility-manifest.json \
+    /usr/share/doc/sstable-tools/sbom.spdx.json \
+    /usr/share/sstable-tools/sstable-tools-cassandra-3.11.jar \
+    /usr/share/sstable-tools/sstable-tools-cassandra-4.0.jar \
+    /usr/share/sstable-tools/sstable-tools-cassandra-4.1.jar \
+    /usr/share/sstable-tools/sstable-tools-cassandra-5.0.jar
+}
+
+verify_root() {
+  local package_root=$1
+  local package_type=$2
+  local expected="$temporary/expected-$package_type"
+  local actual="$temporary/actual-$package_type"
+  expected_common >"$expected"
+  if [[ "$package_type" == deb ]]; then
+    printf '%s\n' /usr/share/doc/sstable-tools/copyright >>"$expected"
+  else
+    printf '%s\n' /usr/share/licenses/sstable-tools/LICENSE >>"$expected"
+  fi
+  sort -o "$expected" "$expected"
+  find "$package_root" -type f -printf '/%P\n' | sort >"$actual"
+  diff -u "$expected" "$actual"
+
+  local universal="$package_root/usr/bin/sstable-tools"
+  [[ "$(stat -c '%a' "$universal")" == 755 ]] || {
+    printf '%s package installed an unsafe universal launcher mode\n' \
+      "$package_type" >&2
+    exit 1
+  }
+  sh -n "$universal"
+  cmp "$release_dir/sstable-tools" "$universal"
+
+  local release_line
+  for release_line in 3.11 4.0 4.1 5.0; do
+    local wrapper="$package_root/usr/bin/sstable-tools-cassandra-$release_line"
+    local installed_jar="$package_root/usr/share/sstable-tools/"
+    installed_jar+="sstable-tools-cassandra-$release_line.jar"
+    local release_jar="$release_dir/sstable-tools-cassandra-$release_line-$version.jar"
+    local release_wrapper="$release_dir/sstable-tools-cassandra-$release_line"
+    [[ "$(stat -c '%a' "$wrapper")" == 755 \
+        && "$(stat -c '%a' "$installed_jar")" == 644 ]] || {
+      printf '%s package installed an unsafe mode for Cassandra %s\n' \
+        "$package_type" "$release_line" >&2
+      exit 1
+    }
+    sh -n "$wrapper"
+    cmp "$release_wrapper" "$wrapper"
+    cmp "$release_jar" "$installed_jar"
+    version_output="$(SSTABLE_TOOLS_HOME="$package_root/usr/share/sstable-tools" \
+      SSTABLE_TOOLS_JAVA="$(command -v java)" "$wrapper" --version)"
+    [[ "$version_output" == "sstable-tools $version "* \
+        && "$version_output" == *"Cassandra $release_line adapter"* ]] || {
+      printf '%s package launcher failed for Cassandra %s: %s\n' \
+        "$package_type" "$release_line" "$version_output" >&2
+      exit 1
+    }
+
+    local fake_lib="$temporary/cassandra-$package_type-$release_line/lib"
+    mkdir -p "$fake_lib"
+    touch "$fake_lib/apache-cassandra-$release_line.99.jar"
+    version_output="$(CASSANDRA_LIB_DIR="$fake_lib" \
+      SSTABLE_TOOLS_HOME="$package_root/usr/share/sstable-tools" \
+      SSTABLE_TOOLS_JAVA="$(command -v java)" "$universal" --version)"
+    [[ "$version_output" == *"Cassandra $release_line adapter"* ]] || {
+      printf '%s universal launcher selected the wrong Cassandra %s adapter: %s\n' \
+        "$package_type" "$release_line" "$version_output" >&2
+      exit 1
+    }
+  done
+
+  (
+    cd "$release_dir"
+    sha256sum --check \
+      "$package_root/usr/share/doc/sstable-tools/PACKAGE-CONTENTS-SHA256SUMS"
+  )
+}
+
+verify_root "$deb_root" deb
+verify_root "$rpm_root" rpm
+(
+  cd "$release_dir"
+  sha256sum --check SHA256SUMS
+)
+
+archive_root="$temporary/archive"
+mkdir -p "$archive_root"
+tar -xzf "$archive" -C "$archive_root"
+archived_release="$archive_root/$(basename "$release_dir")"
+diff -qr "$release_dir" "$archived_release"
+for release_line in 3.11 4.0 4.1 5.0; do
+  [[ "$(stat -c '%a' \
+    "$archived_release/sstable-tools-cassandra-$release_line")" == 755 ]] || {
+    printf 'Standalone archive launcher has an unsafe mode for Cassandra %s\n' \
+      "$release_line" >&2
+    exit 1
+  }
+done
+[[ "$(stat -c '%a' "$archived_release/sstable-tools")" == 755 ]] || {
+  printf 'Standalone archive universal launcher has an unsafe mode\n' >&2
+  exit 1
+}
+
+printf 'Verified Debian package: %s\n' "$deb"
+printf 'Verified RPM package: %s\n' "$rpm_package"
+printf 'Verified standalone archive: %s\n' "$archive"

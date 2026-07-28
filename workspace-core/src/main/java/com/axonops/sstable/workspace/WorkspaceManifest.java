@@ -198,8 +198,8 @@ public final class WorkspaceManifest {
         if (state != WorkspaceState.VALIDATED) {
             throw new WorkspaceException("Import result requires state VALIDATED, not " + state);
         }
-        if (schemaAdditions == null || schemaAdditions.isEmpty()
-                || baseline == null || baseline.isEmpty()) {
+        if (schemaAdditions == null || schemaAdditions.isEmpty() || baseline == null
+                || (!sourceInventory.sets().isEmpty() && baseline.isEmpty())) {
             throw new WorkspaceException("Import result requires schema and baseline identities");
         }
         SortedMap<String, String> merged = mergeIdentity(schemaIdentity, schemaAdditions,

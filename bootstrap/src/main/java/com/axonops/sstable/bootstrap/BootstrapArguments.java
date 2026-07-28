@@ -50,6 +50,7 @@ final class BootstrapArguments {
     private final RuntimeOptions runtimeOptions;
     private final Path workspacePath;
     private final List<Path> sourceDirectories;
+    private final Path directOutputDirectory;
     private final Path schemaPath;
     private final TimestampPolicy timestampPolicy;
     private final boolean timestampPolicySpecified;
@@ -64,6 +65,7 @@ final class BootstrapArguments {
                                RuntimeOptions runtimeOptions,
                                Path workspacePath,
                                List<Path> sourceDirectories,
+                               Path directOutputDirectory,
                                Path schemaPath,
                                TimestampPolicy timestampPolicy,
                                boolean timestampPolicySpecified,
@@ -78,6 +80,7 @@ final class BootstrapArguments {
         this.workspacePath = workspacePath;
         this.sourceDirectories = Collections.unmodifiableList(
                 new ArrayList<>(sourceDirectories));
+        this.directOutputDirectory = directOutputDirectory;
         this.schemaPath = schemaPath;
         this.timestampPolicy = timestampPolicy;
         this.timestampPolicySpecified = timestampPolicySpecified;
@@ -91,16 +94,17 @@ final class BootstrapArguments {
 
     static BootstrapArguments parse(String[] args) throws BootstrapException {
         if (args.length == 0) {
-            return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null, null),
-                    null, Collections.<Path>emptyList(), null, TimestampPolicy.WALL_CLOCK,
+            return new BootstrapArguments(Action.HELP, new RuntimeOptions(null, null),
+                    null, Collections.<Path>emptyList(), null, null,
+                    TimestampPolicy.WALL_CLOCK,
                     false, null, null, SstableOutputFormat.BIG,
                     Paths.get("/tmp/sstable-tools"), null, null);
         }
 
         Path cassandraHome = null;
-        Path cassandraConf = null;
         Path javaHome = null;
         List<Path> sourceDirectories = new ArrayList<>();
+        Path directOutputDirectory = null;
         Path schemaPath = null;
         TimestampPolicy timestampPolicy = TimestampPolicy.WALL_CLOCK;
         boolean timestampPolicySpecified = false;
@@ -117,8 +121,9 @@ final class BootstrapArguments {
             String argument = args[index];
             if ("--help".equals(argument) || "-h".equals(argument)) {
                 return new BootstrapArguments(Action.HELP,
-                        new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                        null, sourceDirectories, schemaPath, timestampPolicy,
+                        new RuntimeOptions(cassandraHome, javaHome),
+                        null, sourceDirectories, directOutputDirectory, schemaPath,
+                        timestampPolicy,
                         timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
                         temporaryDirectory,
                         executeCql,
@@ -126,8 +131,9 @@ final class BootstrapArguments {
             }
             if ("--version".equals(argument)) {
                 return new BootstrapArguments(Action.VERSION,
-                        new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                        null, sourceDirectories, schemaPath, timestampPolicy,
+                        new RuntimeOptions(cassandraHome, javaHome),
+                        null, sourceDirectories, directOutputDirectory, schemaPath,
+                        timestampPolicy,
                         timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
                         temporaryDirectory,
                         executeCql,
@@ -135,12 +141,15 @@ final class BootstrapArguments {
             }
             if ("--cassandra-home".equals(argument)) {
                 cassandraHome = pathValue(args, ++index, argument);
-            } else if ("--cassandra-conf".equals(argument)) {
-                cassandraConf = pathValue(args, ++index, argument);
             } else if ("--java-home".equals(argument)) {
                 javaHome = pathValue(args, ++index, argument);
             } else if ("--sstables".equals(argument)) {
                 sourceDirectories.addAll(sourcePaths(args, ++index));
+            } else if ("--output-dir".equals(argument)) {
+                if (directOutputDirectory != null) {
+                    throw usage("--output-dir may be specified only once");
+                }
+                directOutputDirectory = pathValue(args, ++index, argument);
             } else if ("--schema".equals(argument)) {
                 schemaPath = pathValue(args, ++index, argument);
             } else if ("--timestamp-policy".equals(argument)) {
@@ -256,19 +265,22 @@ final class BootstrapArguments {
         if (workspaceAction && action != Action.WORKSPACE_START
                 && action != Action.WORKSPACE_IMPORT
                 && action != Action.WORKSPACE_CQLSH
-                && (cassandraHome != null || cassandraConf != null
-                || javaHome != null)) {
+                && (cassandraHome != null || javaHome != null)) {
             throw usage("Cassandra runtime options are not accepted by this workspace command");
         }
-        if ((action == Action.WORKSPACE_CREATE || action == Action.DIRECT_CQLSH)
-                && sourceDirectories.isEmpty()) {
-            throw usage(action == Action.DIRECT_CQLSH
-                    ? "cqlsh requires at least one --sstables source"
-                    : "workspace create requires at least one --sstables source");
+        if (action == Action.WORKSPACE_CREATE && sourceDirectories.isEmpty()) {
+            throw usage("workspace create requires at least one --sstables source");
+        }
+        if (action == Action.DIRECT_CQLSH
+                && sourceDirectories.isEmpty() == (directOutputDirectory == null)) {
+            throw usage("cqlsh requires exactly one of --sstables or --output-dir");
         }
         if (action != Action.WORKSPACE_CREATE && action != Action.DIRECT_CQLSH
                 && !sourceDirectories.isEmpty()) {
             throw usage("--sstables is only valid with workspace create");
+        }
+        if (action != Action.DIRECT_CQLSH && directOutputDirectory != null) {
+            throw usage("--output-dir is only valid with direct cqlsh");
         }
         if (action != Action.WORKSPACE_CREATE && action != Action.DIRECT_CQLSH
                 && schemaPath != null) {
@@ -306,8 +318,9 @@ final class BootstrapArguments {
             throw usage("--confirm-workspace-id is only valid with workspace destroy");
         }
         return new BootstrapArguments(action,
-                new RuntimeOptions(cassandraHome, cassandraConf, javaHome),
-                workspacePath, sourceDirectories, schemaPath, timestampPolicy,
+                new RuntimeOptions(cassandraHome, javaHome),
+                workspacePath, sourceDirectories, directOutputDirectory, schemaPath,
+                timestampPolicy,
                 timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
                 temporaryDirectory, executeCql,
                 confirmedWorkspaceId);
@@ -375,6 +388,10 @@ final class BootstrapArguments {
         return sourceDirectories;
     }
 
+    Path directOutputDirectory() {
+        return directOutputDirectory;
+    }
+
     Path schemaPath() {
         return schemaPath;
     }
@@ -414,14 +431,16 @@ final class BootstrapArguments {
     BootstrapArguments forWorkspace(Action workspaceAction, Path path,
                                     TimestampPolicy policy, boolean policySpecified) {
         return new BootstrapArguments(workspaceAction, runtimeOptions, path,
-                sourceDirectories, schemaPath, policy, policySpecified, exportMode,
+                sourceDirectories, directOutputDirectory, schemaPath, policy, policySpecified,
+                exportMode,
                 outputPath, sstableOutputFormat, temporaryDirectory, executeCql,
                 confirmedWorkspaceId);
     }
 
     BootstrapArguments withConfirmation(UUID workspaceId) {
         return new BootstrapArguments(action, runtimeOptions, workspacePath,
-                sourceDirectories, schemaPath, timestampPolicy, timestampPolicySpecified,
+                sourceDirectories, directOutputDirectory, schemaPath, timestampPolicy,
+                timestampPolicySpecified,
                 exportMode, outputPath, sstableOutputFormat, temporaryDirectory, executeCql,
                 workspaceId);
     }

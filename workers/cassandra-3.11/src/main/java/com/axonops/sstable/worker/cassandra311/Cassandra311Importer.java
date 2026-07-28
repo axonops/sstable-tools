@@ -120,7 +120,7 @@ final class Cassandra311Importer {
                     metadata.cfId, metadata.partitioner.getClass().getCanonicalName(),
                     relativeTable, validated.size(), liveSstables, logicalRows,
                     maximumSourceTimestamp(validated),
-                    cfs.isAutoCompactionDisabled(), false);
+                    cfs.isAutoCompactionDisabled(), false, null);
         } catch (Exception failure) {
             try {
                 deleteTree(tableDirectory);
@@ -246,7 +246,7 @@ final class Cassandra311Importer {
     }
 
     private static long maximumSourceTimestamp(List<ValidatedSet> validated) {
-        long maximum = Long.MIN_VALUE;
+        long maximum = 0L;
         for (ValidatedSet set : validated) {
             maximum = Math.max(maximum, set.maxTimestamp);
         }

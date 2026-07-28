@@ -32,7 +32,12 @@ final class CqlshLauncher {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.inheritIO();
         builder.environment().put("CASSANDRA_HOME", installation.home().toString());
-        builder.environment().put("CASSANDRA_CONF", installation.conf().toString());
+        if (installation.supportDirectory().isPresent()) {
+            builder.environment().put("CASSANDRA_CONF",
+                    installation.supportDirectory().get().toString());
+        } else {
+            builder.environment().remove("CASSANDRA_CONF");
+        }
         builder.environment().put("PYTHONDONTWRITEBYTECODE", "1");
         builder.environment().remove("PYTHONHOME");
         builder.environment().remove("PYTHONPATH");

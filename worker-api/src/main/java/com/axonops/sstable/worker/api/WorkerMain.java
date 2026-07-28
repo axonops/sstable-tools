@@ -45,7 +45,7 @@ public final class WorkerMain {
         if (isImportCommand(args)) {
             return runImport(args, out, err);
         }
-        err.println("error: expected --self-test, --import, or --sandbox worker arguments");
+        err.println("error: expected --self-test, --import, --sandbox, or --sandbox-import worker arguments");
         return 2;
     }
 
@@ -122,7 +122,8 @@ public final class WorkerMain {
         SandboxHandle handle = null;
         try {
             SandboxArguments parsed = SandboxArguments.parse(args);
-            SandboxRuntimeAdapter adapter = requireSandboxAdapter(loadAdapter());
+            RuntimeAdapter runtime = loadAdapter();
+            SandboxRuntimeAdapter adapter = requireSandboxAdapter(runtime);
             String installedVersion = adapter.installedVersion();
             if (!parsed.expectedVersion.equals(installedVersion)) {
                 throw new IllegalStateException("Discovered Cassandra "
@@ -151,7 +152,20 @@ public final class WorkerMain {
                 control.setReuseAddress(false);
                 control.bind(new InetSocketAddress(
                         InetAddress.getByName("127.0.0.1"), 0), 16);
-                handle = adapter.startSandbox(options);
+                if (parsed.importBeforeStart) {
+                    DirectSandboxRuntimeAdapter direct = requireDirectSandboxAdapter(runtime);
+                    ImportedSandbox imported = direct.importAndStart(new ImportOptions(workspace,
+                            configuration, parsed.workspaceId), options);
+                    ImportResult result = imported.importResult();
+                    if (!parsed.workspaceId.equals(result.workspaceId())
+                            || !installedVersion.equals(result.release())) {
+                        throw new IllegalStateException("Direct sandbox import returned mismatched identity");
+                    }
+                    result.writeAtomically(pathInside(workspace, ImportResult.WORKSPACE_PATH));
+                    handle = imported.sandboxHandle();
+                } else {
+                    handle = adapter.startSandbox(options);
+                }
                 if (!handle.isRunning() || !"127.0.0.1".equals(handle.nativeAddress())
                         || handle.nativePort() != parsed.nativePort) {
                     throw new IllegalStateException("Sandbox adapter did not start the expected "
@@ -314,6 +328,14 @@ public final class WorkerMain {
         return (ImportRuntimeAdapter) adapter;
     }
 
+    private static DirectSandboxRuntimeAdapter requireDirectSandboxAdapter(RuntimeAdapter adapter) {
+        if (!(adapter instanceof DirectSandboxRuntimeAdapter)) {
+            throw new IllegalStateException(adapter.getClass().getName()
+                    + " does not provide direct sandbox support");
+        }
+        return (DirectSandboxRuntimeAdapter) adapter;
+    }
+
     private static Path regularFileInside(Path workspace, String relative) throws IOException {
         Path path = pathInside(workspace, relative);
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
@@ -355,7 +377,8 @@ public final class WorkerMain {
     }
 
     private static boolean isSandboxCommand(String[] args) {
-        return args.length > 0 && "--sandbox".equals(args[0]);
+        return args.length > 0 && ("--sandbox".equals(args[0])
+                || "--sandbox-import".equals(args[0]));
     }
 
     private static boolean isImportCommand(String[] args) {
@@ -387,19 +410,23 @@ public final class WorkerMain {
         private final Path workspace;
         private final UUID workspaceId;
         private final int nativePort;
+        private final boolean importBeforeStart;
 
         private SandboxArguments(String expectedVersion,
                                  Path workspace,
                                  UUID workspaceId,
-                                 int nativePort) {
+                                 int nativePort,
+                                 boolean importBeforeStart) {
             this.expectedVersion = expectedVersion;
             this.workspace = workspace;
             this.workspaceId = workspaceId;
             this.nativePort = nativePort;
+            this.importBeforeStart = importBeforeStart;
         }
 
         private static SandboxArguments parse(String[] args) {
-            if (args.length != 9 || !"--sandbox".equals(args[0])
+            if (args.length != 9 || (!"--sandbox".equals(args[0])
+                    && !"--sandbox-import".equals(args[0]))
                     || !"--expected-version".equals(args[1])
                     || !"--workspace".equals(args[3])
                     || !"--workspace-id".equals(args[5])
@@ -413,7 +440,7 @@ public final class WorkerMain {
                 throw new IllegalArgumentException("Native port is outside 1..65535");
             }
             return new SandboxArguments(args[2], Paths.get(args[4]),
-                    UUID.fromString(args[6]), port);
+                    UUID.fromString(args[6]), port, "--sandbox-import".equals(args[0]));
         }
     }
 

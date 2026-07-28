@@ -1,7 +1,7 @@
 # Thin JAR Packaging Dependencies
 
 This document is the dependency and relocation record for the version-specific
-workspace artifacts.
+workspace artifacts and their Linux packages.
 
 ## Packaged code
 
@@ -59,5 +59,18 @@ The compile pins are:
 
 The CI workflow runs the same verification and generates Maven runtime
 dependency trees for every reactor module. The four thin JARs and dependency
-reports are retained together as the `thin-jars-and-dependency-reports` workflow
-artifact.
+reports are retained with the release bundles as a workflow artifact.
+
+## DEB and RPM payload
+
+The architecture-independent `sstable-tools` DEB and noarch RPM contain the
+four already-verified thin JARs, one auto-detecting launcher, four explicit
+release-specific launchers, the README, license, compatibility manifest, SPDX
+SBOM, third-party notices, and checksums. They do not add Cassandra classes or
+any other runtime library.
+
+The package declares a Java 17-or-newer headless runtime because the combined
+package exposes the Cassandra 5.0 adapter. Cassandra itself remains an external,
+operator-selected runtime. The package build compares its installed JARs
+byte-for-byte with the release bundle and executes every extracted launcher
+during verification.

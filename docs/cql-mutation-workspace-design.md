@@ -236,7 +236,7 @@ Process isolation is mandatory because:
 Runtime discovery follows an explicit order:
 
 1. `--cassandra-home` and optional `--java-home` command-line arguments;
-2. `CASSANDRA_HOME`, `CASSANDRA_CONF`, and `JAVA_HOME` environment variables;
+2. `CASSANDRA_HOME` and `JAVA_HOME` environment variables;
 3. known package-layout metadata, only when it resolves to one unambiguous
    installation.
 
@@ -247,8 +247,12 @@ self-test resolves the internal classes and method signatures used by the
 adapter before source files are opened.
 
 No runtime is downloaded, and no JAR is copied from the installation into the
-tool artifact. The workspace records canonical Cassandra/config paths, release
+tool artifact. The workspace records the canonical Cassandra path, release
 version, Java version, and hashes of Cassandra JARs relevant to the adapter.
+The installation's `cassandra.yaml` is not required, read, hashed, or recorded.
+An optional support directory may provide distribution JVM module options or
+client resources, but Cassandra is always started with the generated
+workspace-owned configuration.
 
 ### 7.4 Sandbox node
 
@@ -449,8 +453,8 @@ sstable-tools workspace cqlsh ./case
 `start` prints a loopback endpoint, fixed username, and generated `cqlshrc` path
 for an external client. `cqlsh` launches the client from the selected Cassandra
 installation, which avoids unsupported client/server version combinations. The
-implemented launcher requires the canonical Cassandra home, configuration, and
-release recorded by `start`, validates the live authenticated control endpoint
+implemented launcher requires the canonical Cassandra home and release recorded
+by `start`, validates the live authenticated control endpoint
 and owner-only credential, and fixes the client host, port, and `cqlshrc`. The
 password never appears in process arguments. Interactive mode accepts no client
 overrides; `--execute <CQL>` provides the constrained noninteractive form.

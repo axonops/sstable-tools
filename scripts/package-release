@@ -8,7 +8,12 @@ usage() {
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$root_dir/target/release"
-version="$(sed -n 's/^[[:space:]]*<version>\([^<]*\)<\/version>[[:space:]]*$/\1/p' "$root_dir/pom.xml" | head -n 1)"
+version="$(sed -n 's/^[[:space:]]*<version>\([^<]*\)<\/version>[[:space:]]*$/\1/p' \
+  "$root_dir/pom.xml" | head -n 1)"
+if [[ "$version" == "\${revision}" ]]; then
+  version="$(sed -n 's/^[[:space:]]*<revision>\([^<]*\)<\/revision>[[:space:]]*$/\1/p' \
+    "$root_dir/pom.xml" | head -n 1)"
+fi
 sign=false
 
 while [[ $# -gt 0 ]]; do
@@ -25,22 +30,37 @@ done
   printf 'Release version contains an unsafe path character\n' >&2
   exit 1
 }
+command -v java >/dev/null 2>&1 || {
+  printf 'java is required to verify release artifact versions\n' >&2
+  exit 1
+}
 
 release_dir="$output_dir/sstable-tools-$version"
 rm -rf "$release_dir"
 mkdir -p "$release_dir"
+cp "$root_dir/packaging/sstable-tools" "$release_dir/sstable-tools"
+chmod 0755 "$release_dir/sstable-tools"
 
 release_lines=(3.11 4.0 4.1 5.0)
 for release_line in "${release_lines[@]}"; do
   artifact_dir="$root_dir/workers/cassandra-$release_line/target"
-  artifacts=("$artifact_dir"/sstable-tools-cassandra-"$release_line"-*.jar)
-  if [[ ${#artifacts[@]} -ne 1 || ! -f "${artifacts[0]}" ]]; then
-    printf 'Expected exactly one Cassandra %s thin JAR under %s\n' \
-      "$release_line" "$artifact_dir" >&2
+  artifact="$artifact_dir/sstable-tools-cassandra-$release_line-$version.jar"
+  if [[ ! -f "$artifact" ]]; then
+    printf 'Expected Cassandra %s thin JAR for version %s: %s\n' \
+      "$release_line" "$version" "$artifact" >&2
     exit 1
   fi
-  cp "${artifacts[0]}" \
+  artifact_version="$(java -jar "$artifact" --version)"
+  [[ "$artifact_version" == "sstable-tools $version "* ]] || {
+    printf 'Cassandra %s artifact version does not match release %s: %s\n' \
+      "$release_line" "$version" "$artifact_version" >&2
+    exit 1
+  }
+  cp "$artifact" \
     "$release_dir/sstable-tools-cassandra-$release_line-$version.jar"
+  cp "$root_dir/packaging/sstable-tools-cassandra" \
+    "$release_dir/sstable-tools-cassandra-$release_line"
+  chmod 0755 "$release_dir/sstable-tools-cassandra-$release_line"
 done
 
 revision="unknown"
@@ -86,8 +106,8 @@ Cassandra classes and Cassandra runtime JARs are not included. The selected
 installed Cassandra distribution supplies those dependencies at execution time.
 EOF
 
-(cd "$release_dir" && sha256sum -- *.jar compatibility-manifest.json sbom.spdx.json \
-  THIRD-PARTY-NOTICES.txt >SHA256SUMS)
+(cd "$release_dir" && sha256sum -- sstable-tools sstable-tools-cassandra-* \
+  compatibility-manifest.json sbom.spdx.json THIRD-PARTY-NOTICES.txt >SHA256SUMS)
 
 if [[ "$sign" == true ]]; then
   command -v gpg >/dev/null || { printf 'gpg is required for --sign\n' >&2; exit 1; }

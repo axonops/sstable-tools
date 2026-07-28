@@ -165,7 +165,6 @@ public class ChildProcessLauncherSignalTest {
             Path javaHome = Paths.get(args[1]).toRealPath();
             Path home = Files.createDirectories(root.resolve("cassandra-home"));
             Path conf = Files.createDirectories(root.resolve("cassandra-conf"));
-            Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
             Path serverJar = Files.write(root.resolve("cassandra-all-9.9.9.jar"),
                     new byte[0]);
             Path tool = Files.write(root.resolve("sstable-tools.jar"), new byte[0]);

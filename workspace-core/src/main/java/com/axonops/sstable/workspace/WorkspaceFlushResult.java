@@ -173,7 +173,7 @@ public final class WorkspaceFlushResult {
 
     public List<ManifestFile> deltaFiles(List<ManifestFile> baseline)
             throws WorkspaceException {
-        if (baseline == null || baseline.isEmpty()) {
+        if (baseline == null) {
             throw new WorkspaceException("Workspace baseline inventory is missing");
         }
         Map<String, ManifestFile> current = new TreeMap<>();

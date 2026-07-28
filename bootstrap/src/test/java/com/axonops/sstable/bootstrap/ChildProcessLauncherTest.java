@@ -23,7 +23,6 @@ public class ChildProcessLauncherTest {
         Path root = temporary.newFolder("child path with spaces").toPath();
         Path home = Files.createDirectory(root.resolve("cassandra home"));
         Path conf = Files.createDirectory(root.resolve("cassandra conf"));
-        Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
         Path serverJar = Files.write(root.resolve("cassandra-all-9.9.9.jar"), new byte[0]);
         JavaInstallation java = JavaInstallation.discover(
                 Paths.get(System.getProperty("java.home")),
@@ -45,7 +44,6 @@ public class ChildProcessLauncherTest {
         Path root = temporary.newFolder("sandbox command").toPath();
         Path home = Files.createDirectory(root.resolve("cassandra home"));
         Path conf = Files.createDirectory(root.resolve("cassandra conf"));
-        Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
         Path serverJar = Files.write(root.resolve("cassandra-all-3.11.19.jar"), new byte[0]);
         Path jamm = Files.write(root.resolve("jamm-0.3.2.jar"), new byte[0]);
         Path tool = Files.write(root.resolve("sstable-tools.jar"), new byte[0]);
@@ -89,7 +87,6 @@ public class ChildProcessLauncherTest {
         Path root = temporary.newFolder("import command").toPath();
         Path home = Files.createDirectory(root.resolve("cassandra home"));
         Path conf = Files.createDirectory(root.resolve("cassandra conf"));
-        Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
         Path serverJar = Files.write(root.resolve("cassandra-all-3.11.19.jar"), new byte[0]);
         Path jamm = Files.write(root.resolve("jamm-0.3.2.jar"), new byte[0]);
         Path tool = Files.write(root.resolve("sstable-tools.jar"), new byte[0]);
@@ -121,7 +118,6 @@ public class ChildProcessLauncherTest {
         Path root = temporary.newFolder("module options").toPath();
         Path home = Files.createDirectory(root.resolve("cassandra home"));
         Path conf = Files.createDirectory(root.resolve("cassandra conf"));
-        Files.write(conf.resolve("cassandra.yaml"), new byte[0]);
         Files.write(conf.resolve("jvm11-server.options"), Arrays.asList(
                 "# Cassandra Java 11 options",
                 "--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED",

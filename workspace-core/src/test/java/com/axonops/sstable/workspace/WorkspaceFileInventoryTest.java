@@ -34,4 +34,15 @@ public class WorkspaceFileInventoryTest {
             Assert.assertTrue(e.getMessage().contains("baseline file changed"));
         }
     }
+
+    @Test
+    public void capturesAnEmptyBaselineOnlyWhenExplicitlyAllowed() throws Exception {
+        Path workspace = temporary.newFolder("empty-workspace").toPath();
+        Files.createDirectories(workspace.resolve("data/test/items-id"));
+
+        List<ManifestFile> inventory = WorkspaceFileInventory.captureAllowEmpty(
+                workspace, "data/test/items-id");
+
+        Assert.assertTrue(inventory.isEmpty());
+    }
 }

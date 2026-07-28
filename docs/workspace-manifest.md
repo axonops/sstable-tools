@@ -164,6 +164,12 @@ Each `sourceInventory.sets` item records:
 | `formatVersion` | SSTable version token, for example `mc` |
 | `format` | Format token, for example `big` or `bti` |
 | `directory` | Canonical absolute source directory |
+
+For Cassandra 5.0, the controller infers the private writer's SSTable
+identifier style from these selected descriptors. Numeric-only input records
+`sstable.identifier-style=numeric`; any selected Cassandra UUID/ULID-style
+identifier records `sstable.identifier-style=uuid` and enables
+`uuid_sstable_identifiers_enabled` in the generated sandbox configuration.
 | `components` | Sorted TOC-declared component identities |
 
 Each component and workspace-owned file identity contains a path or component

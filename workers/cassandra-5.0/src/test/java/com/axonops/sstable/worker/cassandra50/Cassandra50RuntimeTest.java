@@ -2,9 +2,12 @@ package com.axonops.sstable.worker.cassandra50;
 
 import com.axonops.sstable.bootstrap.AdapterMetadata;
 import com.axonops.sstable.bootstrap.CassandraVersion;
+import java.nio.file.Paths;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.db.marshal.FloatType;
 import org.apache.cassandra.db.marshal.VectorType;
+import org.apache.cassandra.io.sstable.Descriptor;
+import org.apache.cassandra.io.sstable.SequenceBasedSSTableId;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -68,6 +71,20 @@ public class Cassandra50RuntimeTest {
                         + "{'class': 'org.apache.cassandra.db.compaction."
                         + "SizeTieredCompactionStrategy', 'enabled': 'false'}",
                 CqlSchemaBundle.disableAutomaticCompactionStatement("ci_source", "events"));
+    }
+
+    @Test
+    public void preservesSourceSstableIdWhenStagingIntoTheWorkspace() {
+        Descriptor source = new Descriptor(
+                Cassandra50Importer.requireCompatibleVersion("da", "bti"),
+                new org.apache.cassandra.io.util.File("/source/system/local"), "system", "local",
+                new SequenceBasedSSTableId(41));
+
+        Descriptor staged = Cassandra50Importer.workspaceDescriptor(source,
+                Paths.get("/workspace/data/system/local"), "system", "local");
+
+        Assert.assertEquals(source.id, staged.id);
+        Assert.assertEquals("da-41-bti", staged.baseFile().name());
     }
 
     private static void assertUnsupported(String version, String format) {

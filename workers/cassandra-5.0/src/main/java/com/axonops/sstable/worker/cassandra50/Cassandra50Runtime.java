@@ -2,6 +2,8 @@ package com.axonops.sstable.worker.cassandra50;
 
 import com.axonops.sstable.worker.api.ImportOptions;
 import com.axonops.sstable.worker.api.ImportResult;
+import com.axonops.sstable.worker.api.ImportedSandbox;
+import com.axonops.sstable.worker.api.DirectSandboxRuntimeAdapter;
 import com.axonops.sstable.worker.api.ImportRuntimeAdapter;
 import com.axonops.sstable.worker.api.LinkageVerifier;
 import com.axonops.sstable.worker.api.SandboxHandle;
@@ -15,6 +17,8 @@ import com.axonops.sstable.workspace.WorkspaceRepository;
 import com.axonops.sstable.workspace.WorkspaceVerificationResult;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.URI;
 import java.nio.file.Files;
@@ -51,7 +55,8 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 /** Linkage probe compiled against the supported Cassandra 5.0 API. */
-public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRuntimeAdapter {
+public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRuntimeAdapter,
+        DirectSandboxRuntimeAdapter {
     public Cassandra50Runtime() {
     }
 
@@ -88,7 +93,7 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
 
     @Override
     public SandboxHandle startSandbox(SandboxOptions options) throws Exception {
-        requireIsolationProperties(options.configurationFile(), true);
+        requireIsolationProperties(options.configurationFile(), true, true);
         DatabaseDescriptor.daemonInitialization();
         validateConfiguration(options.workspaceRoot(), true, options.nativePort());
 
@@ -127,7 +132,7 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
 
     @Override
     public ImportResult importSstables(ImportOptions options) throws Exception {
-        requireIsolationProperties(options.configurationFile(), false);
+        requireIsolationProperties(options.configurationFile(), false, false);
         DatabaseDescriptor.daemonInitialization();
         validateConfiguration(options.workspaceRoot(), false, -1);
 
@@ -150,8 +155,78 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
         }
     }
 
+    @Override
+    public ImportedSandbox importAndStart(ImportOptions importOptions, SandboxOptions options)
+            throws Exception {
+        if (!importOptions.workspaceRoot().equals(options.workspaceRoot())
+                || !importOptions.configurationFile().equals(options.configurationFile())
+                || !importOptions.workspaceId().equals(options.workspaceId())) {
+            throw new IllegalArgumentException("Direct sandbox import identity does not match");
+        }
+        String requestedKeyspace = System.getProperty(WorkspaceQueryHandler.KEYSPACE_PROPERTY);
+        boolean systemTable = "system".equals(requestedKeyspace);
+        if (systemTable) {
+            // The query guard is constructed while native transport starts, before the source
+            // is imported. It is updated with the validated source maximum immediately after.
+            System.setProperty(WorkspaceQueryHandler.SOURCE_MAX_TIMESTAMP_PROPERTY, "0");
+        }
+        requireIsolationProperties(options.configurationFile(), false, true);
+        DatabaseDescriptor.daemonInitialization();
+        validateConfiguration(options.workspaceRoot(), false, options.nativePort());
+
+        CassandraDaemon daemon = new CassandraDaemon(true);
+        boolean activated = false;
+        try {
+            daemon.activate();
+            activated = true;
+            ImportResult result;
+            if (systemTable) {
+                // system.local is written repeatedly while Cassandra finishes starting. Do not
+                // import the selected SSTable until that private bootstrap activity is over;
+                // otherwise Cassandra can compact the selected baseline with its own state.
+                // Managed daemon startup also leaves the persisted schema tables empty. Publish
+                // Cassandra's built-in local schema so stock cqlsh can discover system.local.
+                publishLocalSystemSchema();
+                installLocalRingState();
+                daemon.startNativeTransport();
+                if (!daemon.isNativeTransportRunning()) {
+                    throw new IllegalStateException("Cassandra 5.0 native transport did not start");
+                }
+                result = Cassandra50Importer.run(importOptions);
+                WorkspaceQueryHandler.setSourceMaxTimestamp(result.sourceMaxTimestampMicros());
+            } else {
+                result = Cassandra50Importer.run(importOptions);
+                System.setProperty(WorkspaceQueryHandler.SOURCE_MAX_TIMESTAMP_PROPERTY,
+                        Long.toString(result.sourceMaxTimestampMicros()));
+                installLocalRingState();
+                daemon.startNativeTransport();
+            }
+            if (!daemon.isNativeTransportRunning()) {
+                throw new IllegalStateException("Cassandra 5.0 native transport did not start");
+            }
+            if (Gossiper.instance.isEnabled()) {
+                throw new IllegalStateException("Isolated Cassandra worker started gossip");
+            }
+            ColumnFamilyStore cfs = Keyspace.open(result.keyspace())
+                    .getColumnFamilyStore(result.table());
+            cfs.disableAutoCompaction();
+            List<ColumnFamilyStore> stores = Collections.singletonList(cfs);
+            CompactionManager.instance.interruptCompactionForCFs(stores, reader -> true, true);
+            CompactionManager.instance.waitForCessation(stores, reader -> true);
+            return new ImportedSandbox(result, new Cassandra50SandboxHandle(daemon, options,
+                    installedVersion(), result.keyspace(), result.table(), result.tableDirectory(),
+                    cfs));
+        } catch (Exception e) {
+            if (activated) {
+                daemon.deactivate();
+            }
+            throw e;
+        }
+    }
+
     private static void requireIsolationProperties(Path configurationFile,
-                                                   boolean startNativeTransport) {
+                                                   boolean startNativeTransport,
+                                                   boolean allowQueryGuard) {
         requireFalse("cassandra.start_gossip");
         requireFalse("cassandra.join_ring");
         requireFalse("cassandra.load_ring_state");
@@ -179,7 +254,7 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
         } catch (IOException | IllegalArgumentException e) {
             throw new IllegalStateException("Invalid cassandra.config " + configured, e);
         }
-        requireQueryGuard(startNativeTransport);
+        requireQueryGuard(startNativeTransport || allowQueryGuard);
     }
 
     private static void requireQueryGuard(boolean startNativeTransport) {
@@ -291,6 +366,23 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
         StorageService.instance.setTokens(tokens);
         if (Gossiper.instance.isEnabled()) {
             throw new IllegalStateException("Local ring initialization started gossip");
+        }
+    }
+
+    private static void publishLocalSystemSchema() {
+        try {
+            Class<?> schemaKeyspace = Class.forName(
+                    "org.apache.cassandra.schema.SchemaKeyspace");
+            Method publish = schemaKeyspace.getDeclaredMethod("saveSystemKeyspacesSchema");
+            publish.setAccessible(true);
+            publish.invoke(null);
+        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException e) {
+            throw new IllegalStateException("Cassandra 5.0 local schema publication is "
+                    + "unavailable", e);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new IllegalStateException("Cassandra 5.0 local schema publication failed",
+                    cause);
         }
     }
 

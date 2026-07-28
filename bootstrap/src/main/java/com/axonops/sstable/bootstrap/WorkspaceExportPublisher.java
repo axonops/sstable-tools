@@ -5,6 +5,7 @@ import com.axonops.sstable.workspace.Hashing;
 import com.axonops.sstable.workspace.ManifestFile;
 import com.axonops.sstable.workspace.SchemaBundle;
 import com.axonops.sstable.workspace.SourceComponent;
+import com.axonops.sstable.workspace.SourceInventory;
 import com.axonops.sstable.workspace.SstableSet;
 import com.axonops.sstable.workspace.WorkspaceException;
 import com.axonops.sstable.workspace.WorkspaceFlushResult;
@@ -114,11 +115,21 @@ final class WorkspaceExportPublisher {
     List<String> publishDeltaAdjacent(WorkspaceRepository repository,
                                       WorkspaceManifest manifest,
                                       WorkspaceFlushResult flush,
+                                      WorkspaceVerificationResult verification)
+            throws WorkspaceException {
+        return publishDeltaAdjacent(repository, manifest, flush, verification,
+                singleSourceDirectory(manifest), false);
+    }
+
+    List<String> publishDeltaAdjacent(WorkspaceRepository repository,
+                                      WorkspaceManifest manifest,
+                                      WorkspaceFlushResult flush,
                                       WorkspaceVerificationResult verification,
-                                      CassandraInstallation installation)
+                                      Path requestedTarget,
+                                      boolean requireCompleteInventoryMatch)
             throws WorkspaceException {
         manifest.sourceInventory().verifyUnchanged();
-        Path target = singleSourceDirectory(manifest);
+        Path target = canonicalDirectTarget(requestedTarget);
         List<ManifestFile> selected = flush.deltaFiles(manifest.baselineInventory());
         DescriptorInventory inventory = validateDescriptorSets(repository, selected);
         if (!inventory.descriptors.equals(new HashSet<>(verification.deltaDescriptors()))
@@ -129,15 +140,37 @@ final class WorkspaceExportPublisher {
 
         Map<String, List<ManifestFile>> byDescriptor = filesByDescriptor(selected,
                 inventory.descriptors);
-        boolean uuidIdentifiers = "5.0".equals(installation.version().releaseLine())
-                && uuidSstableIdentifiersEnabled(installation.conf());
+        SourceInventory targetInventory =
+                SourceInventory.captureDirectoryAllowEmpty(target);
+        if (requireCompleteInventoryMatch
+                && !manifest.sourceInventory().equals(targetInventory)) {
+            throw new WorkspaceException("SSTable output directory changed after its baseline "
+                    + "was imported; no SSTables were published: " + target);
+        }
         Map<String, String> targetDescriptors = allocateDescriptors(target,
-                new ArrayList<>(byDescriptor.keySet()), uuidIdentifiers);
+                new ArrayList<>(byDescriptor.keySet()),
+                manifest.outputIdentity().containsKey("sstable.identifier-style")
+                        ? SstableIdentifierStyle.recorded(manifest.outputIdentity())
+                        : SstableIdentifierStyle.infer(manifest.sourceInventory()));
         publishComponentSets(repository, target, byDescriptor, targetDescriptors);
         manifest.sourceInventory().verifyUnchanged();
         List<String> result = new ArrayList<>(targetDescriptors.values());
         Collections.sort(result);
         return result;
+    }
+
+    private static Path canonicalDirectTarget(Path target) throws WorkspaceException {
+        if (target == null || Files.isSymbolicLink(target)
+                || !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceException("Direct cqlsh publication directory is unsafe: "
+                    + target);
+        }
+        try {
+            return target.toRealPath();
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot resolve direct cqlsh publication directory "
+                    + target, e);
+        }
     }
 
     Path resolveOutput(WorkspaceRepository repository,
@@ -196,20 +229,21 @@ final class WorkspaceExportPublisher {
 
     private static Map<String, String> allocateDescriptors(Path target,
                                                              List<String> descriptors,
-                                                             boolean uuidIdentifiers)
+                                                             SstableIdentifierStyle style)
             throws WorkspaceException {
         Set<String> occupied = tocDescriptors(target);
         Map<String, String> result = new TreeMap<>();
-        long nextNumeric = uuidIdentifiers ? -1L : nextNumericIdentifier(occupied);
+        long nextNumeric = style.usesUuidIdentifiers()
+                ? -1L : nextNumericIdentifier(occupied);
         for (String descriptor : descriptors) {
             DescriptorParts parts = DescriptorParts.parse(descriptor);
-            final String identifier;
-            if (uuidIdentifiers) {
-                String candidate;
-                do {
-                    candidate = UUID.randomUUID().toString();
-                } while (occupied.contains(parts.version + "-" + candidate + "-" + parts.format));
-                identifier = candidate;
+            String identifier;
+            if (style.usesUuidIdentifiers()) {
+                if (!SstableIdentifierStyle.isUuidIdentifier(parts.identifier)) {
+                    throw new WorkspaceException("Generated SSTable identifier style does not "
+                            + "match the UUID-style selected source: " + descriptor);
+                }
+                identifier = parts.identifier;
             } else {
                 identifier = Long.toString(nextNumeric++);
             }
@@ -259,34 +293,6 @@ final class WorkspaceExportPublisher {
             throw new WorkspaceException("SSTable numeric identifier space is exhausted");
         }
         return maximum + 1L;
-    }
-
-    private static boolean uuidSstableIdentifiersEnabled(Path conf) throws WorkspaceException {
-        Path yaml = conf.resolve("cassandra.yaml");
-        if (!Files.isRegularFile(yaml, LinkOption.NOFOLLOW_LINKS)
-                || Files.isSymbolicLink(yaml)) {
-            throw new WorkspaceException("Cassandra 5.0 configuration is missing cassandra.yaml: "
-                    + yaml);
-        }
-        try {
-            for (String raw : Files.readAllLines(yaml, StandardCharsets.UTF_8)) {
-                String line = raw.split("#", 2)[0].trim();
-                if (line.startsWith("uuid_sstable_identifiers_enabled:")) {
-                    String value = line.substring(line.indexOf(':') + 1).trim();
-                    if ("true".equalsIgnoreCase(value)) {
-                        return true;
-                    }
-                    if ("false".equalsIgnoreCase(value)) {
-                        return false;
-                    }
-                    throw new WorkspaceException("Invalid uuid_sstable_identifiers_enabled "
-                            + "value in " + yaml);
-                }
-            }
-            return false;
-        } catch (IOException e) {
-            throw new WorkspaceException("Cannot read Cassandra configuration " + yaml, e);
-        }
     }
 
     private static void publishComponentSets(WorkspaceRepository repository,
@@ -375,10 +381,12 @@ final class WorkspaceExportPublisher {
 
     private static final class DescriptorParts {
         private final String version;
+        private final String identifier;
         private final String format;
 
-        private DescriptorParts(String version, String format) {
+        private DescriptorParts(String version, String identifier, String format) {
             this.version = version;
+            this.identifier = identifier;
             this.format = format;
         }
 
@@ -389,6 +397,7 @@ final class WorkspaceExportPublisher {
                 throw new WorkspaceException("Invalid flushed SSTable descriptor: " + descriptor);
             }
             return new DescriptorParts(descriptor.substring(0, first),
+                    descriptor.substring(first + 1, last),
                     descriptor.substring(last + 1));
         }
     }

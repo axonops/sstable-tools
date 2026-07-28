@@ -29,8 +29,12 @@ The Cassandra-free bootstrap discovers the installation and constructs the
 child classpath in this order:
 
 1. the selected release-specific thin JAR;
-2. the selected Cassandra configuration directory;
+2. an optional support directory containing distribution JVM options and
+   client resources;
 3. the installed distribution JARs in deterministic filename order.
+
+The installation's `cassandra.yaml` is not required or read. Cassandra is
+started only with the generated workspace-owned configuration described below.
 
 The worker uses the Java home selected for Cassandra, adds the installed Jamm
 JAR as `-javaagent`, removes inherited Java option variables, and redirects
@@ -138,8 +142,8 @@ and a fixed in-memory role manager grants login to only that non-superuser
 identity. Cassandra's `AllowAllAuthorizer` remains configured: the parsed
 statement guard, not production RBAC, is the authorization boundary.
 
-`workspace cqlsh` validates that the selected Cassandra home, configuration,
-and release match the runtime recorded by `start`, checks the authenticated
+`workspace cqlsh` validates that the selected Cassandra home and release match
+the runtime recorded by `start`, checks the authenticated
 worker control endpoint and owner-only credential, and launches that
 installation's stock client against the fixed loopback address. Interactive
 mode allows no endpoint/authentication overrides; `--execute <CQL>` is the only

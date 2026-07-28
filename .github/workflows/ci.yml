@@ -32,14 +32,32 @@ jobs:
           cache: maven
           cache-dependency-path: '**/pom.xml'
 
+      - name: Set up Go for nFPM
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.x'
+          cache: false
+
+      - name: Install Linux package tooling
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes cpio rpm rpm2cpio
+
       - name: Build, test, and verify thin JARs
         run: scripts/mvn-retry -B -ntp verify
 
-      - name: Package release bundle
+      - name: Package release bundle, DEB, and RPM
         run: |
           scripts/package-release --output target/release
           scripts/verify-release-bundle target/release/sstable-tools-0.1.0-SNAPSHOT
+          mvn -B -ntp package -DskipTests -Drevision=0.1.0
           scripts/package-release --output target/release-versioned --version 0.1.0
+          scripts/package-linux-packages \
+            --release-dir target/release-versioned/sstable-tools-0.1.0
+          scripts/verify-linux-packages \
+            target/release-versioned/sstable-tools-0.1.0
           scripts/verify-release-bundle target/release-versioned/sstable-tools-0.1.0
 
       - name: Publish executed test results
@@ -60,6 +78,8 @@ jobs:
           retention-days: 14
           path: |
             target/release/sstable-tools-*/
+            target/release-versioned/sstable-tools-*/
+            target/release-versioned/sstable-tools-*.tar.gz
             **/target/dependency-tree.txt
 
   adapter-runtime:
@@ -200,6 +220,8 @@ jobs:
             https://archive.apache.org/dist/cassandra/3.11.19/apache-cassandra-3.11.19-bin.tar.gz
           echo '42d7732c2b81c65a960101d1146603d430de341adcdf8d0ffc649753a340cf64dad696050f2ec01faff5f15e726f4f2a459f0b3ac281569b957f7726f51d43e0  apache-cassandra-3.11.19-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-3.11.19-bin.tar.gz
+          mv apache-cassandra-3.11.19/conf/cassandra.yaml \
+            apache-cassandra-3.11.19/conf/cassandra.yaml.installation-not-used
 
       - name: Extract pinned Cassandra 3.11.19 Debian and RPM layouts
         working-directory: ${{ runner.temp }}
@@ -240,11 +262,9 @@ jobs:
           TOOL_JAR=workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-0.1.0-SNAPSHOT.jar
           java -jar "$TOOL_JAR" \
             --cassandra-home "${{ runner.temp }}/cassandra-debian/usr/share/cassandra" \
-            --cassandra-conf "${{ runner.temp }}/cassandra-debian/etc/cassandra" \
             --java-home "$CASSANDRA_JAVA_HOME" runtime preflight
           java -jar "$TOOL_JAR" \
             --cassandra-home "${{ runner.temp }}/cassandra-rpm/usr/share/cassandra" \
-            --cassandra-conf "${{ runner.temp }}/cassandra-rpm/etc/cassandra/default.conf" \
             --java-home "$CASSANDRA_JAVA_HOME" runtime preflight
 
       - name: Exercise direct Cassandra 3.11 cqlsh workflow
@@ -330,6 +350,8 @@ jobs:
             https://archive.apache.org/dist/cassandra/4.0.17/apache-cassandra-4.0.17-bin.tar.gz
           echo '7f72941dd1c73e30361cc2aad55dabd7005e95f2275c9190645fd0467cac6da67f8602ffbae53fb98367cb67116b4e271b8293381d7d5041267ce2437e8273be  apache-cassandra-4.0.17-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-4.0.17-bin.tar.gz
+          mv apache-cassandra-4.0.17/conf/cassandra.yaml \
+            apache-cassandra-4.0.17/conf/cassandra.yaml.installation-not-used
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
@@ -438,6 +460,8 @@ jobs:
             https://archive.apache.org/dist/cassandra/4.1.3/apache-cassandra-4.1.3-bin.tar.gz
           echo '393443a5b9849645362df2f7536e734e1fc6d513aadf440fab8dda3063553394a138805098796d35f9d4d31e2899ecab630a2ec2a44d00d5e63bed549a2e844c  apache-cassandra-4.1.3-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-4.1.3-bin.tar.gz
+          mv apache-cassandra-4.1.3/conf/cassandra.yaml \
+            apache-cassandra-4.1.3/conf/cassandra.yaml.installation-not-used
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
@@ -546,6 +570,8 @@ jobs:
             https://archive.apache.org/dist/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
           echo '06b7af18c8f41dc13dbfdae186d565a5f91e71ea413c3c5373aec8a4e5074c6dee5632a0e5e98c21665f08f7291d7ca384f61a323c02610c6bca51e074b5a0c4  apache-cassandra-5.0.8-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-5.0.8-bin.tar.gz
+          mv apache-cassandra-5.0.8/conf/cassandra.yaml \
+            apache-cassandra-5.0.8/conf/cassandra.yaml.installation-not-used
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 

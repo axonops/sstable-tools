@@ -16,16 +16,13 @@ import java.util.Map;
 public final class RuntimeIdentity {
     private final CassandraInstallation installation;
     private final String toolSha256;
-    private final String configurationSha256;
     private final Map<Path, String> jarSha256;
 
     private RuntimeIdentity(CassandraInstallation installation,
                             String toolSha256,
-                            String configurationSha256,
                             Map<Path, String> jarSha256) {
         this.installation = installation;
         this.toolSha256 = toolSha256;
-        this.configurationSha256 = configurationSha256;
         this.jarSha256 = Collections.unmodifiableMap(new LinkedHashMap<>(jarSha256));
     }
 
@@ -34,7 +31,6 @@ public final class RuntimeIdentity {
         String toolHash = Files.isRegularFile(installation.toolPath())
                 ? sha256(installation.toolPath())
                 : "development-directory";
-        String configurationHash = sha256(installation.conf().resolve("cassandra.yaml"));
         Map<Path, String> jarHashes = new LinkedHashMap<>();
         for (Path entry : installation.classpath()) {
             if (Files.isRegularFile(entry) && entry.getFileName().toString().endsWith(".jar")
@@ -42,7 +38,7 @@ public final class RuntimeIdentity {
                 jarHashes.put(entry, sha256(entry));
             }
         }
-        return new RuntimeIdentity(installation, toolHash, configurationHash, jarHashes);
+        return new RuntimeIdentity(installation, toolHash, jarHashes);
     }
 
     public List<String> asPropertyLines(AdapterMetadata adapter) {
@@ -61,8 +57,6 @@ public final class RuntimeIdentity {
         values.put("tool.path", installation.toolPath().toString());
         values.put("tool.sha256", toolSha256);
         values.put("cassandra.home", installation.home().toString());
-        values.put("cassandra.conf", installation.conf().toString());
-        values.put("cassandra.conf.sha256", configurationSha256);
         values.put("cassandra.version", installation.version().toString());
         values.put("cassandra.server-jar", installation.serverJar().toString());
         values.put("java.home", installation.java().home().toString());

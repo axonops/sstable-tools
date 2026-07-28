@@ -52,6 +52,13 @@ The private Cassandra 5.0 sandbox also sets
 which rejects the BTI writer. This setting applies only to the tool's isolated
 workspace, never the stopped source node or its configuration.
 
+The same generated sandbox configuration infers
+`uuid_sstable_identifiers_enabled` from the explicitly selected SSTable
+descriptors. All-numeric input keeps numeric output. Any selected
+28-character Cassandra UUID/ULID-style identifier, including a mixed
+numeric/UUID selection, enables UUID-style output. The installation's
+configuration is not read.
+
 Import remains format-preserving for staged source descriptors. Flush output
 is validated against the selected format: Big must be `oa-big`; BTI must be
 `da-bti`, with `Data.db`, `Partitions.db`, `Rows.db`, `Statistics.db`,

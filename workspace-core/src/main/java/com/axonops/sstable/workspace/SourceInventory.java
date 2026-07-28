@@ -26,8 +26,8 @@ public final class SourceInventory {
     private final List<SstableSet> sets;
 
     SourceInventory(List<SstableSet> sets) throws WorkspaceException {
-        if (sets == null || sets.isEmpty()) {
-            throw new WorkspaceException("Source inventory must contain at least one SSTable set");
+        if (sets == null) {
+            throw new WorkspaceException("Source inventory must not be null");
         }
         List<SstableSet> sorted = new ArrayList<>(sets);
         if (sorted.contains(null)) {
@@ -86,6 +86,27 @@ public final class SourceInventory {
             throw new WorkspaceException("No complete SSTable descriptors were found");
         }
         return new SourceInventory(sets);
+    }
+
+    /**
+     * Captures every complete SSTable in one destination directory, allowing the directory
+     * to be empty so direct CQL can create its first SSTable.
+     */
+    public static SourceInventory captureDirectoryAllowEmpty(Path directory)
+            throws WorkspaceException {
+        if (directory == null || Files.isSymbolicLink(directory)
+                || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceException("SSTable output directory must be an existing "
+                    + "non-symlink directory: " + directory);
+        }
+        final Path canonical;
+        try {
+            canonical = directory.toRealPath();
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot resolve SSTable output directory "
+                    + directory, e);
+        }
+        return new SourceInventory(captureDirectory(canonical));
     }
 
     private static Path tocForSelectedComponent(Path component) throws WorkspaceException {

@@ -27,6 +27,11 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class WorkspaceExportPublisherTest {
+    private static final String SOURCE_UUID_IDENTIFIER =
+            "1234_0001_000010000000000001";
+    private static final String DELTA_UUID_IDENTIFIER =
+            "1234_0001_000020000000000002";
+
     @Rule
     public final TemporaryFolder temporary = new TemporaryFolder();
 
@@ -96,23 +101,48 @@ public class WorkspaceExportPublisherTest {
     public void publishesVerifiedDeltaBesideTheExplicitSourceWithNewIdentifier()
             throws Exception {
         Fixture fixture = createFixture();
-        Path conf = temporary.newFolder("conf").toPath();
-        Files.write(conf.resolve("cassandra.yaml"), Collections.singletonList(
-                "uuid_sstable_identifiers_enabled: false"), StandardCharsets.UTF_8);
-        CassandraInstallation installation = new CassandraInstallation(null, conf, null,
-                CassandraVersion.parse("3.11.19"), null, null,
-                Collections.<Path>emptyList());
+        List<String> descriptors = new WorkspaceExportPublisher().publishDeltaAdjacent(
+                fixture.repository, fixture.manifest, fixture.flush, fixture.verification);
+
+        Assert.assertEquals(Collections.singletonList("mc-42-big"), descriptors);
+        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("ma-41-big-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("mc-42-big-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("mc-42-big-TOC.txt")));
+        Assert.assertFalse(Files.exists(fixture.source.resolve(".sstable-tools-mc-42-big-"
+                + "Data.db.tmp")));
+    }
+
+    @Test
+    public void preservesCassandraUuidIdentifierForUuidStyleSelection() throws Exception {
+        String sourceDescriptor = "oa-" + SOURCE_UUID_IDENTIFIER + "-big";
+        String deltaDescriptor = "oa-" + DELTA_UUID_IDENTIFIER + "-big";
+        Fixture fixture = createFixture(sourceDescriptor, deltaDescriptor, "5.0.8");
+
+        List<String> descriptors = new WorkspaceExportPublisher().publishDeltaAdjacent(
+                fixture.repository, fixture.manifest, fixture.flush, fixture.verification);
+
+        Assert.assertEquals(Collections.singletonList(deltaDescriptor), descriptors);
+        Assert.assertTrue(Files.isRegularFile(
+                fixture.source.resolve(sourceDescriptor + "-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(
+                fixture.source.resolve(deltaDescriptor + "-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(
+                fixture.source.resolve(deltaDescriptor + "-TOC.txt")));
+    }
+
+    @Test
+    public void publishesFirstUuidSstableIntoAnEmptyOutputDirectory() throws Exception {
+        Path output = temporary.newFolder("empty-output").toPath().toRealPath();
+        String deltaDescriptor = "oa-" + DELTA_UUID_IDENTIFIER + "-big";
+        Fixture fixture = createEmptyFixture(output, deltaDescriptor);
 
         List<String> descriptors = new WorkspaceExportPublisher().publishDeltaAdjacent(
                 fixture.repository, fixture.manifest, fixture.flush, fixture.verification,
-                installation);
+                output, true);
 
-        Assert.assertEquals(Collections.singletonList("mc-2-big"), descriptors);
-        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("ma-1-big-Data.db")));
-        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("mc-2-big-Data.db")));
-        Assert.assertTrue(Files.isRegularFile(fixture.source.resolve("mc-2-big-TOC.txt")));
-        Assert.assertFalse(Files.exists(fixture.source.resolve(".sstable-tools-mc-2-big-"
-                + "Data.db.tmp")));
+        Assert.assertEquals(Collections.singletonList(deltaDescriptor), descriptors);
+        Assert.assertTrue(Files.isRegularFile(output.resolve(deltaDescriptor + "-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(output.resolve(deltaDescriptor + "-TOC.txt")));
     }
 
     private static void assertPublishFailure(WorkspaceExportPublisher publisher,
@@ -129,8 +159,14 @@ public class WorkspaceExportPublisherTest {
     }
 
     private Fixture createFixture() throws Exception {
+        return createFixture("ma-41-big", "mc-2-big", "3.11.19");
+    }
+
+    private Fixture createFixture(String sourceDescriptor,
+                                  String deltaDescriptor,
+                                  String release) throws Exception {
         Path source = temporary.newFolder("source").toPath().toRealPath();
-        writeDescriptor(source, "ma-1-big", (byte) 7);
+        writeDescriptor(source, sourceDescriptor, (byte) 7);
         SourceInventory sourceInventory = SourceInventory.capture(
                 Collections.singletonList(source));
         WorkspaceRepository repository = WorkspaceRepository.createAt(
@@ -164,25 +200,74 @@ public class WorkspaceExportPublisherTest {
                     .transitionTo(WorkspaceState.IMPORTED);
             repository.save(lock, manifest);
             manifest = manifest.withRuntimeIdentity(
-                    Collections.singletonMap("cassandra.version", "3.11.19"),
+                    Collections.singletonMap("cassandra.version", release),
                     Collections.singletonMap("export.contract", "test-v1"));
             repository.save(lock, manifest);
             manifest = manifest.transitionTo(WorkspaceState.RUNNING);
             repository.save(lock, manifest);
 
-            writeDescriptor(table, "mc-2-big", (byte) 2);
+            writeDescriptor(table, deltaDescriptor, (byte) 2);
             WorkspaceFlushResult flush = WorkspaceFlushResult.capture(repository.root(),
-                    manifest.workspaceId(), "3.11.19", "blog", "users", tableDirectory);
+                    manifest.workspaceId(), release, "blog", "users", tableDirectory);
             flush.writeAtomically(repository.root());
             WorkspaceVerificationResult verification = new WorkspaceVerificationResult(
-                    manifest.workspaceId(), "3.11.19", "blog", "users", flush.sha256(),
+                    manifest.workspaceId(), release, "blog", "users", flush.sha256(),
                     Instant.parse("2026-07-16T12:00:00Z"), 2, 1, 2,
-                    Collections.singletonList("mc"),
-                    Collections.singletonList("mc-2-big"));
+                    Collections.singletonList(
+                            deltaDescriptor.substring(0, deltaDescriptor.indexOf('-'))),
+                    Collections.singletonList(deltaDescriptor));
             verification.writeAtomically(repository.root());
             manifest = manifest.transitionTo(WorkspaceState.FLUSHED);
             repository.save(lock, manifest);
             return new Fixture(source, repository, manifest, flush, verification);
+        }
+    }
+
+    private Fixture createEmptyFixture(Path output, String deltaDescriptor) throws Exception {
+        SourceInventory sourceInventory = SourceInventory.captureDirectoryAllowEmpty(output);
+        WorkspaceRepository repository = WorkspaceRepository.createAt(
+                temporary.newFolder("empty-workspace").toPath());
+        WorkspaceManifest manifest = WorkspaceManifest.create(sourceInventory)
+                .withOutputIdentity(Collections.singletonMap(
+                        "sstable.identifier-style", "uuid"));
+        String tableDirectory = "data/blog/users-id";
+
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            Path table = Files.createDirectories(repository.root().resolve(tableDirectory));
+            manifest = manifest.transitionTo(WorkspaceState.VALIDATED);
+            repository.save(lock, manifest);
+            Map<String, String> schemaIdentity = new LinkedHashMap<>();
+            schemaIdentity.put("keyspace", "blog");
+            schemaIdentity.put("table", "users");
+            schemaIdentity.put("table.id", "00000000-0000-0000-0000-000000000001");
+            schemaIdentity.put("partitioner",
+                    "org.apache.cassandra.dht.Murmur3Partitioner");
+            schemaIdentity.put("table.directory", tableDirectory);
+            schemaIdentity.put(SourceTimestampStatus.MANIFEST_KEY, "0");
+            schemaIdentity.put(TimestampPolicy.MANIFEST_KEY, "after-source");
+            manifest = manifest.withImportResult(schemaIdentity,
+                            Collections.<ManifestFile>emptyList())
+                    .transitionTo(WorkspaceState.IMPORTED);
+            repository.save(lock, manifest);
+            manifest = manifest.withRuntimeIdentity(
+                    Collections.singletonMap("cassandra.version", "5.0.8"),
+                    Collections.singletonMap("export.contract", "test-v1"));
+            repository.save(lock, manifest);
+            manifest = manifest.transitionTo(WorkspaceState.RUNNING);
+            repository.save(lock, manifest);
+
+            writeDescriptor(table, deltaDescriptor, (byte) 2);
+            WorkspaceFlushResult flush = WorkspaceFlushResult.capture(repository.root(),
+                    manifest.workspaceId(), "5.0.8", "blog", "users", tableDirectory);
+            WorkspaceVerificationResult verification = new WorkspaceVerificationResult(
+                    manifest.workspaceId(), "5.0.8", "blog", "users", flush.sha256(),
+                    Instant.parse("2026-07-16T12:00:00Z"), 1, 1, 1,
+                    Collections.singletonList("oa"),
+                    Collections.singletonList(deltaDescriptor));
+            manifest = manifest.transitionTo(WorkspaceState.FLUSHED);
+            repository.save(lock, manifest);
+            return new Fixture(output, repository, manifest, flush, verification);
         }
     }
 

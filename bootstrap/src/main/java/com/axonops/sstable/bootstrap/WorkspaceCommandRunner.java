@@ -29,6 +29,7 @@ import java.security.SecureRandom;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -84,8 +85,7 @@ final class WorkspaceCommandRunner {
                 throw new WorkspaceException("workspace start requires state IMPORTED or "
                         + "STOPPED, not " + manifest.state());
             }
-            WorkspaceFileInventory.verifyUnchanged(repository.root(),
-                    manifest.baselineInventory());
+            verifyBaselineIfPresent(repository, manifest);
             long sourceMaximumMicros = requireSourceMaxTimestamp(manifest);
             boolean timestampPolicyRecorded = manifest.schemaIdentity().containsKey(
                     TimestampPolicy.MANIFEST_KEY);
@@ -105,8 +105,10 @@ final class WorkspaceCommandRunner {
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
             validateOutputFormat(adapter, requiredOutputFormat(manifest));
+            SstableIdentifierStyle identifierStyle = SstableIdentifierStyle.recorded(
+                    manifest.outputIdentity());
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
-                    outputIdentity(requiredOutputFormat(manifest)));
+                    outputIdentity(requiredOutputFormat(manifest), identifierStyle));
             WorkspaceTimestampState.prepare(repository, lock, manifest.workspaceId(),
                     timestampPolicy, sourceMaximumMicros, !timestampPolicyRecorded);
             repository.deleteOwnedFile(lock, WorkspaceFlushResult.WORKSPACE_PATH);
@@ -116,22 +118,33 @@ final class WorkspaceCommandRunner {
             int nativePort = allocateLoopbackPort();
             String token = randomSecret();
             String nativePassword = randomSecret();
-            Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
-                    nativePort, token, nativePassword, adapter.releaseLine(),
-                    requiredOutputFormat(manifest));
+            String importedKeyspace = requiredImportedSchema(manifest, "keyspace");
+            String importedTable = requiredImportedSchema(manifest, "table");
+            boolean importBeforeStart = "5.0".equals(adapter.releaseLine())
+                    && "system".equals(importedKeyspace);
+            if (importBeforeStart) {
+                Cassandra311SandboxConfig.writeWithDeferredNativeTransport(repository, lock,
+                        manifest.workspaceId(), nativePort, token, nativePassword,
+                        adapter.releaseLine(), requiredOutputFormat(manifest),
+                        importedSystemClusterName(manifest),
+                        identifierStyle.usesUuidIdentifiers());
+            } else {
+                Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
+                        nativePort, token, nativePassword, adapter.releaseLine(),
+                        requiredOutputFormat(manifest), importedSystemClusterName(manifest),
+                        identifierStyle.usesUuidIdentifiers());
+            }
             repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.ENDPOINT_PATH);
 
             WorkerEndpoint endpoint = null;
             try {
                 endpoint = new ChildProcessLauncher().startSandbox(installation,
                         repository.root(), manifest.workspaceId(), nativePort,
-                        requiredImportedSchema(manifest, "keyspace"),
-                        requiredImportedSchema(manifest, "table"), timestampPolicy,
-                        sourceMaximumMicros);
+                        importedKeyspace, importedTable, timestampPolicy, sourceMaximumMicros,
+                        importBeforeStart);
                 new WorkerControlClient().status(repository, manifest.workspaceId());
                 manifest.sourceInventory().verifyUnchanged();
-                WorkspaceFileInventory.verifyUnchanged(repository.root(),
-                        manifest.baselineInventory());
+                verifyBaselineIfPresent(repository, manifest);
                 manifest = manifest.transitionTo(WorkspaceState.RUNNING);
                 repository.save(lock, manifest);
                 printStatus(repository, manifest, out);
@@ -190,12 +203,15 @@ final class WorkspaceCommandRunner {
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
             String outputFormat = requiredOutputFormat(manifest);
             validateOutputFormat(adapter, outputFormat);
+            SstableIdentifierStyle identifierStyle = SstableIdentifierStyle.forImport(
+                    manifest.sourceInventory(), adapter.releaseLine());
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
-                    outputIdentity(outputFormat));
+                    outputIdentity(outputFormat, identifierStyle));
             repository.save(lock, manifest);
             int unusedNativePort = allocateLoopbackPort();
             Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
-                    unusedNativePort, adapter.releaseLine(), outputFormat);
+                    unusedNativePort, adapter.releaseLine(), outputFormat,
+                    identifierStyle.usesUuidIdentifiers());
             repository.deleteOwnedFile(lock, ImportResult.WORKSPACE_PATH);
 
             try {
@@ -208,7 +224,10 @@ final class WorkspaceCommandRunner {
                 }
                 manifest.sourceInventory().verifyUnchanged();
                 verifySchemaBundle(repository, manifest);
-                List<ManifestFile> baseline = WorkspaceFileInventory.capture(
+                List<ManifestFile> baseline = manifest.sourceInventory().sets().isEmpty()
+                        ? WorkspaceFileInventory.captureAllowEmpty(
+                        repository.root(), result.tableDirectory())
+                        : WorkspaceFileInventory.capture(
                         repository.root(), result.tableDirectory());
                 Map<String, String> schema = new LinkedHashMap<>();
                 schema.put("keyspace", result.keyspace());
@@ -219,6 +238,9 @@ final class WorkspaceCommandRunner {
                 schema.put("import.source-sets", Integer.toString(result.sourceSets()));
                 schema.put("import.live-sstables", Integer.toString(result.liveSstables()));
                 schema.put("import.logical-rows", Long.toString(result.logicalRows()));
+                if (result.systemClusterName() != null) {
+                    schema.put("system.cluster-name", result.systemClusterName());
+                }
                 schema.put(SourceTimestampStatus.MANIFEST_KEY,
                         Long.toString(result.sourceMaxTimestampMicros()));
                 manifest = manifest.withImportResult(schema, baseline)
@@ -311,12 +333,16 @@ final class WorkspaceCommandRunner {
             }
             stop(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_STOP, workspace,
                     policy, false), quiet);
+            Path publicationDirectory = directPublicationDirectory(arguments, manifest);
+            LiveCassandraSourceGuard.reject(
+                    Collections.singletonList(publicationDirectory));
             List<String> publishedDescriptors = flush.deltaFiles(manifest.baselineInventory())
                     .isEmpty() ? Collections.<String>emptyList() : new WorkspaceExportPublisher()
                     .publishDeltaAdjacent(repository, manifest, flush, verification,
-                            installation);
+                            publicationDirectory,
+                            arguments.directOutputDirectory() != null);
             published = true;
-            out.println("published.directory=" + selectedSourceDirectory(manifest));
+            out.println("published.directory=" + publicationDirectory);
             out.println("published.sstables=" + (publishedDescriptors.isEmpty()
                     ? "none" : String.join(",", publishedDescriptors)));
             destroyTemporaryWorkspace(workspace, manifest.workspaceId());
@@ -390,10 +416,37 @@ final class WorkspaceCommandRunner {
         return directory;
     }
 
+    private static Path directPublicationDirectory(BootstrapArguments arguments,
+                                                   WorkspaceManifest manifest)
+            throws WorkspaceException {
+        if (arguments.directOutputDirectory() == null) {
+            return selectedSourceDirectory(manifest);
+        }
+        SourceInventory.captureDirectoryAllowEmpty(arguments.directOutputDirectory());
+        return canonicalOutputDirectory(arguments.directOutputDirectory());
+    }
+
+    private static Path canonicalOutputDirectory(Path directory) throws WorkspaceException {
+        try {
+            if (Files.isSymbolicLink(directory)
+                    || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+                throw new WorkspaceException("SSTable output directory must be an existing "
+                        + "non-symlink directory: " + directory);
+            }
+            return directory.toRealPath();
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot resolve SSTable output directory "
+                    + directory, e);
+        }
+    }
+
     private static void create(BootstrapArguments arguments, PrintStream out)
             throws WorkspaceException {
-        requireSeparateArguments(arguments.workspacePath(), arguments.sourceDirectories());
-        LiveCassandraSourceGuard.reject(arguments.sourceDirectories());
+        List<Path> inventoryArguments = arguments.directOutputDirectory() == null
+                ? arguments.sourceDirectories()
+                : Collections.singletonList(arguments.directOutputDirectory());
+        requireSeparateArguments(arguments.workspacePath(), inventoryArguments);
+        LiveCassandraSourceGuard.reject(inventoryArguments);
         SchemaBundle schema = arguments.schemaPath() == null
                 ? null : SchemaBundle.capture(arguments.schemaPath());
         if (schema != null) {
@@ -402,10 +455,19 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.createAt(
                 arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
-            SourceInventory requested = SourceInventory.capture(
-                    arguments.sourceDirectories());
+            SourceInventory requested = arguments.directOutputDirectory() == null
+                    ? SourceInventory.capture(arguments.sourceDirectories())
+                    : SourceInventory.captureDirectoryAllowEmpty(
+                    arguments.directOutputDirectory());
+            if (requested.sets().isEmpty()) {
+                requireEmptyBaselineInsert(arguments);
+            }
             requested.verifyUnchanged();
             requireSeparateSourceAndWorkspace(repository, requested);
+            if (arguments.directOutputDirectory() != null) {
+                requireNoOverlap(repository.root(),
+                        canonicalOutputDirectory(arguments.directOutputDirectory()));
+            }
 
             WorkspaceManifest manifest;
             if (repository.manifestExists()) {
@@ -448,6 +510,16 @@ final class WorkspaceCommandRunner {
                 repository.save(lock, manifest);
             }
             printStatus(repository, manifest, out);
+        }
+    }
+
+    private static void requireEmptyBaselineInsert(BootstrapArguments arguments)
+            throws WorkspaceException {
+        String cql = arguments.executeCql();
+        if (arguments.directOutputDirectory() == null || cql == null
+                || !cql.trim().toUpperCase(Locale.ROOT).startsWith("INSERT")) {
+            throw new WorkspaceException("An empty --output-dir requires cqlsh --execute "
+                    + "with an INSERT statement");
         }
     }
 
@@ -951,7 +1023,8 @@ final class WorkspaceCommandRunner {
         }
     }
 
-    private static Map<String, String> outputIdentity(String sstableFormat) {
+    private static Map<String, String> outputIdentity(String sstableFormat,
+                                                       SstableIdentifierStyle identifierStyle) {
         Map<String, String> output = new LinkedHashMap<>();
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
@@ -960,6 +1033,7 @@ final class WorkspaceCommandRunner {
         output.put("flush.contract", "cassandra-3.11-quiesced-table-v1");
         output.put("import.contract", "cassandra-3.11-refresh-v2");
         output.put("sstable.format", sstableFormat);
+        output.put("sstable.identifier-style", identifierStyle.manifestValue());
         return output;
     }
 
@@ -970,6 +1044,20 @@ final class WorkspaceCommandRunner {
             throw new WorkspaceException("Imported workspace is missing schema " + name);
         }
         return value;
+    }
+
+    private static String importedSystemClusterName(WorkspaceManifest manifest)
+            throws WorkspaceException {
+        if (!"system".equals(requiredImportedSchema(manifest, "keyspace"))
+                || !"local".equals(requiredImportedSchema(manifest, "table"))) {
+            return null;
+        }
+        String clusterName = manifest.schemaIdentity().get("system.cluster-name");
+        if (clusterName == null || clusterName.trim().isEmpty()
+                || clusterName.indexOf('\n') >= 0 || clusterName.indexOf('\r') >= 0) {
+            throw new WorkspaceException("Imported system.local has an invalid cluster name");
+        }
+        return clusterName;
     }
 
     private static long requireSourceMaxTimestamp(WorkspaceManifest manifest)
@@ -1099,7 +1187,6 @@ final class WorkspaceCommandRunner {
             throws WorkspaceException {
         Map<String, String> expected = new LinkedHashMap<>();
         expected.put("cassandra.home", installation.home().toString());
-        expected.put("cassandra.conf", installation.conf().toString());
         expected.put("cassandra.version", installation.version().toString());
         for (Map.Entry<String, String> entry : expected.entrySet()) {
             String recorded = requiredRuntimeValue(manifest, entry.getKey());

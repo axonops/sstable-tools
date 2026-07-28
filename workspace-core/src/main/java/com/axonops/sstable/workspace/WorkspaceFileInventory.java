@@ -18,6 +18,19 @@ public final class WorkspaceFileInventory {
 
     public static List<ManifestFile> capture(Path workspaceRoot, String relativeDirectory)
             throws WorkspaceException {
+        return capture(workspaceRoot, relativeDirectory, false);
+    }
+
+    public static List<ManifestFile> captureAllowEmpty(Path workspaceRoot,
+                                                       String relativeDirectory)
+            throws WorkspaceException {
+        return capture(workspaceRoot, relativeDirectory, true);
+    }
+
+    private static List<ManifestFile> capture(Path workspaceRoot,
+                                              String relativeDirectory,
+                                              boolean allowEmpty)
+            throws WorkspaceException {
         Path root;
         Path directory;
         try {
@@ -55,7 +68,7 @@ public final class WorkspaceFileInventory {
                     + directory, e);
         }
         paths.sort(Comparator.comparing(path -> root.relativize(path).toString()));
-        if (paths.isEmpty()) {
+        if (paths.isEmpty() && !allowEmpty) {
             throw new WorkspaceException("Workspace baseline inventory must not be empty: "
                     + directory);
         }

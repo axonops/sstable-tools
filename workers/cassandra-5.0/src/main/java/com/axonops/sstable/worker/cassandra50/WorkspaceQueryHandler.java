@@ -37,7 +37,7 @@ public final class WorkspaceQueryHandler implements QueryHandler {
     private final QueryHandler delegate = QueryProcessor.instance;
     private final String keyspace = requiredProperty(KEYSPACE_PROPERTY);
     private final String table = requiredProperty(TABLE_PROPERTY);
-    private final long sourceMaxTimestampMicros = requiredTimestampProperty();
+    private volatile long sourceMaxTimestampMicros = requiredTimestampProperty();
     private static volatile WorkspaceQueryHandler active;
     private final Object requestMonitor = new Object();
     private boolean acceptingRequests = true;
@@ -140,6 +140,17 @@ public final class WorkspaceQueryHandler implements QueryHandler {
     static boolean isQuiesced() {
         WorkspaceQueryHandler handler = active;
         return handler != null && handler.quiesced();
+    }
+
+    static void setSourceMaxTimestamp(long timestamp) {
+        if (timestamp < 0) {
+            throw new IllegalArgumentException("Source timestamp must not be negative");
+        }
+        WorkspaceQueryHandler handler = active;
+        if (handler == null) {
+            throw new IllegalStateException("Workspace query guard is not active");
+        }
+        handler.sourceMaxTimestampMicros = timestamp;
     }
 
     private void requireAllowed(CQLStatement statement, QueryOptions options)
