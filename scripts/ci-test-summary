@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root_dir"
+
+mapfile -t reports < <(find . -type f \( \
+  -path '*/target/surefire-reports/TEST-*.xml' -o \
+  -path '*/target/failsafe-reports/TEST-*.xml' \
+  \) -print | LC_ALL=C sort)
+
+if [[ ${#reports[@]} -eq 0 ]]; then
+  printf 'No Surefire or Failsafe XML reports were produced.\n' >&2
+  exit 1
+fi
+
+attribute() {
+  local suite="$1"
+  local name="$2"
+  sed -n "s/.* ${name}=\"\\([^\"]*\\)\".*/\\1/p" <<<"$suite"
+}
+
+total_tests=0
+total_failures=0
+total_errors=0
+total_skipped=0
+
+printf '## Executed Maven Test Suites\n\n'
+printf '| Result | Engine | Module | Suite | Tests | Failures | Errors | Skipped | Time |\n'
+printf '|---|---|---|---|---:|---:|---:|---:|---:|\n'
+
+for report in "${reports[@]}"; do
+  suite="$(grep -m1 '<testsuite ' "$report")"
+  tests="$(attribute "$suite" tests)"
+  failures="$(attribute "$suite" failures)"
+  errors="$(attribute "$suite" errors)"
+  skipped="$(attribute "$suite" skipped)"
+  duration="$(attribute "$suite" time)"
+  name="$(attribute "$suite" name)"
+  relative="${report#./}"
+  module="${relative%%/target/*}"
+  engine="surefire"
+  if [[ "$relative" == */failsafe-reports/* ]]; then
+    engine="failsafe"
+  fi
+  result="PASS"
+  if [[ "$failures" != 0 || "$errors" != 0 ]]; then
+    result="FAIL"
+  fi
+
+  printf '| %s | %s | %s | `%s` | %s | %s | %s | %s | %ss |\n' \
+    "$result" "$engine" "$module" "$name" "$tests" "$failures" "$errors" \
+    "$skipped" "$duration"
+  total_tests=$((total_tests + tests))
+  total_failures=$((total_failures + failures))
+  total_errors=$((total_errors + errors))
+  total_skipped=$((total_skipped + skipped))
+done
+
+printf '\n**Totals:** %s tests, %s failures, %s errors, %s skipped.\n' \
+  "$total_tests" "$total_failures" "$total_errors" "$total_skipped"
+
+if [[ "$total_failures" != 0 || "$total_errors" != 0 ]]; then
+  exit 1
+fi

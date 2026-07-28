@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s <release-directory>\n' "$0" >&2
+  exit 64
+}
+
+[[ $# -eq 1 ]] || usage
+release_dir=$1
+manifest="$release_dir/compatibility-manifest.json"
+checksums="$release_dir/SHA256SUMS"
+
+[[ -d "$release_dir" && -f "$manifest" && -f "$checksums" \
+    && -f "$release_dir/sbom.spdx.json" \
+    && -f "$release_dir/THIRD-PARTY-NOTICES.txt" ]] || {
+  printf 'Release bundle is incomplete: %s\n' "$release_dir" >&2
+  exit 1
+}
+
+mapfile -t artifacts < <(sed -n 's/.*"artifact": "\([^"]*\)".*/\1/p' "$manifest")
+[[ ${#artifacts[@]} -eq 4 ]] || {
+  printf 'Release manifest must list exactly four adapter artifacts\n' >&2
+  exit 1
+}
+
+for artifact in "${artifacts[@]}"; do
+  [[ "$artifact" != */* && -f "$release_dir/$artifact" ]] || {
+    printf 'Release manifest artifact is missing or unsafe: %s\n' "$artifact" >&2
+    exit 1
+  }
+  if jar tf "$release_dir/$artifact" | grep -q '^org/apache/cassandra/'; then
+    printf 'Release artifact contains Cassandra classes: %s\n' "$artifact" >&2
+    exit 1
+  fi
+done
+
+for release_line in 3.11 4.0 4.1 5.0; do
+  launcher="$release_dir/sstable-tools-cassandra-$release_line"
+  [[ -x "$launcher" ]] || {
+    printf 'Release launcher is missing or not executable: %s\n' "$launcher" >&2
+    exit 1
+  }
+  sh -n "$launcher"
+  version_output="$("$launcher" --version)"
+  [[ "$version_output" == *"Cassandra $release_line adapter"* ]] || {
+    printf 'Release launcher failed for Cassandra %s: %s\n' \
+      "$release_line" "$version_output" >&2
+    exit 1
+  }
+done
+[[ -x "$release_dir/sstable-tools" ]] || {
+  printf 'Universal release launcher is missing or not executable\n' >&2
+  exit 1
+}
+sh -n "$release_dir/sstable-tools"
+
+temporary="$(mktemp -d)"
+trap 'rm -rf "$temporary"' EXIT
+for release_line in 3.11 4.0 4.1 5.0; do
+  fake_lib="$temporary/cassandra-$release_line/lib"
+  mkdir -p "$fake_lib"
+  touch "$fake_lib/apache-cassandra-$release_line.99.jar"
+  version_output="$("$release_dir/sstable-tools" \
+    --cassandra-lib-dir "$fake_lib" --version)"
+  [[ "$version_output" == *"Cassandra $release_line adapter"* ]] || {
+    printf 'Universal release launcher selected the wrong Cassandra %s adapter: %s\n' \
+      "$release_line" "$version_output" >&2
+    exit 1
+  }
+done
+
+unsupported_lib="$temporary/cassandra-unsupported/lib"
+mkdir -p "$unsupported_lib"
+touch "$unsupported_lib/apache-cassandra-6.0.0.jar"
+if CASSANDRA_LIB_DIR="$unsupported_lib" \
+    "$release_dir/sstable-tools" --version \
+    >"$temporary/unsupported.out" 2>&1; then
+  printf 'Universal release launcher accepted an unsupported Cassandra version\n' >&2
+  exit 1
+fi
+grep -q 'unsupported Cassandra version 6.0.0' "$temporary/unsupported.out"
+
+ambiguous_lib="$temporary/cassandra-ambiguous/lib"
+mkdir -p "$ambiguous_lib"
+touch "$ambiguous_lib/apache-cassandra-5.0.8.jar"
+touch "$ambiguous_lib/cassandra-all-5.0.8.jar"
+if CASSANDRA_LIB_DIR="$ambiguous_lib" \
+    "$release_dir/sstable-tools" --version \
+    >"$temporary/ambiguous.out" 2>&1; then
+  printf 'Universal release launcher accepted ambiguous Cassandra core JARs\n' >&2
+  exit 1
+fi
+grep -q 'multiple Cassandra core JARs' "$temporary/ambiguous.out"
+
+(
+  cd "$release_dir"
+  sha256sum --check SHA256SUMS
+)
+
+printf 'Verified release bundle: %s\n' "$release_dir"

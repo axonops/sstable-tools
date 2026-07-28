@@ -1,0 +1,135 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: sstable-tools [--cassandra-lib-dir <path>] [tool options] <command>
+
+Selects the matching SSTable Tools adapter from a Cassandra core JAR named
+apache-cassandra-<version>.jar or cassandra-all-<version>.jar.
+
+Selection inputs, in order:
+  --cassandra-lib-dir <path>
+  CASSANDRA_LIB_DIR
+  --cassandra-home <path>/lib
+  CASSANDRA_HOME/lib
+
+All remaining options and commands are forwarded to the selected adapter.
+EOF
+  exit "${1:-64}"
+}
+
+cassandra_lib_dir=${CASSANDRA_LIB_DIR:-}
+first_argument=${1:-}
+if [ "$first_argument" = "--cassandra-lib-dir" ]; then
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    usage
+  fi
+  cassandra_lib_dir=$2
+  shift 2
+elif [ "${first_argument#--cassandra-lib-dir=}" != "$first_argument" ]; then
+  cassandra_lib_dir=${first_argument#--cassandra-lib-dir=}
+  [ -n "$cassandra_lib_dir" ] || usage
+  shift
+fi
+
+if [ "$#" -eq 0 ]; then
+  usage
+fi
+if { [ "$1" = "--help" ] || [ "$1" = "-h" ]; } \
+    && [ -z "$cassandra_lib_dir" ] \
+    && [ -z "${CASSANDRA_HOME:-}" ]; then
+  usage 0
+fi
+
+cassandra_home=
+expect_home=false
+for argument in "$@"; do
+  if [ "$expect_home" = true ]; then
+    cassandra_home=$argument
+    expect_home=false
+  elif [ "$argument" = "--cassandra-home" ]; then
+    expect_home=true
+  fi
+done
+[ "$expect_home" = false ] || usage
+
+if [ -z "$cassandra_lib_dir" ] && [ -n "$cassandra_home" ]; then
+  cassandra_lib_dir=$cassandra_home/lib
+fi
+if [ -z "$cassandra_lib_dir" ] && [ -n "${CASSANDRA_HOME:-}" ]; then
+  cassandra_lib_dir=$CASSANDRA_HOME/lib
+fi
+if [ -z "$cassandra_lib_dir" ]; then
+  printf 'error: set CASSANDRA_LIB_DIR or pass --cassandra-lib-dir <path>\n' >&2
+  usage
+fi
+if [ ! -d "$cassandra_lib_dir" ]; then
+  printf 'error: Cassandra library directory does not exist: %s\n' \
+    "$cassandra_lib_dir" >&2
+  exit 66
+fi
+cassandra_lib_dir=$(CDPATH='' cd -- "$cassandra_lib_dir" && pwd -P)
+
+cassandra_version=
+cassandra_core_jar=
+core_jar_count=0
+for candidate in \
+  "$cassandra_lib_dir"/apache-cassandra-*.jar \
+  "$cassandra_lib_dir"/cassandra-all-*.jar; do
+  [ -f "$candidate" ] || continue
+  filename=${candidate##*/}
+  case "$filename" in
+    apache-cassandra-*.jar)
+      version=${filename#apache-cassandra-}
+      ;;
+    cassandra-all-*.jar)
+      version=${filename#cassandra-all-}
+      ;;
+    *)
+      continue
+      ;;
+  esac
+  version=${version%.jar}
+  cassandra_version=$version
+  cassandra_core_jar=$candidate
+  core_jar_count=$((core_jar_count + 1))
+done
+
+if [ "$core_jar_count" -eq 0 ]; then
+  printf 'error: no apache-cassandra-<version>.jar or '\
+'cassandra-all-<version>.jar found in %s\n' "$cassandra_lib_dir" >&2
+  exit 65
+fi
+if [ "$core_jar_count" -ne 1 ]; then
+  printf 'error: multiple Cassandra core JARs found in %s\n' \
+    "$cassandra_lib_dir" >&2
+  exit 65
+fi
+
+case "$cassandra_version" in
+  3.11.*) release_line=3.11 ;;
+  4.0.*) release_line=4.0 ;;
+  4.1.*) release_line=4.1 ;;
+  5.0.*) release_line=5.0 ;;
+  *)
+    printf 'error: unsupported Cassandra version %s from %s\n' \
+      "$cassandra_version" "$cassandra_core_jar" >&2
+    exit 65
+    ;;
+esac
+
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+adapter_launcher=$script_dir/sstable-tools-cassandra-$release_line
+if [ ! -x "$adapter_launcher" ]; then
+  printf 'error: Cassandra %s adapter launcher is missing: %s\n' \
+    "$release_line" "$adapter_launcher" >&2
+  exit 66
+fi
+
+if [ -n "$cassandra_home" ]; then
+  exec "$adapter_launcher" "$@"
+fi
+
+derived_home=$(dirname -- "$cassandra_lib_dir")
+exec "$adapter_launcher" --cassandra-home "$derived_home" "$@"

@@ -1,0 +1,108 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+name: sstable-tools
+arch: all
+platform: linux
+version: ${SSTABLE_TOOLS_VERSION}
+version_schema: semver
+release: ${SSTABLE_TOOLS_PACKAGE_RELEASE}
+section: utils
+priority: optional
+maintainer: Hayato Shimizu <hayato@digitalis.io>
+description: |
+  Offline inspection and mutation tools for explicitly selected Cassandra
+  SSTables. The package contains thin adapters for Cassandra 3.11, 4.0, 4.1,
+  and 5.0. A compatible Cassandra installation is required at runtime.
+vendor: AxonOps
+homepage: https://github.com/axonops/sstable-tools
+license: Apache-2.0
+
+overrides:
+  deb:
+    depends:
+      - java17-runtime-headless
+  rpm:
+    depends:
+      - java-headless >= 1:17
+
+contents:
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools
+    dst: /usr/bin/sstable-tools
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-3.11
+    dst: /usr/bin/sstable-tools-cassandra-3.11
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-4.0
+    dst: /usr/bin/sstable-tools-cassandra-4.0
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-4.1
+    dst: /usr/bin/sstable-tools-cassandra-4.1
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-5.0
+    dst: /usr/bin/sstable-tools-cassandra-5.0
+    expand: true
+    file_info:
+      mode: 0755
+
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-3.11-${SSTABLE_TOOLS_VERSION}.jar
+    dst: /usr/share/sstable-tools/sstable-tools-cassandra-3.11.jar
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-4.0-${SSTABLE_TOOLS_VERSION}.jar
+    dst: /usr/share/sstable-tools/sstable-tools-cassandra-4.0.jar
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-4.1-${SSTABLE_TOOLS_VERSION}.jar
+    dst: /usr/share/sstable-tools/sstable-tools-cassandra-4.1.jar
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-5.0-${SSTABLE_TOOLS_VERSION}.jar
+    dst: /usr/share/sstable-tools/sstable-tools-cassandra-5.0.jar
+    expand: true
+    file_info:
+      mode: 0644
+
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/compatibility-manifest.json
+    dst: /usr/share/doc/sstable-tools/compatibility-manifest.json
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sbom.spdx.json
+    dst: /usr/share/doc/sstable-tools/sbom.spdx.json
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/THIRD-PARTY-NOTICES.txt
+    dst: /usr/share/doc/sstable-tools/THIRD-PARTY-NOTICES.txt
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/PACKAGE-CONTENTS-SHA256SUMS
+    dst: /usr/share/doc/sstable-tools/PACKAGE-CONTENTS-SHA256SUMS
+    expand: true
+    file_info:
+      mode: 0644
+  - src: README.md
+    dst: /usr/share/doc/sstable-tools/README.md
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/doc/sstable-tools/copyright
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/licenses/sstable-tools/LICENSE
+    packager: rpm
+    file_info:
+      mode: 0644

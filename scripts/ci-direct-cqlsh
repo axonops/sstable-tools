@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--output-format big|bti] [--input-format big|bti] [--input-version <version>] [--output-version <version>] [--timestamp-base <micros>]\n' "$0" >&2
+  exit 64
+}
+
+tool_jar=''
+cassandra_home=''
+java_home=''
+output_root=''
+output_format='big'
+input_format=''
+input_version=''
+output_version=''
+timestamp_base='2000000000000000'
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tool-jar) tool_jar=${2:-}; shift 2 ;;
+    --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
+    --java-home) java_home=${2:-}; shift 2 ;;
+    --output-root) output_root=${2:-}; shift 2 ;;
+    --output-format) output_format=${2:-}; shift 2 ;;
+    --input-format) input_format=${2:-}; shift 2 ;;
+    --input-version) input_version=${2:-}; shift 2 ;;
+    --output-version) output_version=${2:-}; shift 2 ;;
+    --timestamp-base) timestamp_base=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
+[[ "$output_format" == 'big' || "$output_format" == 'bti' ]] || usage
+[[ -z "$input_format" || "$input_format" == 'big' || "$input_format" == 'bti' ]] || usage
+[[ -z "$input_version" || "$input_version" =~ ^[a-z][a-z]$ ]] || usage
+[[ -z "$output_version" || "$output_version" =~ ^[a-z][a-z]$ ]] || usage
+[[ "$timestamp_base" =~ ^[0-9]+$ ]] || usage
+source_dir="$output_root/source"
+schema="$output_root/schema.cql"
+tmp_parent="$output_root/private-tmp"
+[[ -f "$tool_jar" && -d "$source_dir" && -f "$schema" ]] || {
+  printf 'Direct cqlsh fixture is incomplete below %s\n' "$output_root" >&2
+  exit 1
+}
+
+source_pattern='*-Data.db'
+if [[ -n "$input_version" ]]; then
+  source_pattern="${input_version}-*-${input_format:-*}-Data.db"
+elif [[ -n "$input_format" ]]; then
+  source_pattern="*-${input_format}-Data.db"
+fi
+if [[ -n "$output_version" ]]; then
+  output_source_pattern="${output_version}-*-${output_format}-Data.db"
+else
+  output_source_pattern='*-Data.db'
+fi
+mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
+[[ ${#initial_sources[@]} -gt 0 ]] || { printf 'No source Data.db files found\n' >&2; exit 1; }
+initial_tocs=$(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l)
+
+source_args=()
+for source in "${initial_sources[@]}"; do
+  source_args+=(--sstables "$source")
+done
+
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
+  --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('direct-row', 'inserted', 'new') USING TIMESTAMP ${timestamp_base};" \
+  | tee "$output_root/direct-cqlsh-insert.log"
+
+grep -q 'published.sstables=' "$output_root/direct-cqlsh-insert.log"
+[[ $(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l) -gt $initial_tocs ]] || {
+  printf 'Direct cqlsh did not create a new SSTable component set\n' >&2
+  exit 1
+}
+if [[ "$output_format" == 'bti' ]]; then
+  find "$source_dir" -maxdepth 1 -type f -name '*-bti-Data.db' -print -quit | grep -q . || {
+    printf 'Direct cqlsh did not publish a BTI SSTable\n' >&2
+    exit 1
+  }
+fi
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/source-components.sha256"
+)
+
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
+if [[ -z "$output_version" && ${#all_sources[@]} -le ${#initial_sources[@]} ]]; then
+  printf 'Direct cqlsh reopen did not include published sibling SSTables\n' >&2
+  exit 1
+fi
+source_args=()
+for source in "${all_sources[@]}"; do
+  source_args+=(--sstables "$source")
+done
+
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
+  --execute "UPDATE ci_source.events USING TIMESTAMP $((timestamp_base + 1)) SET payload = 'updated', state = 'ready' WHERE event_id = 'direct-row';" \
+  | tee "$output_root/direct-cqlsh-update.log"
+
+grep -q 'published.sstables=' "$output_root/direct-cqlsh-update.log"
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/source-components.sha256"
+)
+
+mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
+source_args=()
+for source in "${all_sources[@]}"; do
+  source_args+=(--sstables "$source")
+done
+
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  --output-format "$output_format" cqlsh \
+  --execute "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'direct-row';" \
+  | tee "$output_root/direct-cqlsh-select.log"
+
+grep -q 'direct-row' "$output_root/direct-cqlsh-select.log"
+grep -q 'updated' "$output_root/direct-cqlsh-select.log"
+grep -q 'ready' "$output_root/direct-cqlsh-select.log"
+grep -q 'published.sstables=none' "$output_root/direct-cqlsh-select.log"
+[[ ! -d "$tmp_parent" || -z "$(find "$tmp_parent" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print -quit)" ]] || {
+  printf 'Direct cqlsh left a successful private workspace behind\n' >&2
+  exit 1
+}
+
+printf 'Verified direct cqlsh mutation and read-only query.\n'

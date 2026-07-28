@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixture_dir="legacy-reader-3.11/src/test/resources"
+expected="$root_dir/fixtures/compatibility/legacy-reader-3.11-components.sha256"
+actual="$(mktemp)"
+trap 'rm -f "$actual"' EXIT
+
+[[ -f "$expected" ]] || {
+  printf 'Fixture checksum inventory is missing: %s\n' "$expected" >&2
+  exit 1
+}
+
+(
+  cd "$root_dir"
+  find "$fixture_dir" -maxdepth 1 -type f ! -name README.md -print0 \
+    | sort -z \
+    | xargs -0 sha256sum
+) >"$actual"
+
+diff -u "$expected" "$actual"
+sha256sum --check "$expected"
+printf 'Verified immutable fixture catalog components.\n'

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 1 && -d "$1/source" ]] || { printf 'Usage: %s <output-root>\n' "$0" >&2; exit 64; }
+root=$1
+node - "$root/source" "$root/emitted-format-provenance.json" <<'NODE'
+const crypto = require('crypto'); const fs = require('fs'); const path = require('path');
+const [dir, output] = process.argv.slice(2);
+function record(version, format) {
+  const data = fs.readdirSync(dir).find((name) => new RegExp(`^${version}-[0-9]+-${format}-Data\\.db$`).test(name));
+  if (!data) throw new Error(`missing ${version} ${format} emitted SSTable`);
+  const prefix = data.slice(0, -'Data.db'.length);
+  const components = fs.readdirSync(dir).filter((name) => name.startsWith(prefix) && fs.statSync(path.join(dir, name)).isFile()).sort()
+    .map((name) => ({name, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, name))).digest('hex')}));
+  return {formatVersion: version, format, components};
+}
+fs.writeFileSync(output, `${JSON.stringify({cassandraVersion:'5.0.8', transitions:[record('oa','big'), record('da','bti')]}, null, 2)}\n`);
+NODE

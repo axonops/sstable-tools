@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--fixture ma-composites|ma-users|ma-wide|ma-collections|mc-temperature] [--output-version <version>]\n' "$0" >&2
+  exit 64
+}
+
+tool_jar=''
+cassandra_home=''
+java_home=''
+output_root=''
+output_version='nb'
+fixture='ma-users'
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tool-jar) tool_jar=${2:-}; shift 2 ;;
+    --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
+    --java-home) java_home=${2:-}; shift 2 ;;
+    --output-root) output_root=${2:-}; shift 2 ;;
+    --fixture) fixture=${2:-}; shift 2 ;;
+    --output-version) output_version=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$tool_jar" && -n "$cassandra_home" && -n "$java_home" && -n "$output_root" ]] || usage
+[[ "$output_version" =~ ^[a-z][a-z]$ ]] || usage
+[[ "$fixture" == 'ma-composites' || "$fixture" == 'ma-users' || "$fixture" == 'ma-wide' || "$fixture" == 'ma-collections' || "$fixture" == 'mc-temperature' ]] || usage
+[[ -f "$tool_jar" && -d "$cassandra_home" && -x "$java_home/bin/java" ]] || {
+  printf 'Invalid tool, Cassandra home, or Java home\n' >&2
+  exit 1
+}
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fixture_dir="$root_dir/legacy-reader-3.11/src/test/resources"
+source_dir="$output_root/legacy-$fixture-source"
+schema="$output_root/legacy-$fixture-schema.cql"
+tmp_parent="$output_root/direct-tmp-$fixture"
+source_prefix=''
+base_statement=''
+base_expectations=()
+insert_statement=''
+update_statement=''
+select_statement=''
+select_expectations=()
+
+case "$fixture" in
+  ma-composites)
+    source_prefix='ma-1-big'
+    base_statement='SELECT COUNT(*) FROM fixture.composites;'
+    base_expectations=('2')
+    insert_statement="INSERT INTO fixture.composites (key1, key2, ckey1, ckey2, value) VALUES ('direct-key', 'direct-partition', 'first', 'entry', 1) USING TIMESTAMP 2000000000000000;"
+    update_statement="UPDATE fixture.composites USING TIMESTAMP 2000000000000001 SET value = 2 WHERE key1 = 'direct-key' AND key2 = 'direct-partition' AND ckey1 = 'first' AND ckey2 = 'entry';"
+    select_statement="SELECT key1, key2, ckey1, ckey2, value FROM fixture.composites WHERE key1 = 'direct-key' AND key2 = 'direct-partition' AND ckey1 = 'first' AND ckey2 = 'entry';"
+    select_expectations=('direct-key' 'direct-partition' 'first' 'entry' '2')
+    printf '%s\n' \
+      "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+      'CREATE TABLE fixture.composites (key1 varchar, key2 varchar, ckey1 varchar, ckey2 varchar, value bigint, PRIMARY KEY ((key1, key2), ckey1, ckey2));' \
+      >"$schema"
+    ;;
+  ma-users)
+    source_prefix='ma-2-big'
+    base_statement="SELECT user_name, password, gender, state, birth_year FROM fixture.users WHERE user_name = 'frodo';"
+    base_expectations=('frodo' 'pass@')
+    insert_statement="INSERT INTO fixture.users (user_name, password, gender, state, birth_year) VALUES ('samwise', 'gardener', 'male', 'shire', 1380) USING TIMESTAMP 2000000000000000;"
+    update_statement="UPDATE fixture.users USING TIMESTAMP 2000000000000001 SET password = 'mayor' WHERE user_name = 'samwise';"
+    select_statement="SELECT user_name, password, gender, state, birth_year FROM fixture.users WHERE user_name = 'samwise';"
+    select_expectations=('samwise' 'mayor' 'shire')
+    printf '%s\n' \
+      "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+      'CREATE TABLE fixture.users (user_name varchar PRIMARY KEY, password varchar, gender varchar, state varchar, birth_year bigint);' \
+      >"$schema"
+    ;;
+  ma-wide)
+    source_prefix='ma-3-big'
+    base_statement='SELECT COUNT(*) FROM fixture.wide;'
+    base_expectations=('36')
+    insert_statement="INSERT INTO fixture.wide (key, key2, val) VALUES ('direct-key', 'first', 'inserted') USING TIMESTAMP 2000000000000000;"
+    update_statement="UPDATE fixture.wide USING TIMESTAMP 2000000000000001 SET val = 'updated' WHERE key = 'direct-key' AND key2 = 'first';"
+    select_statement="SELECT key, key2, val FROM fixture.wide WHERE key = 'direct-key' AND key2 = 'first';"
+    select_expectations=('direct-key' 'first' 'updated')
+    printf '%s\n' \
+      "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+      'CREATE TABLE fixture.wide (key text, key2 text, val text, PRIMARY KEY (key, key2));' \
+      >"$schema"
+    ;;
+  ma-collections)
+    source_prefix='ma-4-big'
+    base_statement='SELECT COUNT(*) FROM fixture.collections;'
+    base_expectations=('1')
+    insert_statement="INSERT INTO fixture.collections (key1, listval, mapval, setval) VALUES ('direct-key', ['seed'], {'first': 'one'}, {'seed'}) USING TIMESTAMP 2000000000000000;"
+    update_statement="UPDATE fixture.collections USING TIMESTAMP 2000000000000001 SET listval = ['updated'], mapval = {'first': 'updated'}, setval = {'updated'} WHERE key1 = 'direct-key';"
+    select_statement="SELECT key1, listval, mapval, setval FROM fixture.collections WHERE key1 = 'direct-key';"
+    select_expectations=('direct-key' 'updated')
+    printf '%s\n' \
+      "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+      'CREATE TABLE fixture.collections (key1 varchar PRIMARY KEY, listval list<text>, mapval map<text, text>, setval set<text>);' \
+      >"$schema"
+    ;;
+  mc-temperature)
+    source_prefix='mc-1-big'
+    base_statement='SELECT COUNT(*) FROM fixture.temperature_by_day;'
+    base_expectations=('4')
+    insert_statement="INSERT INTO fixture.temperature_by_day (weatherstation_id, date, event_time, temperature) VALUES ('station-9', '2026-07-23', '2026-07-23T00:00:00Z', 20.0) USING TIMESTAMP 2000000000000000;"
+    update_statement="UPDATE fixture.temperature_by_day USING TIMESTAMP 2000000000000001 SET temperature = 21.5 WHERE weatherstation_id = 'station-9' AND date = '2026-07-23' AND event_time = '2026-07-23T00:00:00Z';"
+    select_statement="SELECT temperature FROM fixture.temperature_by_day WHERE weatherstation_id = 'station-9' AND date = '2026-07-23' AND event_time = '2026-07-23T00:00:00Z';"
+    select_expectations=('21.5')
+    printf '%s\n' \
+      "CREATE KEYSPACE fixture WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
+      'CREATE TABLE fixture.temperature_by_day (weatherstation_id text, date text, event_time timestamp, temperature float, PRIMARY KEY ((weatherstation_id, date), event_time));' \
+      >"$schema"
+    ;;
+esac
+
+mkdir -p "$source_dir"
+cp "$fixture_dir"/"$source_prefix"-* "$source_dir/"
+
+(
+  cd "$source_dir"
+  sha256sum "$source_prefix"-* | sort >"$output_root/legacy-$fixture-source.sha256"
+)
+
+source_list() {
+  local files=()
+  mapfile -t files < <(find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print | sort)
+  (IFS=,; printf '%s' "${files[*]}")
+}
+
+run_cql() {
+  local name=$1
+  local statement=$2
+  java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+    --java-home "$java_home" --sstables "$(source_list)" --schema "$schema" cqlsh \
+    --execute "$statement" | tee "$output_root/legacy-$fixture-$name.log"
+}
+
+initial_tocs=$(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l)
+run_cql select-base "$base_statement"
+for expectation in "${base_expectations[@]}"; do
+  grep -q "$expectation" "$output_root/legacy-$fixture-select-base.log"
+done
+grep -q 'published.sstables=none' "$output_root/legacy-$fixture-select-base.log"
+
+run_cql insert "$insert_statement"
+[[ $(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l) -gt $initial_tocs ]] || {
+  printf 'Legacy fixture INSERT did not publish a delta SSTable\n' >&2
+  exit 1
+}
+
+run_cql update "$update_statement"
+find "$source_dir" -maxdepth 1 -type f -name "${output_version}-*-big-Data.db" -print -quit | grep -q . || {
+  printf 'Legacy fixture mutation did not publish Cassandra output version %s\n' "$output_version" >&2
+  exit 1
+}
+
+run_cql select-mutated "$select_statement"
+for expectation in "${select_expectations[@]}"; do
+  grep -q "$expectation" "$output_root/legacy-$fixture-select-mutated.log"
+done
+grep -q 'published.sstables=none' "$output_root/legacy-$fixture-select-mutated.log"
+
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/legacy-$fixture-source.sha256"
+)
+[[ ! -d "$tmp_parent" || -z "$(find "$tmp_parent" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print -quit)" ]] || {
+  printf 'Legacy fixture direct cqlsh left a successful private workspace behind\n' >&2
+  exit 1
+}
+
+printf 'Verified %s fixture through direct cqlsh mutation and %s publication.\n' \
+  "$fixture" "$output_version"

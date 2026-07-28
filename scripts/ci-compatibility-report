@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --provenance-dir <path> <required-job-result>...\n' "$0" >&2
+  exit 64
+}
+
+[[ ${1:-} == '--provenance-dir' && -d ${2:-} ]] || usage
+provenance_dir=$2
+shift 2
+
+node - "$provenance_dir" <<'NODE'
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const directory = process.argv[2];
+const expected = new Set(['3.11', '4.0', '4.1', '5.0']);
+function findManifests(current) {
+  return fs.readdirSync(current, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(current, entry.name);
+    return entry.isDirectory() ? findManifests(entryPath) : entry.name === 'fixture-provenance.json' ? [entryPath] : [];
+  });
+}
+const manifests = findManifests(directory)
+  .map((filename) => JSON.parse(fs.readFileSync(filename, 'utf8')))
+  .sort((left, right) => left.producer.releaseLine.localeCompare(right.producer.releaseLine));
+if (manifests.length !== expected.size) throw new Error(`expected ${expected.size} provenance manifests, found ${manifests.length}`);
+for (const manifest of manifests) {
+  const { producer, sstable, schema, sourceMutationScript, expectedLogicalRows } = manifest;
+  if (!expected.delete(producer.releaseLine)) throw new Error(`unexpected or duplicate release line: ${producer.releaseLine}`);
+  if (!producer.version.startsWith(`${producer.releaseLine}.`) || !producer.image || !producer.partitioner) {
+    throw new Error(`incomplete producer provenance for ${producer.releaseLine}`);
+  }
+  if (!['big', 'bti'].includes(sstable.format) || !/^[a-z]{2}$/.test(sstable.formatVersion) || !sstable.components.length) {
+    throw new Error(`incomplete SSTable provenance for ${producer.releaseLine}`);
+  }
+  if (new Set(sstable.components.map((component) => component.name)).size !== sstable.components.length
+      || sstable.components.some((component) => !/^[a-f0-9]{64}$/.test(component.sha256))) {
+    throw new Error(`invalid component hashes for ${producer.releaseLine}`);
+  }
+  if (!schema.includes('CREATE TABLE ci_source.events') || sourceMutationScript.length !== 2 || expectedLogicalRows.length !== 1) {
+    throw new Error(`incomplete CQL contract provenance for ${producer.releaseLine}`);
+  }
+}
+if (expected.size) throw new Error(`missing provenance for ${[...expected].join(', ')}`);
+console.log('## Direct CQLSH Compatibility Report\n');
+console.log('| Cassandra line | Producer | Stopped SSTable evidence |');
+console.log('|---|---|---|');
+for (const manifest of manifests) {
+  const aggregate = crypto.createHash('sha256')
+    .update(manifest.sstable.components.map((component) => component.sha256).join(''))
+    .digest('hex').slice(0, 12);
+  console.log(`| ${manifest.producer.releaseLine} | ${manifest.producer.version} (${manifest.producer.image}) | ${manifest.sstable.formatVersion} ${manifest.sstable.format}; ${manifest.sstable.components.length} components; SHA-256 aggregate ${aggregate} |`);
+}
+console.log('\nEach row is generated from a matching stopped Cassandra node. The direct workflow uses explicit SSTable paths, stock cqlsh INSERT, UPDATE, SELECT, flush, sibling output, and direct reopen.');
+console.log('It does not use sstableloader, clean-node loading, streaming, bulk loading, or cluster import.');
+NODE
+
+emitted=$(find "$provenance_dir" -name emitted-format-provenance.json -print -quit)
+[[ -n "$emitted" ]] || { printf 'Missing Cassandra 5.0 emitted-format provenance\n' >&2; exit 1; }
+node - "$emitted" <<'NODE'
+const crypto = require('crypto');
+const fs = require('fs');
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const formats = manifest.transitions.map((entry) => `${entry.formatVersion} ${entry.format}`).sort().join(', ');
+if (manifest.cassandraVersion !== '5.0.8' || formats !== 'da bti, oa big' || manifest.transitions.some((entry) => !entry.components.length)) throw new Error('invalid Cassandra 5.0 emitted-format provenance');
+console.log('\n### Cassandra 5.0 Emitted Formats\n');
+console.log('| Output format | Components | SHA-256 aggregate |');
+console.log('|---|---:|---|');
+for (const transition of manifest.transitions.sort((left, right) => left.formatVersion.localeCompare(right.formatVersion))) {
+  const aggregate = crypto.createHash('sha256').update(transition.components.map((component) => component.sha256).join('')).digest('hex').slice(0, 12);
+  console.log(`| ${transition.formatVersion} ${transition.format} | ${transition.components.length} | ${aggregate} |`);
+}
+NODE
+
+for result in "$@"; do
+  if [[ "$result" != success ]]; then
+    printf 'Required direct-workflow job result was %s\n' "$result" >&2
+    exit 1
+  fi
+done

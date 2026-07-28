@@ -27,5 +27,8 @@ buildNumber.properties
 # IntelliJ
 *.iml
 
+# Editor temporary files
+*.swp
+
 ## Directory-based project format:
 .idea/

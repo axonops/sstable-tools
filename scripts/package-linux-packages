@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --release-dir <directory> [--package-release <number>] [--sign]\n' \
+    "$0" >&2
+  exit 64
+}
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+release_dir=""
+package_release=1
+sign=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release-dir) release_dir=${2:-}; shift 2 ;;
+    --package-release) package_release=${2:-}; shift 2 ;;
+    --sign) sign=true; shift ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$release_dir" && -d "$release_dir" ]] || usage
+[[ "$package_release" =~ ^[1-9][0-9]*$ ]] || {
+  printf 'Package release must be a positive integer\n' >&2
+  exit 1
+}
+
+release_dir="$(cd "$release_dir" && pwd -P)"
+manifest="$release_dir/compatibility-manifest.json"
+[[ -f "$manifest" ]] || {
+  printf 'Release compatibility manifest is missing: %s\n' "$manifest" >&2
+  exit 1
+}
+version="$(sed -n 's/^[[:space:]]*"toolVersion": "\([^"]*\)",[[:space:]]*$/\1/p' \
+  "$manifest")"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  printf 'Release manifest has an invalid package version: %s\n' "$version" >&2
+  exit 1
+}
+
+required_files=(
+  sstable-tools
+  sstable-tools-cassandra-3.11
+  sstable-tools-cassandra-4.0
+  sstable-tools-cassandra-4.1
+  sstable-tools-cassandra-5.0
+  "sstable-tools-cassandra-3.11-$version.jar"
+  "sstable-tools-cassandra-4.0-$version.jar"
+  "sstable-tools-cassandra-4.1-$version.jar"
+  "sstable-tools-cassandra-5.0-$version.jar"
+  compatibility-manifest.json
+  sbom.spdx.json
+  THIRD-PARTY-NOTICES.txt
+  SHA256SUMS
+)
+for required_file in "${required_files[@]}"; do
+  [[ -f "$release_dir/$required_file" ]] || {
+    printf 'Release bundle file is missing: %s\n' "$release_dir/$required_file" >&2
+    exit 1
+  }
+done
+(
+  cd "$release_dir"
+  sha256sum --check SHA256SUMS
+)
+
+command -v nfpm >/dev/null 2>&1 || {
+  printf 'nfpm is required; see https://nfpm.goreleaser.com/docs/install/\n' >&2
+  exit 1
+}
+command -v tar >/dev/null 2>&1 || {
+  printf 'tar is required to create the standalone release archive\n' >&2
+  exit 1
+}
+
+deb_path="$release_dir/sstable-tools_${version}-${package_release}_all.deb"
+rpm_path="$release_dir/sstable-tools-${version}-${package_release}.noarch.rpm"
+archive_path="${release_dir}.tar.gz"
+package_tmp="$(mktemp -d "$release_dir/.linux-packages.XXXXXX")"
+trap 'rm -rf "$package_tmp"' EXIT
+deb_tmp="$package_tmp/${deb_path##*/}"
+rpm_tmp="$package_tmp/${rpm_path##*/}"
+
+payload_files=(
+  sstable-tools
+  sstable-tools-cassandra-3.11
+  sstable-tools-cassandra-4.0
+  sstable-tools-cassandra-4.1
+  sstable-tools-cassandra-5.0
+  "sstable-tools-cassandra-3.11-$version.jar"
+  "sstable-tools-cassandra-4.0-$version.jar"
+  "sstable-tools-cassandra-4.1-$version.jar"
+  "sstable-tools-cassandra-5.0-$version.jar"
+  compatibility-manifest.json
+  sbom.spdx.json
+  THIRD-PARTY-NOTICES.txt
+)
+(
+  cd "$release_dir"
+  sha256sum -- "${payload_files[@]}" >PACKAGE-CONTENTS-SHA256SUMS
+)
+
+export SSTABLE_TOOLS_RELEASE_DIR="$release_dir"
+export SSTABLE_TOOLS_VERSION="$version"
+export SSTABLE_TOOLS_PACKAGE_RELEASE="$package_release"
+if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+  revision="$(sed -n 's/^[[:space:]]*"sourceRevision": "\([^"]*\)",[[:space:]]*$/\1/p' \
+    "$manifest")"
+  if [[ "$revision" =~ ^[0-9a-f]{40}$ ]] \
+      && git -C "$root_dir" cat-file -e "$revision^{commit}" 2>/dev/null; then
+    SOURCE_DATE_EPOCH="$(git -C "$root_dir" show -s --format=%ct "$revision")"
+  else
+    SOURCE_DATE_EPOCH=1
+  fi
+  export SOURCE_DATE_EPOCH
+fi
+
+(
+  cd "$root_dir"
+  nfpm package --config packaging/nfpm.yaml --packager deb --target "$deb_tmp"
+  nfpm package --config packaging/nfpm.yaml --packager rpm --target "$rpm_tmp"
+)
+mapfile -t stale_packages < <(
+  find "$release_dir" -maxdepth 1 -type f \
+    \( -name 'sstable-tools_*.deb' -o -name 'sstable-tools-*.rpm' \)
+)
+if [[ ${#stale_packages[@]} -gt 0 ]]; then
+  rm -f -- "${stale_packages[@]}"
+fi
+mv "$deb_tmp" "$deb_path"
+mv "$rpm_tmp" "$rpm_path"
+rmdir "$package_tmp"
+trap - EXIT
+rm -f "$release_dir/SHA256SUMS.asc"
+
+checksum_files=(
+  "${payload_files[@]}"
+  PACKAGE-CONTENTS-SHA256SUMS
+  "${deb_path##*/}"
+  "${rpm_path##*/}"
+)
+checksum_tmp="$release_dir/SHA256SUMS.tmp"
+(
+  cd "$release_dir"
+  sha256sum -- "${checksum_files[@]}" >"$checksum_tmp"
+)
+mv "$checksum_tmp" "$release_dir/SHA256SUMS"
+
+if [[ "$sign" == true ]]; then
+  command -v gpg >/dev/null 2>&1 || {
+    printf 'gpg is required for --sign\n' >&2
+    exit 1
+  }
+  gpg --batch --yes --armor --detach-sign \
+    --output "$release_dir/SHA256SUMS.asc" "$release_dir/SHA256SUMS"
+fi
+
+archive_tmp="${archive_path}.tmp"
+tar --sort=name \
+  --mtime="@$SOURCE_DATE_EPOCH" \
+  --owner=0 \
+  --group=0 \
+  --numeric-owner \
+  --pax-option=delete=atime,delete=ctime \
+  -czf "$archive_tmp" \
+  -C "$(dirname "$release_dir")" "$(basename "$release_dir")"
+mv "$archive_tmp" "$archive_path"
+
+printf 'package.deb=%s\n' "$deb_path"
+printf 'package.rpm=%s\n' "$rpm_path"
+printf 'package.bundle=%s\n' "$archive_path"
+printf 'package.version=%s\n' "$version"
+printf 'package.release=%s\n' "$package_release"
