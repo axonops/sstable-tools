@@ -137,7 +137,7 @@ WRITE_CQL="UPDATE acme.users USING TIMESTAMP $NOW_MICROS SET name = 'Grace' WHER
 
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
   --tmp-dir /var/tmp/sstable-tools \
-  --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
+  --output-dir /archive/acme/users-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/acme-users.cql \
   cqlsh --execute "$WRITE_CQL"
 ```
