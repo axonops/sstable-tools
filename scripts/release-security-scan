@@ -84,7 +84,11 @@ cleanup() {
 trap cleanup EXIT
 
 set +e
-freshclam --stdout --datadir="$clam_db" >"$clamav_update_report" 2>&1
+freshclam \
+  --stdout \
+  --datadir="$clam_db" \
+  --log="$clam_db/freshclam.log" \
+  >"$clamav_update_report" 2>&1
 freshclam_status=$?
 set -e
 

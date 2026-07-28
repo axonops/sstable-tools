@@ -185,7 +185,7 @@ public class TerminalUtils
             EstimatedHistogram eh = new EstimatedHistogram(165);
             for(Entry<? extends Number, long[]> e : histogram.entrySet())
             {
-                for(int i = 0; i < e.getValue()[0]; i++) {
+                for(long i = 0; i < e.getValue()[0]; i++) {
                     eh.add(e.getKey().longValue());
                 }
             }

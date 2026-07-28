@@ -17,13 +17,17 @@ cat >"$fake_bin/freshclam" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 database_dir=
+log_file=
 for argument in "$@"; do
   case "$argument" in
     --datadir=*) database_dir=${argument#--datadir=} ;;
+    --log=*) log_file=${argument#--log=} ;;
   esac
 done
 [[ -n "$database_dir" ]]
+[[ "$log_file" == "$database_dir"/* ]]
 printf 'mock database\n' >"$database_dir/daily.cvd"
+printf 'Mock update log\n' >"$log_file"
 printf 'Mock signatures updated\n'
 EOF
 
