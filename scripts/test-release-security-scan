@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+temporary="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$temporary"
+}
+trap cleanup EXIT
+
+fake_bin="$temporary/bin"
+source_dir="$temporary/source"
+release_dir="$temporary/release/sstable-tools-1.2.3"
+mkdir -p "$fake_bin" "$source_dir/module/target" "$release_dir"
+
+cat >"$fake_bin/freshclam" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+database_dir=
+for argument in "$@"; do
+  case "$argument" in
+    --datadir=*) database_dir=${argument#--datadir=} ;;
+  esac
+done
+[[ -n "$database_dir" ]]
+printf 'mock database\n' >"$database_dir/daily.cvd"
+printf 'Mock signatures updated\n'
+EOF
+
+cat >"$fake_bin/clamscan" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == --version ]]; then
+  printf 'ClamAV 1.4.3/mock\n'
+  exit 0
+fi
+log=
+for argument in "$@"; do
+  case "$argument" in
+    --log=*) log=${argument#--log=} ;;
+  esac
+done
+[[ -n "$log" ]]
+infected=${MOCK_CLAM_INFECTED:-0}
+cat >"$log" <<REPORT
+----------- SCAN SUMMARY -----------
+Infected files: $infected
+REPORT
+[[ "$infected" == 0 ]]
+EOF
+
+cat >"$fake_bin/trivy" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == --version ]]; then
+  printf 'Version: 0.69.3\n'
+  exit 0
+fi
+output=
+for ((index = 1; index <= $#; index++)); do
+  if [[ ${!index} == --output ]]; then
+    next=$((index + 1))
+    output=${!next}
+  fi
+done
+[[ -n "$output" ]]
+mkdir -p "$(dirname "$output")"
+if [[ "$output" == *source-security* \
+    && ${MOCK_TRIVY_SECURITY_FINDINGS:-0} -gt 0 ]]; then
+  cat >"$output" <<'JSON'
+{"Results":[{"Secrets":[{"Severity":"CRITICAL"}]}]}
+JSON
+elif [[ "$output" == *source-dependencies* \
+    && ${MOCK_TRIVY_SOURCE_DEPENDENCY_FINDINGS:-0} -gt 0 ]]; then
+  cat >"$output" <<'JSON'
+{"Results":[{"Vulnerabilities":[{"Severity":"HIGH"}]}]}
+JSON
+elif [[ "$output" == *release-dependencies* \
+    && ${MOCK_TRIVY_RELEASE_DEPENDENCY_FINDINGS:-0} -gt 0 ]]; then
+  cat >"$output" <<'JSON'
+{"Results":[{"Vulnerabilities":[{"Severity":"HIGH"}]}]}
+JSON
+else
+  printf '{"Results":[]}\n' >"$output"
+fi
+EOF
+
+chmod 0755 "$fake_bin/freshclam" "$fake_bin/clamscan" "$fake_bin/trivy"
+
+printf 'dependency tree\n' >"$source_dir/module/target/dependency-tree.txt"
+printf 'release artifact\n' >"$release_dir/sstable-tools"
+tar -C "$(dirname "$release_dir")" -czf \
+  "$temporary/release/sstable-tools-1.2.3.tar.gz" \
+  "$(basename "$release_dir")"
+
+git -C "$source_dir" init -q
+git -C "$source_dir" config user.name test
+git -C "$source_dir" config user.email test@example.invalid
+git -C "$source_dir" add .
+git -C "$source_dir" commit -qm fixture
+
+write_codeql_report() {
+  local directory=$1
+  local score=$2
+  mkdir -p "$directory"
+  cat >"$directory/java.sarif" <<JSON
+{
+  "runs": [{
+    "tool": {
+      "driver": {
+        "name": "CodeQL",
+        "semanticVersion": "2.25.5",
+        "rules": [{
+          "id": "java/test",
+          "properties": {"security-severity": "$score"}
+        }]
+      }
+    },
+    "results": [{"ruleId": "java/test"}]
+  }]
+}
+JSON
+}
+
+pass_reports="$temporary/pass/security-reports"
+pass_archive="$temporary/pass/sstable-tools-1.2.3-security-reports.tar.gz"
+write_codeql_report "$pass_reports/codeql" 0.0
+
+MOCK_TRIVY_SOURCE_DEPENDENCY_FINDINGS=1 \
+  PATH="$fake_bin:$PATH" "$root_dir/scripts/release-security-scan" \
+  --version 1.2.3 \
+  --source-dir "$source_dir" \
+  --release-dir "$release_dir" \
+  --release-archive "$temporary/release/sstable-tools-1.2.3.tar.gz" \
+  --reports-dir "$pass_reports" \
+  --reports-archive "$pass_archive" \
+  --codeql-dir "$pass_reports/codeql"
+
+jq -e '
+  .overallResult == "PASS"
+  and .checks.trivySourceDependencies.result == "REVIEW"
+  and .checks.trivySourceDependencies.highOrCriticalFindings == 1
+' "$pass_reports/metadata.json" >/dev/null
+tar -tzf "$pass_archive" | grep -q 'security-reports/SUMMARY.md'
+
+fail_reports="$temporary/fail/security-reports"
+fail_archive="$temporary/fail/sstable-tools-1.2.3-security-reports.tar.gz"
+write_codeql_report "$fail_reports/codeql" 9.0
+
+if PATH="$fake_bin:$PATH" "$root_dir/scripts/release-security-scan" \
+  --version 1.2.3 \
+  --source-dir "$source_dir" \
+  --release-dir "$release_dir" \
+  --release-archive "$temporary/release/sstable-tools-1.2.3.tar.gz" \
+  --reports-dir "$fail_reports" \
+  --reports-archive "$fail_archive" \
+  --codeql-dir "$fail_reports/codeql"; then
+  printf 'Security scan unexpectedly passed a HIGH CodeQL finding\n' >&2
+  exit 1
+fi
+
+jq -e '
+  .overallResult == "FAIL"
+  and .checks.codeql.result == "FAIL"
+  and .checks.codeql.highOrCriticalFindings == 1
+' "$fail_reports/metadata.json" >/dev/null
+tar -tzf "$fail_archive" | grep -q 'security-reports/SUMMARY.md'
+
+dependency_fail_reports="$temporary/dependency-fail/security-reports"
+dependency_fail_archive="$temporary/dependency-fail/sstable-tools-1.2.3-security-reports.tar.gz"
+write_codeql_report "$dependency_fail_reports/codeql" 0.0
+
+if MOCK_TRIVY_RELEASE_DEPENDENCY_FINDINGS=1 \
+  PATH="$fake_bin:$PATH" "$root_dir/scripts/release-security-scan" \
+  --version 1.2.3 \
+  --source-dir "$source_dir" \
+  --release-dir "$release_dir" \
+  --release-archive "$temporary/release/sstable-tools-1.2.3.tar.gz" \
+  --reports-dir "$dependency_fail_reports" \
+  --reports-archive "$dependency_fail_archive" \
+  --codeql-dir "$dependency_fail_reports/codeql"; then
+  printf 'Security scan unexpectedly passed a published dependency finding\n' >&2
+  exit 1
+fi
+
+jq -e '
+  .overallResult == "FAIL"
+  and .checks.trivyReleaseDependencies.result == "FAIL"
+  and .checks.trivyReleaseDependencies.highOrCriticalFindings == 1
+' "$dependency_fail_reports/metadata.json" >/dev/null
+tar -tzf "$dependency_fail_archive" | grep -q 'security-reports/SUMMARY.md'
+
+printf 'release security scan tests passed\n'

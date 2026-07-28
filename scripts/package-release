@@ -91,8 +91,8 @@ cat >"$release_dir/sbom.spdx.json" <<EOF
   "documentNamespace": "https://github.com/axonops/sstable-tools/releases/$version",
   "creationInfo": {"creators": ["Tool: scripts/package-release"]},
   "packages": [
-    {"SPDXID": "SPDXRef-SSTableTools", "name": "sstable-tools", "versionInfo": "$version", "downloadLocation": "NOASSERTION", "licenseConcluded": "NOASSERTION", "licenseDeclared": "NOASSERTION", "filesAnalyzed": false},
-    {"SPDXID": "SPDXRef-Gson", "name": "Gson", "versionInfo": "2.14.0", "downloadLocation": "https://github.com/google/gson", "licenseConcluded": "Apache-2.0", "licenseDeclared": "Apache-2.0", "filesAnalyzed": false}
+    {"SPDXID": "SPDXRef-SSTableTools", "name": "sstable-tools", "versionInfo": "$version", "downloadLocation": "NOASSERTION", "licenseConcluded": "NOASSERTION", "licenseDeclared": "NOASSERTION", "filesAnalyzed": false, "externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:maven/com.axonops/sstable-tools@$version"}]},
+    {"SPDXID": "SPDXRef-Gson", "name": "Gson", "versionInfo": "2.14.0", "downloadLocation": "https://github.com/google/gson", "licenseConcluded": "Apache-2.0", "licenseDeclared": "Apache-2.0", "filesAnalyzed": false, "externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:maven/com.google.code.gson/gson@2.14.0"}]}
   ],
   "relationships": [{"spdxElementId": "SPDXRef-SSTableTools", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-Gson"}]
 }
