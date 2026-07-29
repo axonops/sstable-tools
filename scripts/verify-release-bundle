@@ -67,6 +67,7 @@ for release_line in 3.11 4.0 4.1 5.0; do
   fake_lib="$temporary/cassandra-$release_line/lib"
   mkdir -p "$fake_lib"
   touch "$fake_lib/apache-cassandra-$release_line.99.jar"
+  touch "$fake_lib/apache-cassandra-thrift-$release_line.99.jar"
   version_output="$("$release_dir/sstable-tools" \
     --cassandra-lib-dir "$fake_lib" --version)"
   [[ "$version_output" == *"Cassandra $release_line adapter"* ]] || {
