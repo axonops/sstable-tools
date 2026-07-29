@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: publish-github-release \
+  --tag <tag> \
+  --version <version> \
+  --target <commit> \
+  --release-dir <directory> \
+  --release-archive <path> \
+  --security-reports-archive <path>
+EOF
+  exit 64
+}
+
+tag=
+version=
+target=
+release_dir=
+release_archive=
+security_reports_archive=
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag) tag=${2:-}; shift 2 ;;
+    --version) version=${2:-}; shift 2 ;;
+    --target) target=${2:-}; shift 2 ;;
+    --release-dir) release_dir=${2:-}; shift 2 ;;
+    --release-archive) release_archive=${2:-}; shift 2 ;;
+    --security-reports-archive)
+      security_reports_archive=${2:-}
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$tag" && -n "$version" && -n "$target" && -n "$release_dir" \
+    && -n "$release_archive" && -n "$security_reports_archive" ]] || usage
+[[ -d "$release_dir" ]] || {
+  printf 'Release directory does not exist: %s\n' "$release_dir" >&2
+  exit 1
+}
+[[ -f "$release_archive" ]] || {
+  printf 'Release archive does not exist: %s\n' "$release_archive" >&2
+  exit 1
+}
+[[ -f "$security_reports_archive" ]] || {
+  printf 'Security report archive does not exist: %s\n' \
+    "$security_reports_archive" >&2
+  exit 1
+}
+command -v gh >/dev/null 2>&1 || {
+  printf 'gh is required for GitHub Release publication\n' >&2
+  exit 1
+}
+
+shopt -s nullglob
+release_assets=("$release_dir"/*)
+shopt -u nullglob
+[[ ${#release_assets[@]} -gt 0 ]] || {
+  printf 'Release directory contains no assets: %s\n' "$release_dir" >&2
+  exit 1
+}
+release_assets+=("$release_archive" "$security_reports_archive")
+
+set +e
+immutable="$(
+  gh release view "$tag" \
+    --json isImmutable \
+    --jq '.isImmutable' \
+    2>/dev/null
+)"
+release_view_status=$?
+set -e
+
+if [[ $release_view_status -eq 0 ]]; then
+  [[ "$immutable" == false ]] || {
+    printf 'GitHub Release %s is immutable and cannot be updated\n' "$tag" >&2
+    exit 1
+  }
+  gh release upload "$tag" "${release_assets[@]}" --clobber
+  gh release edit "$tag" \
+    --target "$target" \
+    --title "SSTable Tools $version"
+  action=updated
+else
+  gh release create "$tag" "${release_assets[@]}" \
+    --verify-tag \
+    --target "$target" \
+    --title "SSTable Tools $version" \
+    --generate-notes
+  action=created
+fi
+
+printf 'release.tag=%s\n' "$tag"
+printf 'release.action=%s\n' "$action"

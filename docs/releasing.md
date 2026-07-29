@@ -14,6 +14,11 @@ git tag -a v0.1.0 -m "SSTable Tools 0.1.0"
 git push origin v0.1.0
 ```
 
+Do not use **Releases > Draft a new release** to start the build. That creates
+the GitHub Release before the workflow runs. The tag push above is the normal
+release trigger, and the workflow creates the GitHub Release after all build,
+package, verification, and security steps pass.
+
 The `Release` GitHub Actions workflow:
 
 1. removes the `v` prefix and validates the version;
@@ -36,9 +41,16 @@ dependencies that are not distributed. Security reports are uploaded as a
 workflow artifact even when the security gate fails, so the failure can be
 diagnosed without publishing unapproved binaries.
 
-The workflow can also be dispatched manually with an explicit version. This is
-intended for release testing or recovery; tagged releases remain the normal
-path and source of truth.
+The workflow can also be dispatched manually with an explicit version from
+**Actions > Release > Run workflow**. Select `master` and enter the version
+without the `v` prefix. This is intended for release testing or recovery;
+tagged releases remain the normal path and source of truth.
+
+Release publication is rerunnable. If the GitHub Release does not yet exist,
+the workflow creates it from the existing remote tag. If a non-immutable
+release already exists, the workflow replaces assets with matching names and
+updates its title and target. Existing release notes are preserved. GitHub
+immutable releases cannot be modified and fail with an explicit error instead.
 
 ## Artifacts
 
