@@ -1,9 +1,9 @@
 # Cassandra Node Deployment
 
-SSTable Tools is distributed with one auto-detecting launcher, four explicit
-adapter launchers with adjacent thin JARs, and a single DEB or RPM containing
-all four adapters. Point `sstable-tools` at the installed Cassandra `lib`
-directory. It reads the version from `apache-cassandra-<version>.jar` or
+SSTable Tools is distributed with one auto-detecting launcher and four internal
+adapter JARs. A single DEB or RPM contains all four adapters. Point
+`sstable-tools` at the installed Cassandra `lib` directory. It reads the
+version from `apache-cassandra-<version>.jar` or
 `cassandra-all-<version>.jar` and selects the matching adapter. Cassandra
 classes are loaded only in a private worker process using that installation.
 
@@ -43,9 +43,8 @@ sudo dnf install ./sstable-tools-1.2.3-1.noarch.rpm
 CASSANDRA_LIB_DIR=/opt/apache-cassandra-5.0.4/lib sstable-tools --version
 ```
 
-The package installs the universal and explicit adapter launchers in `/usr/bin`,
-adapter JARs in
-`/usr/share/sstable-tools`, and release metadata in
+The package installs only `sstable-tools` in `/usr/bin`, internal adapter JARs
+in `/usr/share/sstable-tools`, and release metadata in
 `/usr/share/doc/sstable-tools`. It requires a Java 17-or-newer launcher runtime.
 For Cassandra 3.11, 4.0, or 4.1, continue to pass `--java-home` when the
 Cassandra worker requires an older matching JVM. `SSTABLE_TOOLS_JAVA` can

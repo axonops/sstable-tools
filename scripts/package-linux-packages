@@ -42,10 +42,6 @@ version="$(sed -n 's/^[[:space:]]*"toolVersion": "\([^"]*\)",[[:space:]]*$/\1/p'
 
 required_files=(
   sstable-tools
-  sstable-tools-cassandra-3.11
-  sstable-tools-cassandra-4.0
-  sstable-tools-cassandra-4.1
-  sstable-tools-cassandra-5.0
   "sstable-tools-cassandra-3.11-$version.jar"
   "sstable-tools-cassandra-4.0-$version.jar"
   "sstable-tools-cassandra-4.1-$version.jar"
@@ -85,10 +81,6 @@ rpm_tmp="$package_tmp/${rpm_path##*/}"
 
 payload_files=(
   sstable-tools
-  sstable-tools-cassandra-3.11
-  sstable-tools-cassandra-4.0
-  sstable-tools-cassandra-4.1
-  sstable-tools-cassandra-5.0
   "sstable-tools-cassandra-3.11-$version.jar"
   "sstable-tools-cassandra-4.0-$version.jar"
   "sstable-tools-cassandra-4.1-$version.jar"

@@ -62,10 +62,6 @@ sstable-tools-cassandra-4.0-1.2.3.jar
 sstable-tools-cassandra-4.1-1.2.3.jar
 sstable-tools-cassandra-5.0-1.2.3.jar
 sstable-tools
-sstable-tools-cassandra-3.11
-sstable-tools-cassandra-4.0
-sstable-tools-cassandra-4.1
-sstable-tools-cassandra-5.0
 sstable-tools_1.2.3-1_all.deb
 sstable-tools-1.2.3-1.noarch.rpm
 compatibility-manifest.json

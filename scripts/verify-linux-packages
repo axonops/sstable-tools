@@ -89,10 +89,6 @@ set -o pipefail
 
 expected_common() {
   printf '%s\n' \
-    /usr/bin/sstable-tools-cassandra-3.11 \
-    /usr/bin/sstable-tools-cassandra-4.0 \
-    /usr/bin/sstable-tools-cassandra-4.1 \
-    /usr/bin/sstable-tools-cassandra-5.0 \
     /usr/bin/sstable-tools \
     /usr/share/doc/sstable-tools/PACKAGE-CONTENTS-SHA256SUMS \
     /usr/share/doc/sstable-tools/README.md \
@@ -131,28 +127,15 @@ verify_root() {
 
   local release_line
   for release_line in 3.11 4.0 4.1 5.0; do
-    local wrapper="$package_root/usr/bin/sstable-tools-cassandra-$release_line"
     local installed_jar="$package_root/usr/share/sstable-tools/"
     installed_jar+="sstable-tools-cassandra-$release_line.jar"
     local release_jar="$release_dir/sstable-tools-cassandra-$release_line-$version.jar"
-    local release_wrapper="$release_dir/sstable-tools-cassandra-$release_line"
-    [[ "$(stat -c '%a' "$wrapper")" == 755 \
-        && "$(stat -c '%a' "$installed_jar")" == 644 ]] || {
-      printf '%s package installed an unsafe mode for Cassandra %s\n' \
+    [[ "$(stat -c '%a' "$installed_jar")" == 644 ]] || {
+      printf '%s package installed an unsafe JAR mode for Cassandra %s\n' \
         "$package_type" "$release_line" >&2
       exit 1
     }
-    sh -n "$wrapper"
-    cmp "$release_wrapper" "$wrapper"
     cmp "$release_jar" "$installed_jar"
-    version_output="$(SSTABLE_TOOLS_HOME="$package_root/usr/share/sstable-tools" \
-      SSTABLE_TOOLS_JAVA="$(command -v java)" "$wrapper" --version)"
-    [[ "$version_output" == "sstable-tools $version "* \
-        && "$version_output" == *"Cassandra $release_line adapter"* ]] || {
-      printf '%s package launcher failed for Cassandra %s: %s\n' \
-        "$package_type" "$release_line" "$version_output" >&2
-      exit 1
-    }
 
     local fake_lib="$temporary/cassandra-$package_type-$release_line/lib"
     mkdir -p "$fake_lib"
@@ -160,8 +143,9 @@ verify_root() {
     version_output="$(CASSANDRA_LIB_DIR="$fake_lib" \
       SSTABLE_TOOLS_HOME="$package_root/usr/share/sstable-tools" \
       SSTABLE_TOOLS_JAVA="$(command -v java)" "$universal" --version)"
-    [[ "$version_output" == *"Cassandra $release_line adapter"* ]] || {
-      printf '%s universal launcher selected the wrong Cassandra %s adapter: %s\n' \
+    [[ "$version_output" == "sstable-tools $version "* \
+        && "$version_output" == *"Cassandra $release_line adapter"* ]] || {
+      printf '%s launcher selected the wrong Cassandra %s adapter: %s\n' \
         "$package_type" "$release_line" "$version_output" >&2
       exit 1
     }
@@ -186,16 +170,8 @@ mkdir -p "$archive_root"
 tar -xzf "$archive" -C "$archive_root"
 archived_release="$archive_root/$(basename "$release_dir")"
 diff -qr "$release_dir" "$archived_release"
-for release_line in 3.11 4.0 4.1 5.0; do
-  [[ "$(stat -c '%a' \
-    "$archived_release/sstable-tools-cassandra-$release_line")" == 755 ]] || {
-    printf 'Standalone archive launcher has an unsafe mode for Cassandra %s\n' \
-      "$release_line" >&2
-    exit 1
-  }
-done
 [[ "$(stat -c '%a' "$archived_release/sstable-tools")" == 755 ]] || {
-  printf 'Standalone archive universal launcher has an unsafe mode\n' >&2
+  printf 'Standalone archive launcher has an unsafe mode\n' >&2
   exit 1
 }
 
