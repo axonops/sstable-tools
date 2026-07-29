@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+temporary="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$temporary"
+}
+trap cleanup EXIT
+
+fake_bin="$temporary/bin"
+release_dir="$temporary/release/sstable-tools-1.2.3"
+release_archive="$temporary/release/sstable-tools-1.2.3.tar.gz"
+security_archive="$temporary/release/sstable-tools-1.2.3-security-reports.tar.gz"
+mkdir -p "$fake_bin" "$release_dir"
+printf 'launcher\n' >"$release_dir/sstable-tools"
+printf 'bundle\n' >"$release_archive"
+printf 'reports\n' >"$security_archive"
+
+cat >"$fake_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+for argument in "$@"; do
+  printf '%q ' "$argument" >>"$MOCK_GH_LOG"
+done
+printf '\n' >>"$MOCK_GH_LOG"
+
+case "${1:-} ${2:-}" in
+  "release view")
+    case "${MOCK_RELEASE_STATE:-absent}" in
+      absent) exit 1 ;;
+      existing) printf 'false\n' ;;
+      immutable) printf 'true\n' ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  "release create"|"release upload"|"release edit")
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF
+chmod 0755 "$fake_bin/gh"
+
+publish() {
+  local state=$1
+  local log=$2
+  MOCK_RELEASE_STATE="$state" \
+    MOCK_GH_LOG="$log" \
+    PATH="$fake_bin:$PATH" \
+    "$root_dir/scripts/publish-github-release" \
+      --tag v1.2.3 \
+      --version 1.2.3 \
+      --target 0123456789abcdef \
+      --release-dir "$release_dir" \
+      --release-archive "$release_archive" \
+      --security-reports-archive "$security_archive"
+}
+
+absent_log="$temporary/absent.log"
+publish absent "$absent_log"
+grep -Fq 'release create v1.2.3' "$absent_log"
+grep -Fq -- '--verify-tag' "$absent_log"
+grep -Fq "$release_archive" "$absent_log"
+grep -Fq "$security_archive" "$absent_log"
+if grep -Fq 'release upload' "$absent_log"; then
+  printf 'New release path unexpectedly uploaded to an existing release\n' >&2
+  exit 1
+fi
+
+existing_log="$temporary/existing.log"
+publish existing "$existing_log"
+grep -Fq 'release upload v1.2.3' "$existing_log"
+grep -Fq -- '--clobber' "$existing_log"
+grep -Fq 'release edit v1.2.3' "$existing_log"
+grep -Fq 'SSTable\ Tools\ 1.2.3' "$existing_log"
+if grep -Fq 'release create' "$existing_log"; then
+  printf 'Existing release path unexpectedly attempted creation\n' >&2
+  exit 1
+fi
+
+immutable_log="$temporary/immutable.log"
+if publish immutable "$immutable_log"; then
+  printf 'Immutable release was unexpectedly updated\n' >&2
+  exit 1
+fi
+if grep -Eq 'release (create|upload|edit)' "$immutable_log"; then
+  printf 'Immutable release unexpectedly reached a mutation command\n' >&2
+  exit 1
+fi
+
+printf 'GitHub Release publication tests passed\n'

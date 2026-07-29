@@ -170,10 +170,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.release.outputs.tag }}" \
-            target/release/sstable-tools-${{ steps.release.outputs.version }}/* \
-            target/release/sstable-tools-${{ steps.release.outputs.version }}.tar.gz \
-            target/release/sstable-tools-${{ steps.release.outputs.version }}-security-reports.tar.gz \
+          version="${{ steps.release.outputs.version }}"
+          scripts/publish-github-release \
+            --tag "${{ steps.release.outputs.tag }}" \
+            --version "$version" \
             --target "$GITHUB_SHA" \
-            --title "SSTable Tools ${{ steps.release.outputs.version }}" \
-            --generate-notes
+            --release-dir "target/release/sstable-tools-$version" \
+            --release-archive "target/release/sstable-tools-$version.tar.gz" \
+            --security-reports-archive \
+              "target/release/sstable-tools-$version-security-reports.tar.gz"
