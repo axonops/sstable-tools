@@ -58,9 +58,6 @@ for release_line in "${release_lines[@]}"; do
   }
   cp "$artifact" \
     "$release_dir/sstable-tools-cassandra-$release_line-$version.jar"
-  cp "$root_dir/packaging/sstable-tools-cassandra" \
-    "$release_dir/sstable-tools-cassandra-$release_line"
-  chmod 0755 "$release_dir/sstable-tools-cassandra-$release_line"
 done
 
 revision="unknown"

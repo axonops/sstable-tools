@@ -30,26 +30,6 @@ contents:
     expand: true
     file_info:
       mode: 0755
-  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-3.11
-    dst: /usr/bin/sstable-tools-cassandra-3.11
-    expand: true
-    file_info:
-      mode: 0755
-  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-4.0
-    dst: /usr/bin/sstable-tools-cassandra-4.0
-    expand: true
-    file_info:
-      mode: 0755
-  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-4.1
-    dst: /usr/bin/sstable-tools-cassandra-4.1
-    expand: true
-    file_info:
-      mode: 0755
-  - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-5.0
-    dst: /usr/bin/sstable-tools-cassandra-5.0
-    expand: true
-    file_info:
-      mode: 0755
 
   - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools-cassandra-3.11-${SSTABLE_TOOLS_VERSION}.jar
     dst: /usr/share/sstable-tools/sstable-tools-cassandra-3.11.jar

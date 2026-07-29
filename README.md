@@ -27,7 +27,7 @@ The launcher finds exactly one `apache-cassandra-<version>.jar` or
 directory, and forwards the remaining arguments. Multiple or unsupported core
 JARs fail instead of guessing.
 
-The selected adapter launcher chooses Java in this order:
+The launcher chooses Java in this order:
 `SSTABLE_TOOLS_JAVA`, `JAVA_HOME/bin/java`, then `java` from `PATH`. It always
 enables headless mode and UTF-8. Add whitespace-delimited launcher-JVM options
 with `SSTABLE_TOOLS_JAVA_OPTS`:
@@ -38,10 +38,9 @@ SSTABLE_TOOLS_JAVA_OPTS="-Xms256m -Xmx2g" \
   sstable-tools --version
 ```
 
-The explicit `sstable-tools-cassandra-3.11`, `-4.0`, `-4.1`, and `-5.0`
-commands remain available for diagnosis, but normal use should not need them.
-The examples below use the installed `sstable-tools` command; prefix it with
-`./` when running from an unpacked release archive.
+`sstable-tools` is the only launcher command. The release-specific adapter JARs
+are internal implementation artifacts selected automatically. Prefix the
+command with `./` when running from an unpacked release archive.
 
 ## Direct CQLSH
 
@@ -438,20 +437,15 @@ scripts/verify-release-bundle \
   "target/release/sstable-tools-$RELEASE_VERSION"
 ```
 
-This creates the auto-detecting `sstable-tools` launcher, four explicit
-adapter launchers with adjacent raw JARs, an architecture-independent DEB,
-and a noarch RPM under
+This creates one auto-detecting `sstable-tools` launcher, four internal adapter
+JARs, an architecture-independent DEB, and a noarch RPM under
 `target/release/sstable-tools-$RELEASE_VERSION/`. It also creates the
 executable-mode-preserving standalone archive
 `target/release/sstable-tools-$RELEASE_VERSION.tar.gz`. Both Linux packages
-install the following commands:
+install one command:
 
 ```text
 sstable-tools
-sstable-tools-cassandra-3.11
-sstable-tools-cassandra-4.0
-sstable-tools-cassandra-4.1
-sstable-tools-cassandra-5.0
 ```
 
 Use `--sign` on `scripts/package-linux-packages` to create a detached

@@ -41,22 +41,8 @@ for artifact in "${artifacts[@]}"; do
   fi
 done
 
-for release_line in 3.11 4.0 4.1 5.0; do
-  launcher="$release_dir/sstable-tools-cassandra-$release_line"
-  [[ -x "$launcher" ]] || {
-    printf 'Release launcher is missing or not executable: %s\n' "$launcher" >&2
-    exit 1
-  }
-  sh -n "$launcher"
-  version_output="$("$launcher" --version)"
-  [[ "$version_output" == *"Cassandra $release_line adapter"* ]] || {
-    printf 'Release launcher failed for Cassandra %s: %s\n' \
-      "$release_line" "$version_output" >&2
-    exit 1
-  }
-done
 [[ -x "$release_dir/sstable-tools" ]] || {
-  printf 'Universal release launcher is missing or not executable\n' >&2
+  printf 'Release launcher is missing or not executable\n' >&2
   exit 1
 }
 sh -n "$release_dir/sstable-tools"
@@ -64,14 +50,19 @@ sh -n "$release_dir/sstable-tools"
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
 for release_line in 3.11 4.0 4.1 5.0; do
+  [[ ! -e "$release_dir/sstable-tools-cassandra-$release_line" ]] || {
+    printf 'Release bundle contains obsolete Cassandra %s launcher\n' \
+      "$release_line" >&2
+    exit 1
+  }
   fake_lib="$temporary/cassandra-$release_line/lib"
   mkdir -p "$fake_lib"
   touch "$fake_lib/apache-cassandra-$release_line.99.jar"
   touch "$fake_lib/apache-cassandra-thrift-$release_line.99.jar"
   version_output="$("$release_dir/sstable-tools" \
     --cassandra-lib-dir "$fake_lib" --version)"
-  [[ "$version_output" == *"Cassandra $release_line adapter"* ]] || {
-    printf 'Universal release launcher selected the wrong Cassandra %s adapter: %s\n' \
+  [[ "$version_output" == "sstable-tools "*" (Cassandra $release_line adapter, "* ]] || {
+    printf 'Release launcher selected the wrong Cassandra %s adapter: %s\n' \
       "$release_line" "$version_output" >&2
     exit 1
   }
