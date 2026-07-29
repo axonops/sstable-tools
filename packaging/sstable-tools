@@ -74,6 +74,35 @@ cassandra_lib_dir=$(CDPATH='' cd -- "$cassandra_lib_dir" && pwd -P)
 cassandra_version=
 cassandra_core_jar=
 core_jar_count=0
+
+is_cassandra_version() {
+  detected_version=$1
+  detected_major=${detected_version%%.*}
+  [ "$detected_major" != "$detected_version" ] || return 1
+  detected_remainder=${detected_version#*.}
+  detected_minor=${detected_remainder%%.*}
+  [ "$detected_minor" != "$detected_remainder" ] || return 1
+  detected_patch_and_suffix=${detected_remainder#*.}
+  detected_patch=${detected_patch_and_suffix%%[-.+~]*}
+
+  case "$detected_major" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  case "$detected_minor" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  case "$detected_patch" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+
+  detected_suffix=${detected_patch_and_suffix#"$detected_patch"}
+  case "$detected_suffix" in
+    '') ;;
+    [-.+~]?*) ;;
+    *) return 1 ;;
+  esac
+}
+
 for candidate in \
   "$cassandra_lib_dir"/apache-cassandra-*.jar \
   "$cassandra_lib_dir"/cassandra-all-*.jar; do
@@ -91,6 +120,7 @@ for candidate in \
       ;;
   esac
   version=${version%.jar}
+  is_cassandra_version "$version" || continue
   cassandra_version=$version
   cassandra_core_jar=$candidate
   core_jar_count=$((core_jar_count + 1))
