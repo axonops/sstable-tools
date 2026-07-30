@@ -4,31 +4,25 @@ set -euo pipefail
 usage() {
   cat >&2 <<'EOF'
 Usage: publish-google-artifacts \
-  --project <project-id> \
-  --apt-repository <repository-id-resource-or-url> \
-  --yum-repository <repository-id-resource-or-url> \
   --release-dir <directory>
 EOF
   exit 64
 }
 
-project=
-apt_repository=
-yum_repository=
+readonly project=axonops-public
+readonly location=europe
+readonly apt_repository=axonops-apt
+readonly yum_repository=axonops-yum
 release_dir=
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project) project=${2:-}; shift 2 ;;
-    --apt-repository) apt_repository=${2:-}; shift 2 ;;
-    --yum-repository) yum_repository=${2:-}; shift 2 ;;
     --release-dir) release_dir=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
 
-[[ -n "$project" && -n "$apt_repository" && -n "$yum_repository" \
-    && -n "$release_dir" ]] || usage
+[[ -n "$release_dir" ]] || usage
 [[ -d "$release_dir" ]] || {
   printf 'Release directory does not exist: %s\n' "$release_dir" >&2
   exit 1
@@ -50,115 +44,14 @@ mapfile -t rpm_packages < <(
   exit 1
 }
 
-mask_value() {
-  if [[ "${GITHUB_ACTIONS:-}" == true && -n "${1:-}" ]]; then
-    printf '::add-mask::%s\n' "$1" >&2
-  fi
-}
-
-resolve_repository() {
-  local requested=$1
-  local expected_format=$2
-  local resource_pattern='^projects/([^/]+)/locations/([^/]+)/repositories/([^/]+)$'
-  local url_pattern='^https://([a-z0-9-]+)-(apt|yum)\.pkg\.dev/projects/([^/]+)/([^/]+)/?$'
-  local location=
-  local repository=
-  local actual_format=
-
-  if [[ "$requested" =~ $resource_pattern ]]; then
-    [[ "${BASH_REMATCH[1]}" == "$project" ]] || {
-      printf 'Artifact Registry repository belongs to a different project\n' >&2
-      return 1
-    }
-    location=${BASH_REMATCH[2]}
-    repository=${BASH_REMATCH[3]}
-  elif [[ "$requested" =~ $url_pattern ]]; then
-    location=${BASH_REMATCH[1]}
-    [[ "${BASH_REMATCH[2]^^}" == "$expected_format" ]] || {
-      printf 'Artifact Registry URL format does not match expected %s repository\n' \
-        "$expected_format" >&2
-      return 1
-    }
-    [[ "${BASH_REMATCH[3]}" == "$project" ]] || {
-      printf 'Artifact Registry URL belongs to a different project\n' >&2
-      return 1
-    }
-    repository=${BASH_REMATCH[4]}
-  fi
-
-  if [[ -n "$location" && -n "$repository" ]]; then
-    mask_value "$location"
-    mask_value "$repository"
-    actual_format="$(
-      gcloud artifacts repositories describe "$repository" \
-        --project="$project" \
-        --location="$location" \
-        --format='value(format)'
-    )"
-    [[ "$actual_format" == "$expected_format" ]] || {
-      printf 'Artifact Registry repository has format %s; expected %s\n' \
-        "$actual_format" "$expected_format" >&2
-      return 1
-    }
-    printf '%s\t%s\n' "$location" "$repository"
-    return
-  fi
-
-  [[ "$requested" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
-    printf 'Invalid Artifact Registry repository identifier\n' >&2
-    return 1
-  }
-
-  local listing
-  listing="$(
-    gcloud artifacts repositories list \
-      --project="$project" \
-      --location=all \
-      --format='value(name,format)'
-  )"
-
-  local resource
-  local format
-  local candidate_project
-  local candidate_location
-  local candidate_repository
-  local -a matches=()
-  while IFS=$'\t' read -r resource format; do
-    [[ "$resource" =~ $resource_pattern ]] || continue
-    candidate_project=${BASH_REMATCH[1]}
-    candidate_location=${BASH_REMATCH[2]}
-    candidate_repository=${BASH_REMATCH[3]}
-    if [[ "$candidate_project" == "$project" \
-        && "$candidate_repository" == "$requested" \
-        && "$format" == "$expected_format" ]]; then
-      matches+=("$candidate_location"$'\t'"$candidate_repository")
-    fi
-  done <<<"$listing"
-
-  [[ ${#matches[@]} -eq 1 ]] || {
-    printf 'Expected exactly one %s Artifact Registry repository matching the configured identifier; found %s\n' \
-      "$expected_format" "${#matches[@]}" >&2
-    return 1
-  }
-  IFS=$'\t' read -r location repository <<<"${matches[0]}"
-  mask_value "$location"
-  mask_value "$repository"
-  printf '%s\t%s\n' "$location" "$repository"
-}
-
-apt_target="$(resolve_repository "$apt_repository" APT)"
-yum_target="$(resolve_repository "$yum_repository" YUM)"
-IFS=$'\t' read -r apt_location apt_name <<<"$apt_target"
-IFS=$'\t' read -r yum_location yum_name <<<"$yum_target"
-
-gcloud artifacts apt upload "$apt_name" \
+gcloud artifacts apt upload "$apt_repository" \
   --project="$project" \
-  --location="$apt_location" \
+  --location="$location" \
   --source="${deb_packages[0]}" \
   --quiet
-gcloud artifacts yum upload "$yum_name" \
+gcloud artifacts yum upload "$yum_repository" \
   --project="$project" \
-  --location="$yum_location" \
+  --location="$location" \
   --source="${rpm_packages[0]}" \
   --quiet
 
