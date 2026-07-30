@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: publish-google-artifacts \
+  --project <project-id> \
+  --apt-repository <repository-id-or-resource> \
+  --yum-repository <repository-id-or-resource> \
+  --release-dir <directory>
+EOF
+  exit 64
+}
+
+project=
+apt_repository=
+yum_repository=
+release_dir=
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) project=${2:-}; shift 2 ;;
+    --apt-repository) apt_repository=${2:-}; shift 2 ;;
+    --yum-repository) yum_repository=${2:-}; shift 2 ;;
+    --release-dir) release_dir=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$project" && -n "$apt_repository" && -n "$yum_repository" \
+    && -n "$release_dir" ]] || usage
+[[ -d "$release_dir" ]] || {
+  printf 'Release directory does not exist: %s\n' "$release_dir" >&2
+  exit 1
+}
+command -v gcloud >/dev/null 2>&1 || {
+  printf 'gcloud is required for Google Artifact Registry publication\n' >&2
+  exit 1
+}
+
+mapfile -t deb_packages < <(
+  find "$release_dir" -maxdepth 1 -type f -name 'sstable-tools_*.deb' -print
+)
+mapfile -t rpm_packages < <(
+  find "$release_dir" -maxdepth 1 -type f -name 'sstable-tools-*.rpm' -print
+)
+[[ ${#deb_packages[@]} -eq 1 && ${#rpm_packages[@]} -eq 1 ]] || {
+  printf 'Expected exactly one SSTable Tools DEB and RPM in %s\n' \
+    "$release_dir" >&2
+  exit 1
+}
+
+resolve_repository() {
+  local requested=$1
+  local expected_format=$2
+  local resource_pattern='^projects/([^/]+)/locations/([^/]+)/repositories/([^/]+)$'
+  local location
+  local repository
+  local actual_format
+
+  if [[ "$requested" =~ $resource_pattern ]]; then
+    [[ "${BASH_REMATCH[1]}" == "$project" ]] || {
+      printf 'Artifact Registry repository belongs to a different project\n' >&2
+      return 1
+    }
+    location=${BASH_REMATCH[2]}
+    repository=${BASH_REMATCH[3]}
+    actual_format="$(
+      gcloud artifacts repositories describe "$repository" \
+        --project="$project" \
+        --location="$location" \
+        --format='value(format)'
+    )"
+    [[ "$actual_format" == "$expected_format" ]] || {
+      printf 'Artifact Registry repository has format %s; expected %s\n' \
+        "$actual_format" "$expected_format" >&2
+      return 1
+    }
+    printf '%s\t%s\n' "$location" "$repository"
+    return
+  fi
+
+  [[ "$requested" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+    printf 'Invalid Artifact Registry repository identifier\n' >&2
+    return 1
+  }
+
+  local listing
+  listing="$(
+    gcloud artifacts repositories list \
+      --project="$project" \
+      --location=all \
+      --format='value(name,format)'
+  )"
+
+  local resource
+  local format
+  local candidate_project
+  local candidate_location
+  local candidate_repository
+  local -a matches=()
+  while IFS=$'\t' read -r resource format; do
+    [[ "$resource" =~ $resource_pattern ]] || continue
+    candidate_project=${BASH_REMATCH[1]}
+    candidate_location=${BASH_REMATCH[2]}
+    candidate_repository=${BASH_REMATCH[3]}
+    if [[ "$candidate_project" == "$project" \
+        && "$candidate_repository" == "$requested" \
+        && "$format" == "$expected_format" ]]; then
+      matches+=("$candidate_location"$'\t'"$candidate_repository")
+    fi
+  done <<<"$listing"
+
+  [[ ${#matches[@]} -eq 1 ]] || {
+    printf 'Expected exactly one %s Artifact Registry repository matching the configured identifier; found %s\n' \
+      "$expected_format" "${#matches[@]}" >&2
+    return 1
+  }
+  printf '%s\n' "${matches[0]}"
+}
+
+apt_target="$(resolve_repository "$apt_repository" APT)"
+yum_target="$(resolve_repository "$yum_repository" YUM)"
+IFS=$'\t' read -r apt_location apt_name <<<"$apt_target"
+IFS=$'\t' read -r yum_location yum_name <<<"$yum_target"
+
+gcloud artifacts apt upload "$apt_name" \
+  --project="$project" \
+  --location="$apt_location" \
+  --source="${deb_packages[0]}" \
+  --quiet
+gcloud artifacts yum upload "$yum_name" \
+  --project="$project" \
+  --location="$yum_location" \
+  --source="${rpm_packages[0]}" \
+  --quiet
+
+printf 'Published DEB and RPM packages to Google Artifact Registry\n'

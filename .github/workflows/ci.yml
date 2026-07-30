@@ -30,6 +30,9 @@ jobs:
       - name: Test GitHub Release publication orchestration
         run: scripts/test-publish-github-release
 
+      - name: Test Google Artifact Registry publication orchestration
+        run: scripts/test-publish-google-artifacts
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:

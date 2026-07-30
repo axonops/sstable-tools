@@ -31,8 +31,10 @@ The `Release` GitHub Actions workflow:
 8. runs CodeQL source analysis plus Trivy source, configuration, secret, and
    published-SBOM dependency vulnerability scans, while recording the full
    Maven build/compatibility dependency graph; and
-9. uploads the release and its security report archive as immutable workflow
-   artifacts and GitHub Release assets.
+9. publishes the DEB and RPM to the configured Google Artifact Registry Apt
+   and Yum repositories; and
+10. uploads the release and its security report archive as immutable workflow
+    artifacts and GitHub Release assets.
 
 Release publication fails on malware, scanner errors, missing reports, or
 HIGH/CRITICAL CodeQL, source-security, or published-SBOM findings. The full
@@ -51,6 +53,34 @@ the workflow creates it from the existing remote tag. If a non-immutable
 release already exists, the workflow replaces assets with matching names and
 updates its title and target. Existing release notes are preserved. GitHub
 immutable releases cannot be modified and fail with an explicit error instead.
+
+## Google Artifact Registry publication
+
+Configure these GitHub repository secrets before running a release:
+
+```text
+GCP_CREDENTIALS
+GCP_PROJECT_ID
+GCP_APT_REPOSITORY
+GCP_YUM_REPOSITORY
+```
+
+`GCP_CREDENTIALS` contains the complete Google service-account JSON key. The
+service account must be able to list or describe the configured repositories
+and upload Apt and Yum artifacts. Repository secrets may contain a short
+repository ID or a fully qualified resource in this form:
+
+```text
+projects/PROJECT/locations/LOCATION/repositories/REPOSITORY
+```
+
+Short IDs are resolved across all locations in `GCP_PROJECT_ID` and must match
+exactly one repository with the expected format. Fully qualified resources are
+recommended when IAM access is scoped to individual repositories.
+
+The upload runs only after package verification and the release security gate
+have passed. A failed Artifact Registry upload blocks GitHub Release
+publication.
 
 ## Artifacts
 
