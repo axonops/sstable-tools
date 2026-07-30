@@ -1,5 +1,7 @@
 package com.axonops.sstable.worker.api;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -39,6 +41,19 @@ public final class LinkageVerifier {
         }
     }
 
+    public static void requirePublicVirtualMethod(Class<?> owner,
+                                                  String name,
+                                                  Class<?> returnType,
+                                                  Class<?>... parameterTypes) {
+        try {
+            MethodHandles.publicLookup().findVirtual(owner, name,
+                    MethodType.methodType(returnType, parameterTypes));
+        } catch (NoSuchMethodException | IllegalAccessException e) {
+            throw missing(owner, "public virtual method",
+                    signature(name, parameterTypes), e);
+        }
+    }
+
     public static void requirePublicStaticField(Class<?> owner,
                                                 String name,
                                                 Class<?> fieldType) {
@@ -52,6 +67,21 @@ public final class LinkageVerifier {
         if (!Modifier.isPublic(modifiers) || !Modifier.isStatic(modifiers)
                 || field.getType() != fieldType) {
             throw missing(owner, "public static field", name, null);
+        }
+    }
+
+    public static void requireDeclaredInstanceField(Class<?> owner,
+                                                    String name,
+                                                    Class<?> fieldType) {
+        Field field;
+        try {
+            field = owner.getDeclaredField(name);
+        } catch (NoSuchFieldException e) {
+            throw missing(owner, "field", name, e);
+        }
+        int modifiers = field.getModifiers();
+        if (Modifier.isStatic(modifiers) || field.getType() != fieldType) {
+            throw missing(owner, "instance field", name, null);
         }
     }
 

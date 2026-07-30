@@ -1,6 +1,7 @@
 package com.axonops.sstable.worker.cassandra41;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -13,7 +14,6 @@ import java.util.List;
 import java.util.Locale;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryProcessor;
-import org.apache.cassandra.cql3.statements.schema.AlterSchemaStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateKeyspaceStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTableStatement;
 import org.apache.cassandra.cql3.statements.schema.CreateTypeStatement;
@@ -98,7 +98,7 @@ final class CqlSchemaBundle {
             CQLStatement prepared = QueryProcessor.parseStatement(
                     addIfNotExists(type, "TYPE")).prepare(ClientState.forInternalCalls());
             if (!(prepared instanceof CreateTypeStatement)
-                    || !keyspace.equals(((AlterSchemaStatement) prepared).keyspace())) {
+                    || !keyspace.equals(schemaStatementKeyspace(prepared))) {
                 throw new IllegalArgumentException("Every UDT must be explicitly declared in "
                         + "keyspace " + keyspace);
             }
@@ -116,6 +116,22 @@ final class CqlSchemaBundle {
             throw new IllegalStateException("Cassandra did not install the declared table");
         }
         return new CqlSchemaBundle(keyspace, rawTable.table());
+    }
+
+    private static String schemaStatementKeyspace(CQLStatement statement) {
+        Class<?> type = statement.getClass();
+        while (type != null) {
+            try {
+                Field field = type.getDeclaredField("keyspaceName");
+                field.setAccessible(true);
+                return (String) field.get(statement);
+            } catch (NoSuchFieldException e) {
+                type = type.getSuperclass();
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalArgumentException("Cannot inspect schema statement keyspace", e);
+            }
+        }
+        throw new IllegalArgumentException("Schema statement does not expose a keyspace");
     }
 
     private static boolean isBuiltInSystemKeyspace(String keyspace) {

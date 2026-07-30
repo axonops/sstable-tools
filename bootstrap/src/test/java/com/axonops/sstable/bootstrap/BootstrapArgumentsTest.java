@@ -188,6 +188,21 @@ public class BootstrapArgumentsTest {
     }
 
     @Test
+    public void parsesLiveCassandraOutputOverride() throws Exception {
+        BootstrapArguments direct = BootstrapArguments.parse(new String[]{
+                "--output-dir", "output", "--schema", "schema.cql",
+                "--allow-live-cassandra-output", "cqlsh",
+                "--execute", "INSERT INTO test.items (id) VALUES (1) USING TIMESTAMP 123"
+        });
+
+        Assert.assertTrue(direct.allowLiveCassandraOutput());
+        assertUsageFailure(new String[]{
+                "--output-dir", "output", "--schema", "schema.cql",
+                "--allow-live-cassandra-output", "--allow-live-cassandra-output", "cqlsh"
+        }, "may be specified only once");
+    }
+
+    @Test
     public void requiresExactUuidConfirmationOnlyForWorkspaceDestroy() throws Exception {
         UUID workspaceId = UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183");
         BootstrapArguments destroy = BootstrapArguments.parse(new String[]{

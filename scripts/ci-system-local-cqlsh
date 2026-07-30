@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --image <image> --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path>\n' "$0" >&2
+  exit 64
+}
+
+image=''
+tool_jar=''
+cassandra_home=''
+java_home=''
+output_root=''
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image) image=${2:-}; shift 2 ;;
+    --tool-jar) tool_jar=${2:-}; shift 2 ;;
+    --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
+    --java-home) java_home=${2:-}; shift 2 ;;
+    --output-root) output_root=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$image" && -n "$tool_jar" && -n "$cassandra_home" \
+  && -n "$java_home" && -n "$output_root" ]] || usage
+[[ -f "$tool_jar" ]] || { printf 'Tool JAR not found: %s\n' "$tool_jar" >&2; exit 1; }
+[[ -d "$cassandra_home/lib" ]] || {
+  printf 'Cassandra home does not contain lib/: %s\n' "$cassandra_home" >&2
+  exit 1
+}
+[[ -x "$java_home/bin/java" ]] || { printf 'Invalid Java home: %s\n' "$java_home" >&2; exit 1; }
+
+container="sstable-tools-system-local-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+container=${container:0:63}
+source_dir="$output_root/source"
+schema="$output_root/system.local.cql"
+mkdir -p "$source_dir"
+
+cleanup() {
+  docker rm -f "$container" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker pull "$image"
+docker run -d --name "$container" \
+  -e MAX_HEAP_SIZE=512M \
+  -e HEAP_NEWSIZE=128M \
+  "$image" >/dev/null
+
+ready=false
+for _ in $(seq 1 90); do
+  if docker exec "$container" cqlsh 127.0.0.1 9042 -e \
+      'SELECT cluster_name, release_version FROM system.local;' \
+      >"$output_root/source-row.log" 2>&1; then
+    ready=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$ready" != true ]]; then
+  docker logs "$container" >"$output_root/cassandra.log" 2>&1 || true
+  printf 'Cassandra system.local source did not become ready\n' >&2
+  exit 1
+fi
+
+source_row=$(<"$output_root/source-row.log")
+printf '%s\n' "$source_row"
+cluster_name=$(printf '%s\n' "$source_row" | awk -F '|' '
+  /^[[:space:]]*[^-+[:space:]][^|]*\|/ {
+    value=$1
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+    if (value != "cluster_name") {
+      print value
+      exit
+    }
+  }')
+release_version=$(printf '%s\n' "$source_row" \
+  | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+[[ -n "$cluster_name" && -n "$release_version" ]] || {
+  printf 'Could not parse the source system.local identity\n' >&2
+  exit 1
+}
+
+{
+  printf "CREATE KEYSPACE system WITH replication = {'class': 'LocalStrategy'};\n\n"
+  docker exec "$container" cqlsh 127.0.0.1 9042 -e 'DESCRIBE TABLE system.local'
+} >"$schema"
+
+docker exec "$container" nodetool flush system local
+table_dir=$(docker exec "$container" sh -c \
+  "find /var/lib/cassandra/data/system -mindepth 1 -maxdepth 1 -type d -name 'local-*' | head -n 1")
+[[ -n "$table_dir" ]] || { printf 'No flushed system.local directory found\n' >&2; exit 1; }
+
+docker stop "$container" >/dev/null
+[[ "$(docker inspect -f '{{.State.Running}}' "$container")" == false ]] || {
+  printf 'Cassandra system.local source container is still running\n' >&2
+  exit 1
+}
+docker cp "$container:$table_dir/." "$source_dir"
+
+find "$source_dir" -maxdepth 1 -type f -printf '%f\n' \
+  | sort | tee "$output_root/source-components.txt"
+(
+  cd "$source_dir"
+  find . -maxdepth 1 -type f -exec sha256sum {} + \
+    | sort >"$output_root/source-components.sha256"
+)
+find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print -quit \
+  | grep -q . || { printf 'Stopped system.local source did not yield Data.db\n' >&2; exit 1; }
+
+java -jar "$tool_jar" --cassandra-home "$cassandra_home" --java-home "$java_home" \
+  --output-dir "$source_dir" --schema "$schema" cqlsh \
+  --execute 'SELECT cluster_name, release_version FROM system.local;' \
+  | tee "$output_root/direct-select.log"
+
+grep -Fq "$cluster_name" "$output_root/direct-select.log"
+grep -Fq "$release_version" "$output_root/direct-select.log"
+grep -q 'published.sstables=none' "$output_root/direct-select.log"
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/source-components.sha256"
+)
+
+maximum_generation=$(find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' \
+  -printf '%f\n' | awk -F- '
+    $2 ~ /^[0-9]+$/ && $2 > maximum { maximum=$2 }
+    END { print maximum + 0 }
+  ')
+[[ "$maximum_generation" -gt 0 ]] || {
+  printf 'Could not determine the source SSTable generation\n' >&2
+  exit 1
+}
+expected_generation=$((maximum_generation + 1))
+updated_cluster_name="${cluster_name}-sstable-tools"
+
+java -jar "$tool_jar" --cassandra-home "$cassandra_home" --java-home "$java_home" \
+  --output-dir "$source_dir" --schema "$schema" cqlsh \
+  --execute "UPDATE system.local USING TIMESTAMP 2000000000000000 SET cluster_name = '$updated_cluster_name' WHERE key = 'local'; SELECT cluster_name FROM system.local;" \
+  | tee "$output_root/direct-update.log"
+
+grep -Fq "$updated_cluster_name" "$output_root/direct-update.log"
+grep -Fq "published.sstables=nb-$expected_generation-big" \
+  "$output_root/direct-update.log"
+(
+  cd "$source_dir"
+  sha256sum --check "$output_root/source-components.sha256"
+)
+
+printf 'Verified stopped system.local direct read and update for Cassandra %s.\n' \
+  "$release_version"

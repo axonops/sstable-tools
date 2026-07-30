@@ -41,9 +41,13 @@ The compile pins are:
 | Adapter | Provided Cassandra dependency | Class-file target |
 |---|---:|---:|
 | 3.11 | 3.11.19 | Java 8 (52) |
-| 4.0 | 4.0.17 | Java 8 (52) |
-| 4.1 | 4.1.3 | Java 11 (55) |
+| 4.0 | 4.0.0 | Java 8 (52) |
+| 4.1 | 4.1.11 | Java 11 (55) |
 | 5.0 | 5.0.4-5.0.8 | Java 17 (61) |
+
+The 4.1 adapter includes both the legacy `long` and current
+`Dispatcher.RequestTime` `QueryHandler` entry points. Runtime preflight verifies
+that the handler implements the ABI exposed by the selected installation.
 
 ## Enforcement and reports
 

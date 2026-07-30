@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -17,8 +18,6 @@ import java.util.stream.Stream;
 
 /** Complete Cassandra daemon used to prove same-host worker coexistence. */
 final class Cassandra311ProductionFixture {
-    static final int STORAGE_PORT = 7000;
-    static final int NATIVE_PORT = 9042;
     static final String CLUSTER_NAME = "sstable-tools-production-fixture";
     private static final long START_TIMEOUT_SECONDS = 120;
     private static final long STOP_TIMEOUT_SECONDS = 60;
@@ -26,19 +25,32 @@ final class Cassandra311ProductionFixture {
     private final Process process;
     private final Path output;
     private final Path error;
+    private final int storagePort;
+    private final int nativePort;
 
-    private Cassandra311ProductionFixture(Process process, Path output, Path error) {
+    private Cassandra311ProductionFixture(Process process,
+                                          Path output,
+                                          Path error,
+                                          int storagePort,
+                                          int nativePort) {
         this.process = process;
         this.output = output;
         this.error = error;
+        this.storagePort = storagePort;
+        this.nativePort = nativePort;
     }
 
     static Cassandra311ProductionFixture start(Path cassandraHome,
                                                Path javaHome,
                                                Path root) throws Exception {
         prepareDirectories(root);
+        int[] ports = allocatePorts();
+        int storagePort = ports[0];
+        int sslStoragePort = ports[1];
+        int nativePort = ports[2];
         Path configuration = root.resolve("conf/cassandra.yaml");
-        Files.write(configuration, yaml(root).getBytes(StandardCharsets.UTF_8));
+        Files.write(configuration, yaml(root, storagePort, sslStoragePort, nativePort)
+                .getBytes(StandardCharsets.UTF_8));
         Path output = root.resolve("logs/production.out");
         Path error = root.resolve("logs/production.err");
 
@@ -73,15 +85,24 @@ final class Cassandra311ProductionFixture {
         builder.environment().remove("_JAVA_OPTIONS");
         Process process = builder.start();
         Cassandra311ProductionFixture fixture =
-                new Cassandra311ProductionFixture(process, output, error);
+                new Cassandra311ProductionFixture(
+                        process, output, error, storagePort, nativePort);
         try {
-            fixture.awaitPort(STORAGE_PORT, "internode messaging");
-            fixture.awaitPort(NATIVE_PORT, "native transport");
+            fixture.awaitPort(storagePort, "internode messaging");
+            fixture.awaitPort(nativePort, "native transport");
             return fixture;
         } catch (Exception e) {
             fixture.stopForcibly();
             throw e;
         }
+    }
+
+    int storagePort() {
+        return storagePort;
+    }
+
+    int nativePort() {
+        return nativePort;
     }
 
     void assertRunning(String context) throws IOException {
@@ -167,7 +188,23 @@ final class Cassandra311ProductionFixture {
                 .collect(Collectors.joining(File.pathSeparator));
     }
 
-    private static String yaml(Path root) {
+    private static int[] allocatePorts() throws IOException {
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        try (ServerSocket storage = new ServerSocket(0, 50, loopback);
+             ServerSocket sslStorage = new ServerSocket(0, 50, loopback);
+             ServerSocket nativeTransport = new ServerSocket(0, 50, loopback)) {
+            return new int[] {
+                    storage.getLocalPort(),
+                    sslStorage.getLocalPort(),
+                    nativeTransport.getLocalPort()
+            };
+        }
+    }
+
+    private static String yaml(Path root,
+                               int storagePort,
+                               int sslStoragePort,
+                               int nativePort) {
         return "cluster_name: '" + CLUSTER_NAME + "'\n"
                 + "authenticator: AllowAllAuthenticator\n"
                 + "authorizer: AllowAllAuthorizer\n"
@@ -186,14 +223,14 @@ final class Cassandra311ProductionFixture {
                 + "      - seeds: '127.0.0.1'\n"
                 + "listen_address: 127.0.0.1\n"
                 + "broadcast_address: 127.0.0.1\n"
-                + "storage_port: " + STORAGE_PORT + "\n"
-                + "ssl_storage_port: 7001\n"
+                + "storage_port: " + storagePort + "\n"
+                + "ssl_storage_port: " + sslStoragePort + "\n"
                 + "start_rpc: false\n"
                 + "rpc_address: 127.0.0.1\n"
                 + "broadcast_rpc_address: 127.0.0.1\n"
                 + "rpc_port: 9160\n"
                 + "start_native_transport: true\n"
-                + "native_transport_port: " + NATIVE_PORT + "\n"
+                + "native_transport_port: " + nativePort + "\n"
                 + "native_transport_max_threads: 16\n"
                 + "endpoint_snitch: SimpleSnitch\n"
                 + "dynamic_snitch: false\n"

@@ -1,7 +1,5 @@
 package com.axonops.sstable.bootstrap;
 
-import com.axonops.sstable.workspace.SourceInventory;
-import com.axonops.sstable.workspace.SstableSet;
 import com.axonops.sstable.workspace.WorkspaceException;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -13,49 +11,43 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
-/** Rejects sources observably owned by a running Cassandra daemon on Linux. */
-final class LiveCassandraSourceGuard {
+/** Detects directories observably owned by a running Cassandra daemon on Linux. */
+final class LiveCassandraDirectoryDetector {
     private static final String CASSANDRA_DAEMON =
             "org.apache.cassandra.service.CassandraDaemon";
     private static final String STORAGE_DIRECTORY_PROPERTY = "-Dcassandra.storagedir=";
 
-    private LiveCassandraSourceGuard() {
+    private LiveCassandraDirectoryDetector() {
     }
 
-    static void reject(List<Path> sources) throws WorkspaceException {
-        reject(canonicalDirectories(sources), Paths.get("/proc"));
+    static Match find(List<Path> sources) throws WorkspaceException {
+        return findCanonical(canonicalDirectories(sources), Paths.get("/proc"));
     }
 
-    static void reject(SourceInventory inventory) throws WorkspaceException {
-        Set<Path> directories = new LinkedHashSet<>();
-        for (SstableSet set : inventory.sets()) {
-            directories.add(set.directory());
-        }
-        reject(new ArrayList<>(directories), Paths.get("/proc"));
-    }
-
-    static void reject(List<Path> canonicalSources, Path procRoot)
+    static Match findCanonical(List<Path> canonicalSources, Path procRoot)
             throws WorkspaceException {
         if (!Files.isDirectory(procRoot, LinkOption.NOFOLLOW_LINKS)) {
-            return;
+            return null;
         }
         try (DirectoryStream<Path> processes = Files.newDirectoryStream(procRoot)) {
             for (Path process : processes) {
                 if (process.getFileName().toString().matches("[0-9]+")) {
-                    inspectProcess(canonicalSources, process);
+                    Match match = inspectProcess(canonicalSources, process);
+                    if (match != null) {
+                        return match;
+                    }
                 }
             }
         } catch (IOException e) {
             throw new WorkspaceException("Cannot inspect active processes for live Cassandra "
                     + "SSTable ownership under " + procRoot, e);
         }
+        return null;
     }
 
-    private static List<Path> canonicalDirectories(List<Path> sources)
+    static List<Path> canonicalDirectories(List<Path> sources)
             throws WorkspaceException {
         List<Path> result = new ArrayList<>();
         for (Path source : sources) {
@@ -76,11 +68,11 @@ final class LiveCassandraSourceGuard {
         return result;
     }
 
-    private static void inspectProcess(List<Path> sources, Path process)
+    private static Match inspectProcess(List<Path> sources, Path process)
             throws WorkspaceException {
         List<String> arguments = readArguments(process.resolve("cmdline"));
         if (!arguments.contains(CASSANDRA_DAEMON)) {
-            return;
+            return null;
         }
         String pid = process.getFileName().toString();
         for (String argument : arguments) {
@@ -92,13 +84,13 @@ final class LiveCassandraSourceGuard {
                 }
                 for (Path source : sources) {
                     if (source.startsWith(storage)) {
-                        reject(source, pid, "storage directory " + storage);
+                        return new Match(source, pid, "storage directory " + storage);
                     }
                 }
             }
         }
-        inspectOpenFiles(sources, process, pid);
-        inspectMappedFiles(sources, process, pid);
+        Match openFile = findOpenFile(sources, process, pid);
+        return openFile == null ? findMappedFile(sources, process, pid) : openFile;
     }
 
     private static List<String> readArguments(Path commandLine) {
@@ -140,7 +132,7 @@ final class LiveCassandraSourceGuard {
         return canonicalIfPossible(path);
     }
 
-    private static void inspectOpenFiles(List<Path> sources, Path process, String pid)
+    private static Match findOpenFile(List<Path> sources, Path process, String pid)
             throws WorkspaceException {
         Path descriptors = process.resolve("fd");
         try (DirectoryStream<Path> entries = Files.newDirectoryStream(descriptors)) {
@@ -148,7 +140,11 @@ final class LiveCassandraSourceGuard {
                 try {
                     Path target = canonicalIfPossible(cleanDeletedSuffix(
                             Files.readSymbolicLink(entry)));
-                    rejectMatchingSource(sources, target, pid, "open file " + target);
+                    Match match = findMatchingSource(
+                            sources, target, pid, "open file " + target);
+                    if (match != null) {
+                        return match;
+                    }
                 } catch (IOException | SecurityException ignored) {
                     // File descriptors can disappear while the process is being inspected.
                 }
@@ -156,9 +152,10 @@ final class LiveCassandraSourceGuard {
         } catch (IOException | SecurityException ignored) {
             // The storage-directory property and memory maps remain independent evidence.
         }
+        return null;
     }
 
-    private static void inspectMappedFiles(List<Path> sources, Path process, String pid)
+    private static Match findMappedFile(List<Path> sources, Path process, String pid)
             throws WorkspaceException {
         try (BufferedReader maps = Files.newBufferedReader(process.resolve("maps"),
                 StandardCharsets.UTF_8)) {
@@ -171,7 +168,11 @@ final class LiveCassandraSourceGuard {
                 try {
                     Path mapped = canonicalIfPossible(cleanDeletedSuffix(Paths.get(
                             decodeProcPath(line.substring(pathStart)))));
-                    rejectMatchingSource(sources, mapped, pid, "mapped file " + mapped);
+                    Match match = findMatchingSource(
+                            sources, mapped, pid, "mapped file " + mapped);
+                    if (match != null) {
+                        return match;
+                    }
                 } catch (InvalidPathException ignored) {
                     // Ignore an unrepresentable transient mapping path.
                 }
@@ -179,6 +180,7 @@ final class LiveCassandraSourceGuard {
         } catch (IOException | SecurityException ignored) {
             // A process can exit or restrict maps while it is being inspected.
         }
+        return null;
     }
 
     private static String decodeProcPath(String value) {
@@ -203,22 +205,43 @@ final class LiveCassandraSourceGuard {
         }
     }
 
-    private static void rejectMatchingSource(List<Path> sources,
-                                             Path observed,
-                                             String pid,
-                                             String evidence) throws WorkspaceException {
+    private static Match findMatchingSource(List<Path> sources,
+                                            Path observed,
+                                            String pid,
+                                            String evidence) {
         for (Path source : sources) {
             if (observed.startsWith(source)) {
-                reject(source, pid, evidence);
+                return new Match(source, pid, evidence);
             }
         }
+        return null;
     }
 
-    private static void reject(Path source, String pid, String evidence)
-            throws WorkspaceException {
-        throw new WorkspaceException("Refusing SSTable source " + source
-                + " because active Cassandra process PID " + pid + " matches " + evidence
-                + ". Stop the owning Cassandra process, or copy a completed snapshot or "
-                + "backup outside every live Cassandra data directory.");
+    static final class Match {
+        private final Path source;
+        private final String pid;
+        private final String evidence;
+
+        Match(Path source, String pid, String evidence) {
+            this.source = source;
+            this.pid = pid;
+            this.evidence = evidence;
+        }
+
+        String key() {
+            return source + "\0" + pid;
+        }
+
+        String description() {
+            return "SSTable directory " + source
+                    + " is matched by active Cassandra process PID "
+                    + pid + " through " + evidence;
+        }
+
+        String rejectionMessage() {
+            return "Refusing " + description() + ". Stop the owning Cassandra process, "
+                    + "or copy a completed snapshot or backup outside every live Cassandra "
+                    + "data directory.";
+        }
     }
 }

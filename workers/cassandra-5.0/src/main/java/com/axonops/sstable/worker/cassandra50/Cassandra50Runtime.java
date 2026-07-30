@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryHandler;
 import org.apache.cassandra.cql3.QueryOptions;
@@ -87,6 +88,8 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
         LinkageVerifier.requirePublicMethod(ColumnFamilyStore.class,
                 "forceBlockingFlush", org.apache.cassandra.db.commitlog.CommitLogPosition.class,
                 ColumnFamilyStore.FlushReason.class);
+        LinkageVerifier.requireDeclaredInstanceField(ColumnFamilyStore.class,
+                "sstableIdGenerator", Supplier.class);
         LinkageVerifier.requirePublicMethod(ColumnFamilyStore.class, "verify",
                 CompactionManager.AllSSTableOpStatus.class, IVerifier.Options.class);
     }

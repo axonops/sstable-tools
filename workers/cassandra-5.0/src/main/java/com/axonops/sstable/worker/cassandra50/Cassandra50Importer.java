@@ -10,6 +10,7 @@ import com.axonops.sstable.workspace.WorkspaceManifest;
 import com.axonops.sstable.workspace.WorkspaceRepository;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -32,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -45,6 +48,7 @@ import org.apache.cassandra.io.sstable.Component;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.IVerifier;
 import org.apache.cassandra.io.sstable.ISSTableScanner;
+import org.apache.cassandra.io.sstable.SequenceBasedSSTableId;
 import org.apache.cassandra.io.sstable.format.SSTableFormat;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.sstable.format.Version;
@@ -113,6 +117,7 @@ final class Cassandra50Importer {
             for (int i = 0; i < validated.size(); i++) {
                 importOne(options.workspaceRoot(), cfs, validated.get(i), tableDirectory, i);
             }
+            advanceSequenceGenerator(cfs, validated);
             source.verifyUnchanged();
 
             if (cfs.verify(IVerifier.options().extendedVerification(true).build())
@@ -419,6 +424,50 @@ final class Cassandra50Importer {
                                           String table) {
         return new Descriptor(source.version, new org.apache.cassandra.io.util.File(targetDirectory),
                 keyspace, table, source.id);
+    }
+
+    private static void advanceSequenceGenerator(ColumnFamilyStore cfs,
+                                                 List<ValidatedSet> validated)
+            throws ReflectiveOperationException {
+        int maximum = 0;
+        for (ValidatedSet source : validated) {
+            if (source.descriptor.id instanceof SequenceBasedSSTableId) {
+                maximum = Math.max(maximum,
+                        ((SequenceBasedSSTableId) source.descriptor.id).generation);
+            }
+        }
+        if (maximum == 0) {
+            return;
+        }
+
+        Field generatorField = ColumnFamilyStore.class.getDeclaredField("sstableIdGenerator");
+        generatorField.setAccessible(true);
+        Object generator = generatorField.get(cfs);
+        if (!(generator instanceof Supplier)) {
+            throw new IllegalStateException("Cassandra 5.0 SSTable identifier generator is "
+                    + "unavailable");
+        }
+        advanceSequenceGenerator((Supplier<?>) generator, maximum);
+    }
+
+    static void advanceSequenceGenerator(Supplier<?> generator, int maximum)
+            throws ReflectiveOperationException {
+        if (maximum < 1) {
+            throw new IllegalArgumentException("Maximum SSTable generation must be positive");
+        }
+        AtomicInteger counter = null;
+        for (Field field : generator.getClass().getDeclaredFields()) {
+            if (field.getType() == AtomicInteger.class) {
+                field.setAccessible(true);
+                counter = (AtomicInteger) field.get(generator);
+                break;
+            }
+        }
+        if (counter == null) {
+            throw new IllegalStateException("Cassandra 5.0 sequence SSTable identifier "
+                    + "generator is unavailable");
+        }
+        counter.accumulateAndGet(maximum, Math::max);
     }
 
     private static void disableAndQuiesceCompaction(ColumnFamilyStore cfs) {

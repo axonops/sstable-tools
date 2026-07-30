@@ -59,6 +59,7 @@ final class BootstrapArguments {
     private final SstableOutputFormat sstableOutputFormat;
     private final Path temporaryDirectory;
     private final String executeCql;
+    private final boolean allowLiveCassandraOutput;
     private final UUID confirmedWorkspaceId;
 
     private BootstrapArguments(Action action,
@@ -74,6 +75,7 @@ final class BootstrapArguments {
                                SstableOutputFormat sstableOutputFormat,
                                Path temporaryDirectory,
                                String executeCql,
+                               boolean allowLiveCassandraOutput,
                                UUID confirmedWorkspaceId) {
         this.action = action;
         this.runtimeOptions = runtimeOptions;
@@ -89,6 +91,7 @@ final class BootstrapArguments {
         this.sstableOutputFormat = sstableOutputFormat;
         this.temporaryDirectory = temporaryDirectory;
         this.executeCql = executeCql;
+        this.allowLiveCassandraOutput = allowLiveCassandraOutput;
         this.confirmedWorkspaceId = confirmedWorkspaceId;
     }
 
@@ -98,7 +101,7 @@ final class BootstrapArguments {
                     null, Collections.<Path>emptyList(), null, null,
                     TimestampPolicy.WALL_CLOCK,
                     false, null, null, SstableOutputFormat.BIG,
-                    Paths.get("/tmp/sstable-tools"), null, null);
+                    Paths.get("/tmp/sstable-tools"), null, false, null);
         }
 
         Path cassandraHome = null;
@@ -114,6 +117,7 @@ final class BootstrapArguments {
         boolean sstableOutputFormatSpecified = false;
         Path temporaryDirectory = Paths.get("/tmp/sstable-tools");
         String executeCql = null;
+        boolean allowLiveCassandraOutput = false;
         UUID confirmedWorkspaceId = null;
         List<String> command = new ArrayList<>();
 
@@ -127,6 +131,7 @@ final class BootstrapArguments {
                         timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
                         temporaryDirectory,
                         executeCql,
+                        allowLiveCassandraOutput,
                         confirmedWorkspaceId);
             }
             if ("--version".equals(argument)) {
@@ -137,6 +142,7 @@ final class BootstrapArguments {
                         timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
                         temporaryDirectory,
                         executeCql,
+                        allowLiveCassandraOutput,
                         confirmedWorkspaceId);
             }
             if ("--cassandra-home".equals(argument)) {
@@ -182,6 +188,11 @@ final class BootstrapArguments {
                     throw usage("--execute requires one non-empty CQL statement");
                 }
                 executeCql = args[index];
+            } else if ("--allow-live-cassandra-output".equals(argument)) {
+                if (allowLiveCassandraOutput) {
+                    throw usage("--allow-live-cassandra-output may be specified only once");
+                }
+                allowLiveCassandraOutput = true;
             } else if ("--confirm-workspace-id".equals(argument)) {
                 if (confirmedWorkspaceId != null || ++index >= args.length
                         || args[index].trim().isEmpty()) {
@@ -323,6 +334,7 @@ final class BootstrapArguments {
                 timestampPolicy,
                 timestampPolicySpecified, exportMode, outputPath, sstableOutputFormat,
                 temporaryDirectory, executeCql,
+                allowLiveCassandraOutput,
                 confirmedWorkspaceId);
     }
 
@@ -424,6 +436,10 @@ final class BootstrapArguments {
         return executeCql;
     }
 
+    boolean allowLiveCassandraOutput() {
+        return allowLiveCassandraOutput;
+    }
+
     UUID confirmedWorkspaceId() {
         return confirmedWorkspaceId;
     }
@@ -434,6 +450,7 @@ final class BootstrapArguments {
                 sourceDirectories, directOutputDirectory, schemaPath, policy, policySpecified,
                 exportMode,
                 outputPath, sstableOutputFormat, temporaryDirectory, executeCql,
+                allowLiveCassandraOutput,
                 confirmedWorkspaceId);
     }
 
@@ -442,6 +459,7 @@ final class BootstrapArguments {
                 sourceDirectories, directOutputDirectory, schemaPath, timestampPolicy,
                 timestampPolicySpecified,
                 exportMode, outputPath, sstableOutputFormat, temporaryDirectory, executeCql,
+                allowLiveCassandraOutput,
                 workspaceId);
     }
 }

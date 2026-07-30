@@ -3,6 +3,8 @@ package com.axonops.sstable.worker.cassandra40;
 import com.axonops.sstable.worker.api.ImportOptions;
 import com.axonops.sstable.worker.api.ImportResult;
 import com.axonops.sstable.worker.api.ImportRuntimeAdapter;
+import com.axonops.sstable.worker.api.DirectSandboxRuntimeAdapter;
+import com.axonops.sstable.worker.api.ImportedSandbox;
 import com.axonops.sstable.worker.api.LinkageVerifier;
 import com.axonops.sstable.worker.api.SandboxHandle;
 import com.axonops.sstable.worker.api.SandboxOptions;
@@ -14,6 +16,8 @@ import com.axonops.sstable.workspace.WorkspaceRepository;
 import com.axonops.sstable.workspace.WorkspaceVerificationResult;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.URI;
 import java.nio.file.Files;
@@ -28,6 +32,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.QueryHandler;
 import org.apache.cassandra.cql3.QueryOptions;
@@ -50,7 +55,8 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 /** Linkage probe compiled against the supported Cassandra 4.0 API. */
-public final class Cassandra40Runtime implements SandboxRuntimeAdapter, ImportRuntimeAdapter {
+public final class Cassandra40Runtime implements SandboxRuntimeAdapter, ImportRuntimeAdapter,
+        DirectSandboxRuntimeAdapter {
     public Cassandra40Runtime() {
     }
 
@@ -80,13 +86,15 @@ public final class Cassandra40Runtime implements SandboxRuntimeAdapter, ImportRu
                 "disableAutoCompaction", void.class);
         LinkageVerifier.requirePublicMethod(ColumnFamilyStore.class,
                 "forceBlockingFlush", org.apache.cassandra.db.commitlog.CommitLogPosition.class);
+        LinkageVerifier.requireDeclaredInstanceField(ColumnFamilyStore.class,
+                "fileIndexGenerator", AtomicInteger.class);
         LinkageVerifier.requirePublicMethod(ColumnFamilyStore.class, "verify",
                 CompactionManager.AllSSTableOpStatus.class, Verifier.Options.class);
     }
 
     @Override
     public SandboxHandle startSandbox(SandboxOptions options) throws Exception {
-        requireIsolationProperties(options.configurationFile(), true);
+        requireIsolationProperties(options.configurationFile(), true, true);
         DatabaseDescriptor.daemonInitialization();
         validateConfiguration(options.workspaceRoot(), true, options.nativePort());
 
@@ -125,7 +133,7 @@ public final class Cassandra40Runtime implements SandboxRuntimeAdapter, ImportRu
 
     @Override
     public ImportResult importSstables(ImportOptions options) throws Exception {
-        requireIsolationProperties(options.configurationFile(), false);
+        requireIsolationProperties(options.configurationFile(), false, false);
         DatabaseDescriptor.daemonInitialization();
         validateConfiguration(options.workspaceRoot(), false, -1);
 
@@ -148,8 +156,85 @@ public final class Cassandra40Runtime implements SandboxRuntimeAdapter, ImportRu
         }
     }
 
+    @Override
+    public ImportedSandbox importAndStart(ImportOptions importOptions, SandboxOptions options)
+            throws Exception {
+        if (!importOptions.workspaceRoot().equals(options.workspaceRoot())
+                || !importOptions.configurationFile().equals(options.configurationFile())
+                || !importOptions.workspaceId().equals(options.workspaceId())) {
+            throw new IllegalArgumentException("Direct sandbox import identity does not match");
+        }
+        String keyspace = System.getProperty(WorkspaceQueryHandler.KEYSPACE_PROPERTY);
+        if (!"system".equals(keyspace)) {
+            throw new IllegalArgumentException("Deferred Cassandra 4.0 import is limited to "
+                    + "system tables");
+        }
+
+        // The metadata import populated this private workspace only to validate the selected
+        // source. Remove that copy before Cassandra writes its own disposable bootstrap state.
+        Cassandra40Importer.deleteImportedTableBeforeBootstrap(importOptions.workspaceRoot());
+        requireIsolationProperties(options.configurationFile(), false, true);
+        DatabaseDescriptor.daemonInitialization();
+        validateConfiguration(options.workspaceRoot(), false, options.nativePort());
+
+        CassandraDaemon daemon = new CassandraDaemon(true);
+        boolean activated = false;
+        try {
+            daemon.activate();
+            activated = true;
+            publishLocalSystemSchema();
+            installLocalRingState();
+            daemon.startNativeTransport();
+            if (!daemon.isNativeTransportRunning()) {
+                throw new IllegalStateException("Cassandra 4.0 native transport did not start");
+            }
+            if (Gossiper.instance.isEnabled()) {
+                throw new IllegalStateException("Isolated Cassandra worker started gossip");
+            }
+
+            // Import only after Cassandra has finished its system.local bootstrap writes. The
+            // importer discards that private state and attaches the selected source generation.
+            ImportResult result = Cassandra40Importer.run(importOptions);
+            ColumnFamilyStore cfs = Keyspace.open(result.keyspace())
+                    .getColumnFamilyStore(result.table());
+            List<ColumnFamilyStore> stores = Collections.singletonList(cfs);
+            CompactionManager.instance.waitForCessation(stores, reader -> true);
+            if (!cfs.isAutoCompactionDisabled()
+                    || CompactionManager.instance.isCompacting(stores, reader -> true)) {
+                throw new IllegalStateException("Workspace table compaction did not stop");
+            }
+            SandboxHandle handle = new Cassandra40SandboxHandle(daemon, options,
+                    installedVersion(), result.keyspace(), result.table(),
+                    result.tableDirectory(), cfs);
+            return new ImportedSandbox(result, handle);
+        } catch (Exception e) {
+            if (activated) {
+                daemon.deactivate();
+            }
+            throw e;
+        }
+    }
+
+    private static void publishLocalSystemSchema() {
+        try {
+            Class<?> schemaKeyspace = Class.forName(
+                    "org.apache.cassandra.schema.SchemaKeyspace");
+            Method publish = schemaKeyspace.getDeclaredMethod("saveSystemKeyspacesSchema");
+            publish.setAccessible(true);
+            publish.invoke(null);
+        } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException e) {
+            throw new IllegalStateException("Cassandra 4.0 local schema publication is "
+                    + "unavailable", e);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            throw new IllegalStateException("Cassandra 4.0 local schema publication failed",
+                    cause);
+        }
+    }
+
     private static void requireIsolationProperties(Path configurationFile,
-                                                   boolean startNativeTransport) {
+                                                   boolean startNativeTransport,
+                                                   boolean allowQueryGuard) {
         requireFalse("cassandra.start_gossip");
         requireFalse("cassandra.join_ring");
         requireFalse("cassandra.load_ring_state");
@@ -177,16 +262,16 @@ public final class Cassandra40Runtime implements SandboxRuntimeAdapter, ImportRu
         } catch (IOException | IllegalArgumentException e) {
             throw new IllegalStateException("Invalid cassandra.config " + configured, e);
         }
-        requireQueryGuard(startNativeTransport);
+        requireQueryGuard(allowQueryGuard);
     }
 
-    private static void requireQueryGuard(boolean startNativeTransport) {
+    private static void requireQueryGuard(boolean allowQueryGuard) {
         String handler = System.getProperty(WorkspaceQueryHandler.HANDLER_PROPERTY);
         String keyspace = System.getProperty(WorkspaceQueryHandler.KEYSPACE_PROPERTY);
         String table = System.getProperty(WorkspaceQueryHandler.TABLE_PROPERTY);
         String sourceMaximum = System.getProperty(
                 WorkspaceQueryHandler.SOURCE_MAX_TIMESTAMP_PROPERTY);
-        if (startNativeTransport) {
+        if (allowQueryGuard) {
             if (!WorkspaceQueryHandler.class.getName().equals(handler)
                     || keyspace == null || keyspace.isEmpty() || table == null || table.isEmpty()
                     || sourceMaximum == null || sourceMaximum.isEmpty()) {

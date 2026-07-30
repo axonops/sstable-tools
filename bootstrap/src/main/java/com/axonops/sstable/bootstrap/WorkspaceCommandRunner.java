@@ -35,6 +35,16 @@ import java.util.UUID;
 
 /** Executes Cassandra-free workspace lifecycle commands under an exclusive lock. */
 final class WorkspaceCommandRunner {
+    private final LiveCassandraPublicationPolicy publicationPolicy;
+
+    WorkspaceCommandRunner(PrintStream err) {
+        this(new LiveCassandraPublicationPolicy(err));
+    }
+
+    WorkspaceCommandRunner(LiveCassandraPublicationPolicy publicationPolicy) {
+        this.publicationPolicy = publicationPolicy;
+    }
+
     void run(BootstrapArguments arguments, PrintStream out) throws WorkspaceException {
         switch (arguments.action()) {
             case WORKSPACE_CREATE:
@@ -77,7 +87,6 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
-            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             if (manifest.state() != WorkspaceState.IMPORTED
@@ -120,7 +129,10 @@ final class WorkspaceCommandRunner {
             String nativePassword = randomSecret();
             String importedKeyspace = requiredImportedSchema(manifest, "keyspace");
             String importedTable = requiredImportedSchema(manifest, "table");
-            boolean importBeforeStart = "5.0".equals(adapter.releaseLine())
+            boolean importBeforeStart = ("3.11".equals(adapter.releaseLine())
+                    || "4.0".equals(adapter.releaseLine())
+                    || "4.1".equals(adapter.releaseLine())
+                    || "5.0".equals(adapter.releaseLine()))
                     && "system".equals(importedKeyspace);
             if (importBeforeStart) {
                 Cassandra311SandboxConfig.writeWithDeferredNativeTransport(repository, lock,
@@ -186,7 +198,6 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
-            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             if (manifest.state() == WorkspaceState.IMPORTED) {
@@ -273,7 +284,6 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
-            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             verifyBaselineIfPresent(repository, manifest);
@@ -334,13 +344,17 @@ final class WorkspaceCommandRunner {
             stop(arguments.forWorkspace(BootstrapArguments.Action.WORKSPACE_STOP, workspace,
                     policy, false), quiet);
             Path publicationDirectory = directPublicationDirectory(arguments, manifest);
-            LiveCassandraSourceGuard.reject(
-                    Collections.singletonList(publicationDirectory));
-            List<String> publishedDescriptors = flush.deltaFiles(manifest.baselineInventory())
-                    .isEmpty() ? Collections.<String>emptyList() : new WorkspaceExportPublisher()
-                    .publishDeltaAdjacent(repository, manifest, flush, verification,
-                            publicationDirectory,
-                            arguments.directOutputDirectory() != null);
+            List<ManifestFile> deltaFiles = flush.deltaFiles(manifest.baselineInventory());
+            if (!deltaFiles.isEmpty()) {
+                publicationPolicy.requireSafe(
+                        Collections.singletonList(publicationDirectory),
+                        arguments.allowLiveCassandraOutput());
+            }
+            List<String> publishedDescriptors = deltaFiles.isEmpty()
+                    ? Collections.<String>emptyList()
+                    : new WorkspaceExportPublisher().publishDeltaAdjacent(
+                    repository, manifest, flush, verification, publicationDirectory,
+                    arguments.directOutputDirectory() != null);
             published = true;
             out.println("published.directory=" + publicationDirectory);
             out.println("published.sstables=" + (publishedDescriptors.isEmpty()
@@ -446,7 +460,6 @@ final class WorkspaceCommandRunner {
                 ? arguments.sourceDirectories()
                 : Collections.singletonList(arguments.directOutputDirectory());
         requireSeparateArguments(arguments.workspacePath(), inventoryArguments);
-        LiveCassandraSourceGuard.reject(inventoryArguments);
         SchemaBundle schema = arguments.schemaPath() == null
                 ? null : SchemaBundle.capture(arguments.schemaPath());
         if (schema != null) {
@@ -583,7 +596,6 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
-            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             verifyBaselineIfPresent(repository, manifest);
@@ -683,7 +695,6 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.open(arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
             WorkspaceManifest manifest = repository.load();
-            LiveCassandraSourceGuard.reject(manifest.sourceInventory());
             manifest.sourceInventory().verifyUnchanged();
             verifySchemaIfPresent(repository, manifest);
             verifyBaselineIfPresent(repository, manifest);

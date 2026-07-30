@@ -9,7 +9,7 @@ its SSTables are copied into a workspace or passed to SSTable Tools.
 ## Source lifecycle matrix
 
 The `stopped-cqlsh-source` GitHub Actions matrix runs against Cassandra 3.11.19,
-4.0.17, 4.1.3, and 5.0.8. Each matrix entry performs this sequence:
+4.0.18, 4.1.11, and 5.0.8. Each matrix entry performs this sequence:
 
 1. Start the matching official Cassandra Docker image.
 2. Use that image's stock `cqlsh` to create `ci_source.events`.
@@ -44,14 +44,14 @@ Only after shutdown does it copy the table into a workspace. SSTable Tools then
 executes `create`, `import`, `start`, stock-cqlsh `SELECT`/`INSERT`/`UPDATE`,
 `flush`, delta `export`, and `stop`.
 
-The 4.0.17, 4.1.3, and 5.0.8 jobs execute the same stopped-source import
+The 4.0.18, 4.1.11, and 5.0.8 jobs execute the same stopped-source import
 sequence and then start guarded isolated sandboxes. They invoke the installed
 distribution's stock `cqlsh` for `INSERT`, `UPDATE`, and `SELECT`, flush,
 export the delta, and stop. The sandbox is loopback-only, disables gossip and
 JMX, and only permits writes to the imported workspace table with an explicit
 timestamp greater than the source SSTable maximum.
 
-The 4.0.17 and 4.1.3 jobs also run `scripts/ci-legacy-ma-cqlsh`. It copies the
+The 4.0.18 and 4.1.11 jobs also run `scripts/ci-legacy-ma-cqlsh`. It copies the
 immutable checked-in Cassandra 3.11 Big `ma` user fixture, reads it with the
 target adapter, performs stock-`cqlsh` `INSERT` and `UPDATE` through the direct
 interface, verifies the original component hashes, and reopens the combined
@@ -65,3 +65,9 @@ only the `oa` set to publish BTI `da` with `--output-format bti`. A final
 direct workflow selects only the published BTI set, performs `INSERT`,
 `UPDATE`, and `SELECT`, and publishes/reopens BTI output again. Mixed Big/BTI
 source sets remain outside the supported workflow.
+
+A separate `patch-line-floor` matrix downloads Cassandra 4.0.0 and 4.1.0,
+removes their installation `cassandra.yaml`, and runs runtime preflight. The
+adapter metadata unit tests accept every released patch from 4.0.0 through
+4.0.18 and from 4.1.0 through 4.1.11 while rejecting versions outside those
+ranges.

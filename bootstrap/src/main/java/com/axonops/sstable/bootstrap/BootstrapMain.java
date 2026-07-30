@@ -39,8 +39,9 @@ public final class BootstrapMain {
             if (requiresSstableWriteWarning(arguments.action())) {
                 printSstableWriteWarning(err);
             }
+            WorkspaceCommandRunner workspaceRunner = new WorkspaceCommandRunner(err);
             if (isCassandraFreeWorkspaceAction(arguments.action())) {
-                new WorkspaceCommandRunner().run(arguments, out);
+                workspaceRunner.run(arguments, out);
                 return 0;
             }
 
@@ -52,19 +53,17 @@ public final class BootstrapMain {
                     arguments.runtimeOptions(), adapter);
 
             if (arguments.action() == BootstrapArguments.Action.WORKSPACE_START) {
-                new WorkspaceCommandRunner().start(arguments, adapter, installation, out);
+                workspaceRunner.start(arguments, adapter, installation, out);
                 return 0;
             }
             if (arguments.action() == BootstrapArguments.Action.DIRECT_CQLSH) {
-                return new WorkspaceCommandRunner().directCqlsh(arguments, adapter,
-                        installation, out);
+                return workspaceRunner.directCqlsh(arguments, adapter, installation, out);
             }
             if (arguments.action() == BootstrapArguments.Action.WORKSPACE_CQLSH) {
-                return new WorkspaceCommandRunner().cqlsh(arguments, installation);
+                return workspaceRunner.cqlsh(arguments, installation);
             }
             if (arguments.action() == BootstrapArguments.Action.WORKSPACE_IMPORT) {
-                new WorkspaceCommandRunner().importSstables(
-                        arguments, adapter, installation, out);
+                workspaceRunner.importSstables(arguments, adapter, installation, out);
                 return 0;
             }
 
@@ -112,10 +111,9 @@ public final class BootstrapMain {
 
     private static void printSstableWriteWarning(PrintStream err) {
         err.println("WARNING: DANGEROUS SSTABLE WRITE WORKFLOW");
-        err.println("Never use SSTable import, mutation, compaction, or export against files");
-        err.println("owned by a running production Cassandra process.");
-        err.println("Stop the owning Cassandra process, or use a completed snapshot or backup");
-        err.println("copied outside every live Cassandra data directory.");
+        err.println("Existing SSTable components are immutable and may be read while Cassandra");
+        err.println("has them open. Publishing new SSTables into a running node's live table");
+        err.println("directory is dangerous and requires explicit confirmation.");
         err.println("The isolated workspace worker started by this tool is expected and writes");
         err.println("only beneath a private workspace before verified output is published.");
     }
@@ -163,6 +161,7 @@ public final class BootstrapMain {
         out.println("  --output-format <type>  big (default), or bti for Cassandra 5.0 output");
         out.println("  --tmp-dir <path>        Parent for private direct-cqlsh workspaces");
         out.println("  --execute <cql>         Execute CQL and exit (direct or workspace cqlsh)");
+        out.println("  --allow-live-cassandra-output  Allow publication into a live table directory");
         out.println("  --confirm-workspace-id <uuid> Exact UUID required by workspace destroy");
         out.println("  --version                Print tool and adapter versions");
         out.println("  --help                   Print this help");
@@ -185,8 +184,8 @@ public final class BootstrapMain {
         out.println("  workspace destroy <path> Permanently delete a stopped/inactive workspace");
         out.println();
         out.println("Safety warning:");
-        out.println("  Never run SSTable write operations against files owned by a running");
-        out.println("  production Cassandra process. Stop it, or use a completed snapshot or");
-        out.println("  backup copied outside every live Cassandra data directory.");
+        out.println("  Existing SSTables are immutable and safe to read while Cassandra has them");
+        out.println("  open. Publication into a running node's live table directory prompts for");
+        out.println("  confirmation, or requires --allow-live-cassandra-output without a terminal.");
     }
 }

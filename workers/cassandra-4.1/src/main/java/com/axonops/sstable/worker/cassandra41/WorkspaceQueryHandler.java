@@ -1,5 +1,7 @@
 package com.axonops.sstable.worker.cassandra41;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -21,6 +23,7 @@ import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.transport.Dispatcher.RequestTime;
 import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.MD5Digest;
 
@@ -60,7 +63,6 @@ public final class WorkspaceQueryHandler implements QueryHandler {
         }
     }
 
-    @Override
     public ResultMessage process(CQLStatement statement,
                                  QueryState state,
                                  QueryOptions options,
@@ -71,7 +73,25 @@ public final class WorkspaceQueryHandler implements QueryHandler {
         try {
             requireAllowed(statement, options);
             requireLocalConsistency(options);
-            return delegate.process(statement, state, options, customPayload, queryStartNanoTime);
+            return invokeLegacyDelegate("process", statement, state, options, customPayload,
+                    queryStartNanoTime);
+        } finally {
+            exitRequest();
+        }
+    }
+
+    @Override
+    public ResultMessage process(CQLStatement statement,
+                                 QueryState state,
+                                 QueryOptions options,
+                                 Map<String, ByteBuffer> customPayload,
+                                 RequestTime requestTime)
+            throws RequestExecutionException, RequestValidationException {
+        enterRequest();
+        try {
+            requireAllowed(statement, options);
+            requireLocalConsistency(options);
+            return delegate.process(statement, state, options, customPayload, requestTime);
         } finally {
             exitRequest();
         }
@@ -95,7 +115,6 @@ public final class WorkspaceQueryHandler implements QueryHandler {
         return delegate.getPrepared(id);
     }
 
-    @Override
     public ResultMessage processPrepared(CQLStatement statement,
                                          QueryState state,
                                          QueryOptions options,
@@ -106,14 +125,31 @@ public final class WorkspaceQueryHandler implements QueryHandler {
         try {
             requireAllowed(statement, options);
             requireLocalConsistency(options);
-            return delegate.processPrepared(statement, state, options, customPayload,
-                    queryStartNanoTime);
+            return invokeLegacyDelegate("processPrepared", statement, state, options,
+                    customPayload, queryStartNanoTime);
         } finally {
             exitRequest();
         }
     }
 
     @Override
+    public ResultMessage processPrepared(CQLStatement statement,
+                                         QueryState state,
+                                         QueryOptions options,
+                                         Map<String, ByteBuffer> customPayload,
+                                         RequestTime requestTime)
+            throws RequestExecutionException, RequestValidationException {
+        enterRequest();
+        try {
+            requireAllowed(statement, options);
+            requireLocalConsistency(options);
+            return delegate.processPrepared(statement, state, options, customPayload,
+                    requestTime);
+        } finally {
+            exitRequest();
+        }
+    }
+
     public ResultMessage processBatch(BatchStatement statement,
                                       QueryState state,
                                       BatchQueryOptions options,
@@ -125,6 +161,55 @@ public final class WorkspaceQueryHandler implements QueryHandler {
             throw rejected("BATCH statements are disabled");
         } finally {
             exitRequest();
+        }
+    }
+
+    @Override
+    public ResultMessage processBatch(BatchStatement statement,
+                                      QueryState state,
+                                      BatchQueryOptions options,
+                                      Map<String, ByteBuffer> customPayload,
+                                      RequestTime requestTime)
+            throws RequestExecutionException, RequestValidationException {
+        enterRequest();
+        try {
+            throw rejected("BATCH statements are disabled");
+        } finally {
+            exitRequest();
+        }
+    }
+
+    private ResultMessage invokeLegacyDelegate(String methodName,
+                                               CQLStatement statement,
+                                               QueryState state,
+                                               QueryOptions options,
+                                               Map<String, ByteBuffer> customPayload,
+                                               long queryStartNanoTime)
+            throws RequestExecutionException, RequestValidationException {
+        try {
+            Method method = delegate.getClass().getMethod(methodName,
+                    CQLStatement.class, QueryState.class, QueryOptions.class,
+                    Map.class, long.class);
+            return (ResultMessage) method.invoke(delegate, statement, state, options,
+                    customPayload, queryStartNanoTime);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RequestExecutionException) {
+                throw (RequestExecutionException) cause;
+            }
+            if (cause instanceof RequestValidationException) {
+                throw (RequestValidationException) cause;
+            }
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            if (cause instanceof Error) {
+                throw (Error) cause;
+            }
+            throw new IllegalStateException("Legacy Cassandra query handler failed", cause);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Legacy Cassandra query handler API is unavailable",
+                    e);
         }
     }
 
