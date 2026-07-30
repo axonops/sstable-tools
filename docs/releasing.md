@@ -68,10 +68,12 @@ GCP_YUM_REPOSITORY
 `GCP_CREDENTIALS` contains the complete Google service-account JSON key. The
 service account must be able to list or describe the configured repositories
 and upload Apt and Yum artifacts. Repository secrets may contain a short
-repository ID or a fully qualified resource in this form:
+repository ID, a fully qualified resource, or a standard `pkg.dev` URL:
 
 ```text
 projects/PROJECT/locations/LOCATION/repositories/REPOSITORY
+https://LOCATION-apt.pkg.dev/projects/PROJECT/REPOSITORY
+https://LOCATION-yum.pkg.dev/projects/PROJECT/REPOSITORY
 ```
 
 Short IDs are resolved across all locations in `GCP_PROJECT_ID` and must match

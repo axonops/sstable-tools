@@ -5,8 +5,8 @@ usage() {
   cat >&2 <<'EOF'
 Usage: publish-google-artifacts \
   --project <project-id> \
-  --apt-repository <repository-id-or-resource> \
-  --yum-repository <repository-id-or-resource> \
+  --apt-repository <repository-id-resource-or-url> \
+  --yum-repository <repository-id-resource-or-url> \
   --release-dir <directory>
 EOF
   exit 64
@@ -50,13 +50,20 @@ mapfile -t rpm_packages < <(
   exit 1
 }
 
+mask_value() {
+  if [[ "${GITHUB_ACTIONS:-}" == true && -n "${1:-}" ]]; then
+    printf '::add-mask::%s\n' "$1" >&2
+  fi
+}
+
 resolve_repository() {
   local requested=$1
   local expected_format=$2
   local resource_pattern='^projects/([^/]+)/locations/([^/]+)/repositories/([^/]+)$'
-  local location
-  local repository
-  local actual_format
+  local url_pattern='^https://([a-z0-9-]+)-(apt|yum)\.pkg\.dev/projects/([^/]+)/([^/]+)/?$'
+  local location=
+  local repository=
+  local actual_format=
 
   if [[ "$requested" =~ $resource_pattern ]]; then
     [[ "${BASH_REMATCH[1]}" == "$project" ]] || {
@@ -65,6 +72,23 @@ resolve_repository() {
     }
     location=${BASH_REMATCH[2]}
     repository=${BASH_REMATCH[3]}
+  elif [[ "$requested" =~ $url_pattern ]]; then
+    location=${BASH_REMATCH[1]}
+    [[ "${BASH_REMATCH[2]^^}" == "$expected_format" ]] || {
+      printf 'Artifact Registry URL format does not match expected %s repository\n' \
+        "$expected_format" >&2
+      return 1
+    }
+    [[ "${BASH_REMATCH[3]}" == "$project" ]] || {
+      printf 'Artifact Registry URL belongs to a different project\n' >&2
+      return 1
+    }
+    repository=${BASH_REMATCH[4]}
+  fi
+
+  if [[ -n "$location" && -n "$repository" ]]; then
+    mask_value "$location"
+    mask_value "$repository"
     actual_format="$(
       gcloud artifacts repositories describe "$repository" \
         --project="$project" \
@@ -116,7 +140,10 @@ resolve_repository() {
       "$expected_format" "${#matches[@]}" >&2
     return 1
   }
-  printf '%s\n' "${matches[0]}"
+  IFS=$'\t' read -r location repository <<<"${matches[0]}"
+  mask_value "$location"
+  mask_value "$repository"
+  printf '%s\t%s\n' "$location" "$repository"
 }
 
 apt_target="$(resolve_repository "$apt_repository" APT)"
