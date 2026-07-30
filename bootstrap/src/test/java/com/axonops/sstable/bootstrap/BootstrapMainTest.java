@@ -36,7 +36,9 @@ public class BootstrapMainTest {
         Assert.assertTrue(output.toString("UTF-8").contains("--cassandra-home"));
         Assert.assertTrue(output.toString("UTF-8").contains("runtime preflight"));
         Assert.assertTrue(output.toString("UTF-8")
-                .contains("Never run SSTable write operations"));
+                .contains("Existing SSTables are immutable"));
+        Assert.assertTrue(output.toString("UTF-8")
+                .contains("--allow-live-cassandra-output"));
     }
 
     @Test
@@ -103,8 +105,9 @@ public class BootstrapMainTest {
         String warning = error.toString("UTF-8");
         Assert.assertEquals(0, exitCode);
         Assert.assertTrue(warning.contains("DANGEROUS SSTABLE WRITE WORKFLOW"));
-        Assert.assertTrue(warning.contains("running production Cassandra process"));
-        Assert.assertTrue(warning.contains("copied outside every live Cassandra data directory"));
+        Assert.assertTrue(warning.contains("immutable"));
+        Assert.assertTrue(warning.contains("running node's live table"));
+        Assert.assertTrue(warning.contains("explicit confirmation"));
         Assert.assertTrue(warning.contains("isolated workspace worker"));
     }
 

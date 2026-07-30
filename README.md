@@ -224,10 +224,36 @@ both the original descriptors and every published sibling descriptor that
 should participate in reconciliation. Using the same `--output-dir` does this
 automatically.
 
-> **DANGER:** Do not mutate, compact, import, or export files belonging to a
-> running Cassandra process. The source must be an external completed copy,
-> snapshot, or backup. The isolated worker is expected; it uses only private
-> storage and loopback networking.
+Existing SSTable components are immutable, so the tool permits reading or
+copying selected files even when Cassandra has them open. The isolated worker
+uses only private storage and loopback networking.
+
+> **DANGER:** Publishing newly generated SSTables into a running Cassandra
+> node's live table directory is different from reading existing components.
+> It can race with Cassandra lifecycle operations and damage or confuse the
+> node. Prefer a stopped node or a separate output directory.
+
+### Publish while Cassandra is running
+
+If direct CQLSH produces no new SSTables, no live-output confirmation is
+needed. If it does produce new SSTables and the publication directory belongs
+to a running Cassandra process, an interactive terminal displays the matched
+PID and directory and requires typing `yes`.
+
+For an intentional non-interactive workflow, acknowledge the same risk with
+`--allow-live-cassandra-output`:
+
+```shell
+sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
+  --output-dir /var/lib/cassandra/data/acme/users-7ad54392bcdd35a684174e047860b377 \
+  --schema /archive/acme-users.cql \
+  --allow-live-cassandra-output \
+  cqlsh --execute "$INSERT_CQL"
+```
+
+This option bypasses only the live-publication confirmation. It does not
+disable source inventory verification, output collision checks, or final
+publication verification.
 
 ## Command-Line Reference
 
@@ -253,6 +279,7 @@ CASSANDRA_LIB_DIR=<path> sstable-tools [tool options] <command>
 | `--output-format <format>` | `big` (default) or `bti`. Valid with direct `cqlsh` and `workspace create`; `bti` requires Cassandra 5.0. |
 | `--tmp-dir <path>` | Parent for private direct-CQLSH workspaces. Default: `/tmp/sstable-tools`. |
 | `--execute <cql>` | Run one CQL statement and exit. Valid with direct `cqlsh` and `workspace cqlsh`. |
+| `--allow-live-cassandra-output` | Bypass the confirmation before direct CQLSH publishes new SSTables into a directory owned by a running Cassandra process. Intended for explicit non-interactive acknowledgement. |
 | `--mode <mode>` | `delta` or `snapshot`; required by `workspace export`. |
 | `--output <path>` | Atomic publication destination; required by `workspace export`. |
 | `--confirm-workspace-id <uuid>` | Exact manifest UUID required by `workspace destroy`. |
@@ -320,6 +347,11 @@ classpath, and JAR identities. `runtime preflight` starts a separate worker JVM
 and verifies the Cassandra APIs required by that adapter before opening an
 SSTable.
 
+Stock `cqlsh` is resolved from `<cassandra-home>/bin/cqlsh` for tarball
+installations. For the DEB/RPM `/usr/share/cassandra` layout, the tool uses
+`/usr/bin/cqlsh` (or the equivalent path beneath an extracted package root).
+It does not select an unrelated `cqlsh` from `PATH`.
+
 Inspect runtime discovery without starting the worker:
 
 ```shell
@@ -374,12 +406,17 @@ the matching thin JAR and stock `cqlsh` direct workflow. It verifies `INSERT`,
 `UPDATE`, `SELECT`, flush, sibling publication, direct reopen, and unchanged
 source component hashes.
 
-| Artifact | Tested Cassandra patch | Java runtime | Direct output |
+| Artifact | Supported Cassandra patches | Java runtime | Direct output |
 |---|---:|---:|---|
 | `cassandra-3.11` | 3.11.19 | 8 | Big `me` |
-| `cassandra-4.0` | 4.0.17 | 8-11 | Big `nb` |
-| `cassandra-4.1` | 4.1.3 | 11 | Big `nb` |
+| `cassandra-4.0` | 4.0.0-4.0.18 | 8-11 | Big `nb` |
+| `cassandra-4.1` | 4.1.0-4.1.11 | 11 | Big `nb` |
 | `cassandra-5.0` | 5.0.4-5.0.8 | 17 | Big `oa`, BTI `da` |
+
+The 4.0 adapter compiles against the first patch in its release line. The 4.1
+adapter carries both native query-handler ABIs used across the 4.1 patch line.
+CI preflights the first patch and runs the full stopped-SSTable and stock-cqlsh
+workflow on the latest supported patch.
 
 The direct workflow intentionally has no `sstableloader`, streaming, clean-node
 import, or broad filesystem discovery.

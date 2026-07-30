@@ -80,6 +80,15 @@ public class ChildProcessLauncherTest {
         for (String argument : command) {
             Assert.assertFalse(argument.contains("jmxremote"));
         }
+
+        command = new ChildProcessLauncher(false).importedSandboxCommand(
+                installation, workspace,
+                UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"), 19042,
+                "system", "local", TimestampPolicy.AFTER_SOURCE, 987654321L);
+        Assert.assertTrue(command.contains("--sandbox-import"));
+        Assert.assertTrue(command.contains("-Dcassandra.start_native_transport=false"));
+        Assert.assertTrue(command.contains("-Dsstable.tools.workspace."
+                + "source-max-timestamp-micros=987654321"));
     }
 
     @Test

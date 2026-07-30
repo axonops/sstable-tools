@@ -10,9 +10,9 @@ classes are loaded only in a private worker process using that installation.
 | Cassandra | Java | Artifact |
 |---|---:|---|
 | 3.11.19 | 8 | `sstable-tools-cassandra-3.11-<version>.jar` |
-| 4.0.17 | 8-11 | `sstable-tools-cassandra-4.0-<version>.jar` |
-| 4.1.3 | 11 | `sstable-tools-cassandra-4.1-<version>.jar` |
-| 5.0.4 | 17 | `sstable-tools-cassandra-5.0-<version>.jar` |
+| 4.0.0-4.0.18 | 8-11 | `sstable-tools-cassandra-4.0-<version>.jar` |
+| 4.1.0-4.1.11 | 11 | `sstable-tools-cassandra-4.1-<version>.jar` |
+| 5.0.4-5.0.8 | 17 | `sstable-tools-cassandra-5.0-<version>.jar` |
 
 ## Install And Verify
 

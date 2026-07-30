@@ -463,8 +463,12 @@ The printed configuration also remains usable with the installed client
 directly:
 
 ```shell
-$CASSANDRA_HOME/bin/cqlsh --cqlshrc /workspace/state/cqlshrc HOST PORT
+${CASSANDRA_HOME}/bin/cqlsh --cqlshrc /workspace/state/cqlshrc HOST PORT
 ```
+
+For DEB and RPM installations rooted at `/usr/share/cassandra`, the equivalent
+stock client path is `/usr/bin/cqlsh`. The launcher recognizes both layouts and
+does not fall back to an unrelated executable from `PATH`.
 
 Example workflow:
 
@@ -754,13 +758,16 @@ The initial adapter compile contracts are:
 | Adapter | Cassandra compile dependency | Class-file target |
 |---|---:|---:|
 | 3.11 | 3.11.19 | Java 8 |
-| 4.0 | 4.0.17 | Java 8 |
-| 4.1 | 4.1.3 | Java 11 |
+| 4.0 | 4.0.0 | Java 8 |
+| 4.1 | 4.1.11 | Java 11 |
 | 5.0 | 5.0.4-5.0.8 | Java 17 |
 
 These pins prove build isolation; they are not the final installed patch support
 ranges. Runtime discovery and linkage tests must define and enforce those ranges
 before a release claims patch-level compatibility.
+
+The 4.1 adapter explicitly implements both `QueryHandler` ABIs used within the
+4.1 patch line and verifies the selected ABI during runtime preflight.
 
 `bootstrap`, `workspace-core`, and `worker-api` contain no Cassandra types and
 target Java 8. Each worker builds its supervisor/adapter and query guard against

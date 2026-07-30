@@ -90,7 +90,7 @@ public final class ChildProcessLauncher {
                                        boolean importBeforeStart) throws BootstrapException {
         List<String> command = importBeforeStart
                 ? importedSandboxCommand(installation, workspace, workspaceId, nativePort,
-                        keyspace, table, timestampPolicy)
+                        keyspace, table, timestampPolicy, sourceMaximumMicros)
                 : sandboxCommand(installation, workspace, workspaceId, nativePort,
                         keyspace, table, timestampPolicy, sourceMaximumMicros);
         ProcessBuilder builder = new ProcessBuilder(command);
@@ -323,7 +323,8 @@ public final class ChildProcessLauncher {
                                          int nativePort,
                                          String keyspace,
                                          String table,
-                                         TimestampPolicy timestampPolicy)
+                                         TimestampPolicy timestampPolicy,
+                                         long sourceMaximumMicros)
             throws BootstrapException {
         Path configuration = workspace.resolve(Cassandra311SandboxConfig.CONFIG_PATH);
         List<String> command = workerCommand(installation, workspace, configuration, false);
@@ -332,7 +333,8 @@ public final class ChildProcessLauncher {
         command.add("-Dsstable.tools.workspace.table=" + requireTarget(table, "table"));
         command.add("-Dsstable.tools.workspace.id=" + workspaceId);
         command.add("-Dsstable.tools.workspace.timestamp-policy=" + timestampPolicy.value());
-        command.add("-Dsstable.tools.workspace.source-max-timestamp-micros=0");
+        command.add("-Dsstable.tools.workspace.source-max-timestamp-micros="
+                + sourceMaximumMicros);
         command.add(WORKER_MAIN);
         command.add("--sandbox-import");
         command.add("--expected-version");

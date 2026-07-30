@@ -3,6 +3,8 @@ package com.axonops.sstable.worker.cassandra311;
 import com.axonops.sstable.worker.api.ImportOptions;
 import com.axonops.sstable.worker.api.ImportResult;
 import com.axonops.sstable.worker.api.ImportRuntimeAdapter;
+import com.axonops.sstable.worker.api.DirectSandboxRuntimeAdapter;
+import com.axonops.sstable.worker.api.ImportedSandbox;
 import com.axonops.sstable.worker.api.LinkageVerifier;
 import com.axonops.sstable.worker.api.SandboxHandle;
 import com.axonops.sstable.worker.api.SandboxOptions;
@@ -52,7 +54,8 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.FBUtilities;
 
 /** Isolated managed-daemon adapter compiled against Cassandra 3.11.19. */
-public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportRuntimeAdapter {
+public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportRuntimeAdapter,
+        DirectSandboxRuntimeAdapter {
     public Cassandra311Runtime() {
     }
 
@@ -68,7 +71,7 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
 
     @Override
     public SandboxHandle startSandbox(SandboxOptions options) throws Exception {
-        requireIsolationProperties(options.configurationFile(), true);
+        requireIsolationProperties(options.configurationFile(), true, true);
         DatabaseDescriptor.daemonInitialization();
         validateConfiguration(options.workspaceRoot(), true, options.nativePort());
 
@@ -105,7 +108,7 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
 
     @Override
     public ImportResult importSstables(ImportOptions options) throws Exception {
-        requireIsolationProperties(options.configurationFile(), false);
+        requireIsolationProperties(options.configurationFile(), false, false);
         DatabaseDescriptor.daemonInitialization();
         validateConfiguration(options.workspaceRoot(), false, -1);
 
@@ -129,6 +132,67 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
                 // to stop here.
                 StorageService.instance.drain();
             }
+        }
+    }
+
+    @Override
+    public ImportedSandbox importAndStart(ImportOptions importOptions, SandboxOptions options)
+            throws Exception {
+        if (!importOptions.workspaceRoot().equals(options.workspaceRoot())
+                || !importOptions.configurationFile().equals(options.configurationFile())
+                || !importOptions.workspaceId().equals(options.workspaceId())) {
+            throw new IllegalArgumentException("Direct sandbox import identity does not match");
+        }
+        String keyspace = System.getProperty(WorkspaceQueryHandler.KEYSPACE_PROPERTY);
+        if (!"system".equals(keyspace)) {
+            throw new IllegalArgumentException("Deferred Cassandra 3.11 import is limited to "
+                    + "system tables");
+        }
+
+        // The previous metadata import populated the private workspace only so the controller
+        // could validate the source identity. Remove that private copy before daemon startup:
+        // otherwise Cassandra compacts it together with its own system.local bootstrap state.
+        Cassandra311Importer.deleteImportedTableBeforeBootstrap(importOptions.workspaceRoot());
+        requireIsolationProperties(options.configurationFile(), false, true);
+        DatabaseDescriptor.daemonInitialization();
+        validateConfiguration(options.workspaceRoot(), false, options.nativePort());
+
+        CassandraDaemon daemon = new CassandraDaemon(true);
+        boolean activated = false;
+        try {
+            daemon.activate();
+            activated = true;
+            installLocalRingState();
+            daemon.startNativeTransport();
+            if (!daemon.isNativeTransportRunning()) {
+                throw new IllegalStateException("Cassandra 3.11 native transport did not start");
+            }
+            if (Gossiper.instance.isEnabled() || MessagingService.instance().isListening()) {
+                throw new IllegalStateException("Isolated Cassandra worker started internode "
+                        + "services");
+            }
+
+            // Import only after every Cassandra bootstrap write has completed. The importer
+            // removes the disposable bootstrap state, restores the selected source generation,
+            // and leaves automatic compaction disabled.
+            ImportResult result = Cassandra311Importer.run(importOptions);
+            ColumnFamilyStore cfs = Keyspace.open(result.keyspace())
+                    .getColumnFamilyStore(result.table());
+            List<ColumnFamilyStore> stores = Collections.singletonList(cfs);
+            CompactionManager.instance.waitForCessation(stores);
+            if (!cfs.isAutoCompactionDisabled()
+                    || CompactionManager.instance.isCompacting(stores)) {
+                throw new IllegalStateException("Workspace table compaction did not stop");
+            }
+            SandboxHandle handle = new Cassandra311SandboxHandle(daemon, options.nativePort(),
+                    options.workspaceRoot(), options.workspaceId(), installedVersion(),
+                    result.keyspace(), result.table(), result.tableDirectory(), cfs);
+            return new ImportedSandbox(result, handle);
+        } catch (Exception e) {
+            if (activated) {
+                daemon.stop();
+            }
+            throw e;
         }
     }
 
@@ -194,7 +258,8 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
     }
 
     private static void requireIsolationProperties(Path configurationFile,
-                                                   boolean startNativeTransport) {
+                                                   boolean startNativeTransport,
+                                                   boolean allowQueryGuard) {
         requireFalse("cassandra.start_gossip");
         requireFalse("cassandra.join_ring");
         requireFalse("cassandra.load_ring_state");
@@ -209,7 +274,7 @@ public final class Cassandra311Runtime implements SandboxRuntimeAdapter, ImportR
                 || System.getProperty("com.sun.management.jmxremote.port") != null) {
             throw new IllegalStateException("JMX must be disabled for the isolated worker");
         }
-        requireQueryGuard(startNativeTransport);
+        requireQueryGuard(startNativeTransport || allowQueryGuard);
         String configured = System.getProperty("cassandra.config");
         if (configured == null) {
             throw new IllegalStateException("cassandra.config is required");

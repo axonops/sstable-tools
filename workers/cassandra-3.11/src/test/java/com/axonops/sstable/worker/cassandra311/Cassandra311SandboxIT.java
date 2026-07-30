@@ -85,6 +85,25 @@ public class Cassandra311SandboxIT {
             production.stop();
         }
 
+        Path systemLocal = findGeneratedTable(productionRoot.resolve("data"),
+                "system", "local");
+        SourceInventory systemLocalBefore = SourceInventory.capture(
+                Collections.singletonList(systemLocal));
+        Path systemSchema = createSystemLocalSchemaBundle();
+        CommandResult systemRead = run(command(controllerJava(), toolJar,
+                "--cassandra-home", cassandraHome.toString(),
+                "--java-home", javaHome.toString(),
+                "--sstables", systemLocal.toString(),
+                "--schema", systemSchema.toString(),
+                "cqlsh", "--execute",
+                "SELECT key, cluster_name, release_version FROM system.local;"));
+        Assert.assertEquals(systemRead.output, 0, systemRead.exitCode);
+        Assert.assertTrue(systemRead.output,
+                systemRead.output.contains(Cassandra311ProductionFixture.CLUSTER_NAME));
+        Assert.assertTrue(systemRead.output,
+                systemRead.output.contains("published.sstables=none"));
+        systemLocalBefore.verifyUnchanged();
+
         Path sourceTable = findGeneratedTable(productionRoot.resolve("data"),
                 "stopped_source", "users");
         copyDirectory(sourceTable, source);
@@ -1662,6 +1681,33 @@ public class Cassandra311SandboxIT {
                 "  user_name text PRIMARY KEY,",
                 "  password text,",
                 "  state text",
+                ");"), StandardCharsets.UTF_8);
+        return schema;
+    }
+
+    private Path createSystemLocalSchemaBundle() throws IOException {
+        Path schema = temporary.newFile("schema-system-local.cql").toPath();
+        Files.write(schema, Arrays.asList(
+                "CREATE KEYSPACE system WITH replication = {'class': 'LocalStrategy'};",
+                "CREATE TABLE system.local (",
+                "  key text PRIMARY KEY,",
+                "  bootstrapped text,",
+                "  broadcast_address inet,",
+                "  cluster_name text,",
+                "  cql_version text,",
+                "  data_center text,",
+                "  gossip_generation int,",
+                "  host_id uuid,",
+                "  listen_address inet,",
+                "  native_protocol_version text,",
+                "  partitioner text,",
+                "  rack text,",
+                "  release_version text,",
+                "  rpc_address inet,",
+                "  schema_version uuid,",
+                "  thrift_version text,",
+                "  tokens set<text>,",
+                "  truncated_at map<uuid, blob>",
                 ");"), StandardCharsets.UTF_8);
         return schema;
     }

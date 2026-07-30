@@ -131,6 +131,60 @@ jobs:
         if: always()
         run: bash scripts/ci-test-summary | tee -a "$GITHUB_STEP_SUMMARY"
 
+  patch-line-floor:
+    name: Cassandra ${{ matrix.cassandra }} patch-line floor preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: '4.0'
+            cassandra: '4.0.0'
+            module: workers/cassandra-4.0
+            sha512: 94e923963531b97dbfcf90eb95e423abd9990fae02d1c9a90bf2d76ceb6cd9e422db628b9ec3a45994b3654f1f562f5df84718064722004ae8ba5b5abb11d0b6
+          - release: '4.1'
+            cassandra: '4.1.0'
+            module: workers/cassandra-4.1
+            sha512: d8cb800e99d8905e85a62d1d658c1c3056459e7ba0b27e0997e1c537918be8ab333f2a89cf38cafc04ab4d711fd8c542593548fb30bf6a81329f2b47370389e9
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Java 11
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '11'
+          cache: maven
+          cache-dependency-path: '**/pom.xml'
+
+      - name: Download Cassandra ${{ matrix.cassandra }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          ARCHIVE="apache-cassandra-${{ matrix.cassandra }}-bin.tar.gz"
+          curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+            --connect-timeout 30 --max-time 600 --remote-name \
+            "https://archive.apache.org/dist/cassandra/${{ matrix.cassandra }}/$ARCHIVE"
+          echo "${{ matrix.sha512 }}  $ARCHIVE" | sha512sum --check
+          tar -xzf "$ARCHIVE"
+          mv "apache-cassandra-${{ matrix.cassandra }}/conf/cassandra.yaml" \
+            "apache-cassandra-${{ matrix.cassandra }}/conf/cassandra.yaml.installation-not-used"
+
+      - name: Build matching adapter
+        run: >-
+          scripts/mvn-retry -B -ntp
+          -pl "${{ matrix.module }}" -am package -DskipTests
+
+      - name: Preflight oldest supported patch
+        run: >-
+          java -jar
+          "${{ matrix.module }}/target/sstable-tools-cassandra-${{ matrix.release }}-0.1.0-SNAPSHOT.jar"
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-${{ matrix.cassandra }}"
+          --java-home "$JAVA_HOME"
+          runtime preflight
+
   stopped-cqlsh-source:
     name: Cassandra ${{ matrix.release }} stopped stock-cqlsh source
     runs-on: ubuntu-latest
@@ -143,10 +197,10 @@ jobs:
             image: cassandra:3.11.19
             module: workers/cassandra-3.11
           - release: '4.0'
-            image: cassandra:4.0.17
+            image: cassandra:4.0.18
             module: workers/cassandra-4.0
           - release: '4.1'
-            image: cassandra:4.1.3
+            image: cassandra:4.1.11
             module: workers/cassandra-4.1
           - release: '5.0'
             image: cassandra:5.0.8
@@ -328,7 +382,7 @@ jobs:
             --output-version me
 
   cassandra-40-sandbox:
-    name: Cassandra 4.0.17 stopped-SSTable sandbox and cqlsh integration
+    name: Cassandra 4.0.18 stopped-SSTable sandbox and cqlsh integration
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -348,16 +402,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download pinned Cassandra 4.0.17 distribution
+      - name: Download pinned Cassandra 4.0.18 distribution
         working-directory: ${{ runner.temp }}
         run: |
           curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
             --connect-timeout 30 --max-time 600 --remote-name \
-            https://archive.apache.org/dist/cassandra/4.0.17/apache-cassandra-4.0.17-bin.tar.gz
-          echo '7f72941dd1c73e30361cc2aad55dabd7005e95f2275c9190645fd0467cac6da67f8602ffbae53fb98367cb67116b4e271b8293381d7d5041267ce2437e8273be  apache-cassandra-4.0.17-bin.tar.gz' | sha512sum --check
-          tar -xzf apache-cassandra-4.0.17-bin.tar.gz
-          mv apache-cassandra-4.0.17/conf/cassandra.yaml \
-            apache-cassandra-4.0.17/conf/cassandra.yaml.installation-not-used
+            https://archive.apache.org/dist/cassandra/4.0.18/apache-cassandra-4.0.18-bin.tar.gz
+          echo 'e9e4bb3149dce09b5f8dbe55d32892b147cdd13be7863851b0a1cb95113636e4433563e668759b49a8293c1cd766b331d27958f93331e9b3966951fc1c4681e6  apache-cassandra-4.0.18-bin.tar.gz' | sha512sum --check
+          tar -xzf apache-cassandra-4.0.18-bin.tar.gz
+          mv apache-cassandra-4.0.18/conf/cassandra.yaml \
+            apache-cassandra-4.0.18/conf/cassandra.yaml.installation-not-used
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
@@ -372,13 +426,13 @@ jobs:
           --expect-format me
           --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-40-import"
-          --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17"
+          --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.18"
           --java-home "$JAVA_HOME"
 
       - name: Mutate the imported SSTable through stock Cassandra 4.0 cqlsh
         run: |
           TOOL_JAR=workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar
-          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-4.0.17"
+          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-4.0.18"
           WORKSPACE="${{ runner.temp }}/cassandra-40-import/workspace"
           OUTPUT="${{ runner.temp }}/cassandra-40-import/export"
           java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
@@ -410,21 +464,30 @@ jobs:
         run: |
           scripts/ci-direct-cqlsh-rejections \
             --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar \
-            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.18" \
             --java-home "$JAVA_HOME" \
             --output-root "${{ runner.temp }}/cassandra-40-import" \
             --input-version me
           scripts/ci-direct-cqlsh \
             --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar \
-            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.18" \
             --java-home "$JAVA_HOME" \
           --output-root "${{ runner.temp }}/cassandra-40-import"
+
+      - name: Read and update a stopped Cassandra 4.0 system.local through stock cqlsh
+        run: >-
+          scripts/ci-system-local-cqlsh
+          --image cassandra:4.0.18
+          --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.18"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-40-system-local"
 
       - name: Migrate and mutate a legacy Cassandra 3.11 ma fixture through Cassandra 4.0
         run: >-
           scripts/ci-legacy-ma-cqlsh
           --tool-jar workers/cassandra-4.0/target/sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar
-          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.17"
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.0.18"
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-40-import"
 
@@ -435,10 +498,12 @@ jobs:
           name: cassandra-40-sandbox-diagnostics
           if-no-files-found: warn
           retention-days: 14
-          path: ${{ runner.temp }}/cassandra-40-import
+          path: |
+            ${{ runner.temp }}/cassandra-40-import
+            ${{ runner.temp }}/cassandra-40-system-local
 
   cassandra-41-import:
-    name: Cassandra 4.1.3 stopped-SSTable import integration
+    name: Cassandra 4.1.11 stopped-SSTable import integration
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -458,16 +523,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download pinned Cassandra 4.1.3 distribution
+      - name: Download pinned Cassandra 4.1.11 distribution
         working-directory: ${{ runner.temp }}
         run: |
           curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
             --connect-timeout 30 --max-time 600 --remote-name \
-            https://archive.apache.org/dist/cassandra/4.1.3/apache-cassandra-4.1.3-bin.tar.gz
-          echo '393443a5b9849645362df2f7536e734e1fc6d513aadf440fab8dda3063553394a138805098796d35f9d4d31e2899ecab630a2ec2a44d00d5e63bed549a2e844c  apache-cassandra-4.1.3-bin.tar.gz' | sha512sum --check
-          tar -xzf apache-cassandra-4.1.3-bin.tar.gz
-          mv apache-cassandra-4.1.3/conf/cassandra.yaml \
-            apache-cassandra-4.1.3/conf/cassandra.yaml.installation-not-used
+            https://archive.apache.org/dist/cassandra/4.1.11/apache-cassandra-4.1.11-bin.tar.gz
+          echo 'c31ead4e137774964818b3acfc2a16c329cce412ebb003baf447c3d453800a590d970cbe98641bd81539fd7a7fb8a1b6b569e5072c93fc2e18f40eaa638225be  apache-cassandra-4.1.11-bin.tar.gz' | sha512sum --check
+          tar -xzf apache-cassandra-4.1.11-bin.tar.gz
+          mv apache-cassandra-4.1.11/conf/cassandra.yaml \
+            apache-cassandra-4.1.11/conf/cassandra.yaml.installation-not-used
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
@@ -482,13 +547,13 @@ jobs:
           --expect-format me
           --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
           --output-root "${{ runner.temp }}/cassandra-41-import"
-          --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3"
+          --import-cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.11"
           --java-home "$JAVA_HOME"
 
       - name: Mutate the imported SSTable through stock Cassandra 4.1 cqlsh
         run: |
           TOOL_JAR=workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
-          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-4.1.3"
+          CASSANDRA_HOME="${{ runner.temp }}/apache-cassandra-4.1.11"
           WORKSPACE="${{ runner.temp }}/cassandra-41-import/workspace"
           OUTPUT="${{ runner.temp }}/cassandra-41-import/export"
           java -jar "$TOOL_JAR" --cassandra-home "$CASSANDRA_HOME" --java-home "$JAVA_HOME" \
@@ -520,21 +585,30 @@ jobs:
         run: |
           scripts/ci-direct-cqlsh-rejections \
             --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar \
-            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.11" \
             --java-home "$JAVA_HOME" \
             --output-root "${{ runner.temp }}/cassandra-41-import" \
             --input-version me
           scripts/ci-direct-cqlsh \
             --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar \
-            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3" \
+            --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.11" \
             --java-home "$JAVA_HOME" \
           --output-root "${{ runner.temp }}/cassandra-41-import"
+
+      - name: Read and update a stopped Cassandra 4.1 system.local through stock cqlsh
+        run: >-
+          scripts/ci-system-local-cqlsh
+          --image cassandra:4.1.11
+          --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.11"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-41-system-local"
 
       - name: Migrate and mutate a legacy Cassandra 3.11 ma fixture through Cassandra 4.1
         run: >-
           scripts/ci-legacy-ma-cqlsh
           --tool-jar workers/cassandra-4.1/target/sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar
-          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.3"
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-4.1.11"
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-41-import"
 
@@ -545,7 +619,9 @@ jobs:
           name: cassandra-41-import-diagnostics
           if-no-files-found: warn
           retention-days: 14
-          path: ${{ runner.temp }}/cassandra-41-import
+          path: |
+            ${{ runner.temp }}/cassandra-41-import
+            ${{ runner.temp }}/cassandra-41-system-local
 
   cassandra-50-import:
     name: Cassandra 5.0.8 stopped-SSTable import integration

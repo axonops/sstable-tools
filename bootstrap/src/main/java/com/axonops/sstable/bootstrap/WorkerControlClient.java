@@ -130,13 +130,26 @@ final class WorkerControlClient {
             String response = new BufferedReader(new InputStreamReader(socket.getInputStream(),
                     StandardCharsets.US_ASCII)).readLine();
             if (response == null || response.length() > 1024) {
-                throw new WorkspaceException("Worker returned an invalid control response");
+                throw invalidControlResponse(repository, endpoint);
             }
             return response;
         } catch (IOException e) {
             throw new WorkspaceException("Cannot contact worker control endpoint at "
                     + endpoint.controlAddress() + ":" + endpoint.controlPort(), e);
         }
+    }
+
+    private static WorkspaceException invalidControlResponse(WorkspaceRepository repository,
+                                                             WorkerEndpoint endpoint) {
+        try {
+            WorkerEndpoint current = readEndpoint(repository, endpoint.workspaceId());
+            if (current.status() == WorkerEndpoint.Status.FAILED) {
+                return new WorkspaceException("Worker failed: " + current.message());
+            }
+        } catch (WorkspaceException ignored) {
+            // Preserve the control-protocol failure when endpoint diagnostics are unavailable.
+        }
+        return new WorkspaceException("Worker returned an invalid control response");
     }
 
     private static String readToken(WorkspaceRepository repository)

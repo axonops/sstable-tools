@@ -8,6 +8,7 @@ import org.apache.cassandra.db.marshal.FloatType;
 import org.apache.cassandra.db.marshal.VectorType;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.SequenceBasedSSTableId;
+import org.apache.cassandra.io.sstable.SequenceBasedSSTableId.Builder;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -85,6 +86,17 @@ public class Cassandra50RuntimeTest {
 
         Assert.assertEquals(source.id, staged.id);
         Assert.assertEquals("da-41-bti", staged.baseFile().name());
+    }
+
+    @Test
+    public void advancesSequenceGeneratorPastImportedSourceIdentifier() throws Exception {
+        java.util.function.Supplier<SequenceBasedSSTableId> generator =
+                Builder.instance.generator(java.util.stream.Stream.of(
+                        new SequenceBasedSSTableId(7)));
+
+        Cassandra50Importer.advanceSequenceGenerator(generator, 41);
+
+        Assert.assertEquals(42, generator.get().generation);
     }
 
     private static void assertUnsupported(String version, String format) {

@@ -63,8 +63,7 @@ final class CqlshLauncher {
                          WorkerEndpoint endpoint,
                          Path cqlshrc,
                          String executeCql) throws BootstrapException {
-        Path executable = installation.home().resolve("bin/cqlsh");
-        requireExecutable(executable);
+        Path executable = findExecutable(installation.home());
         requireOwnerOnlyCredential(cqlshrc);
         if (endpoint.status() != WorkerEndpoint.Status.RUNNING
                 || !"127.0.0.1".equals(endpoint.nativeAddress())) {
@@ -84,14 +83,40 @@ final class CqlshLauncher {
         return Collections.unmodifiableList(command);
     }
 
-    private static void requireExecutable(Path executable) throws BootstrapException {
-        if (Files.isSymbolicLink(executable)
-                || !Files.isRegularFile(executable, LinkOption.NOFOLLOW_LINKS)
-                || !Files.isExecutable(executable)) {
-            throw new BootstrapException(BootstrapException.DISCOVERY_EXIT_CODE,
-                    "Selected Cassandra installation has no executable bin/cqlsh: "
-                            + executable);
+    private static Path findExecutable(Path home) throws BootstrapException {
+        List<Path> candidates = new ArrayList<>();
+        candidates.add(home.resolve("bin/cqlsh"));
+        Path packaged = packagedExecutable(home);
+        if (packaged != null) {
+            candidates.add(packaged);
         }
+        for (Path candidate : candidates) {
+            if (!Files.isSymbolicLink(candidate)
+                    && Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)
+                    && Files.isExecutable(candidate)) {
+                return candidate;
+            }
+        }
+        throw new BootstrapException(BootstrapException.DISCOVERY_EXIT_CODE,
+                "Selected Cassandra installation has no safe executable cqlsh; checked "
+                        + candidates);
+    }
+
+    private static Path packagedExecutable(Path home) {
+        Path share = home.getParent();
+        Path usr = share == null ? null : share.getParent();
+        if (usr == null
+                || !"cassandra".equals(fileName(home))
+                || !"share".equals(fileName(share))
+                || !"usr".equals(fileName(usr))) {
+            return null;
+        }
+        return usr.resolve("bin/cqlsh");
+    }
+
+    private static String fileName(Path path) {
+        Path name = path.getFileName();
+        return name == null ? "" : name.toString();
     }
 
     private static void requireOwnerOnlyCredential(Path cqlshrc) throws BootstrapException {
