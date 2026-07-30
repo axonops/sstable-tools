@@ -56,29 +56,20 @@ immutable releases cannot be modified and fail with an explicit error instead.
 
 ## Google Artifact Registry publication
 
-Configure these GitHub repository secrets before running a release:
+Configure this GitHub repository secret before running a release:
 
 ```text
 GCP_CREDENTIALS
-GCP_PROJECT_ID
-GCP_APT_REPOSITORY
-GCP_YUM_REPOSITORY
 ```
 
 `GCP_CREDENTIALS` contains the complete Google service-account JSON key. The
-service account must be able to list or describe the configured repositories
-and upload Apt and Yum artifacts. Repository secrets may contain a short
-repository ID, a fully qualified resource, or a standard `pkg.dev` URL:
+service account must be able to upload Apt and Yum artifacts to these fixed
+destinations:
 
 ```text
-projects/PROJECT/locations/LOCATION/repositories/REPOSITORY
-https://LOCATION-apt.pkg.dev/projects/PROJECT/REPOSITORY
-https://LOCATION-yum.pkg.dev/projects/PROJECT/REPOSITORY
+https://europe-apt.pkg.dev/projects/axonops-public/axonops-apt
+https://europe-yum.pkg.dev/projects/axonops-public/axonops-yum
 ```
-
-Short IDs are resolved across all locations in `GCP_PROJECT_ID` and must match
-exactly one repository with the expected format. Fully qualified resources are
-recommended when IAM access is scoped to individual repositories.
 
 The upload runs only after package verification and the release security gate
 have passed. A failed Artifact Registry upload blocks GitHub Release

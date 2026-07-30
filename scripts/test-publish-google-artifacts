@@ -24,16 +24,6 @@ done
 printf '\n' >>"$MOCK_GCLOUD_LOG"
 
 case "${1:-} ${2:-} ${3:-}" in
-  "artifacts repositories list")
-    printf '%b' "${MOCK_REPOSITORIES:-}"
-    ;;
-  "artifacts repositories describe")
-    case "${4:-}" in
-      apt-private) printf 'APT\n' ;;
-      yum-private) printf 'YUM\n' ;;
-      *) exit 2 ;;
-    esac
-    ;;
   "artifacts apt upload"|"artifacts yum upload")
     ;;
   *)
@@ -43,71 +33,21 @@ esac
 EOF
 chmod 0755 "$fake_bin/gcloud"
 
-publish() {
-  local apt_repository=$1
-  local yum_repository=$2
-  local log=$3
-  MOCK_GCLOUD_LOG="$log" \
-    MOCK_REPOSITORIES="${MOCK_REPOSITORIES:-}" \
-    PATH="$fake_bin:$PATH" \
-    "$root_dir/scripts/publish-google-artifacts" \
-      --project axonops-artifacts \
-      --apt-repository "$apt_repository" \
-      --yum-repository "$yum_repository" \
-      --release-dir "$release_dir"
-}
+publish_log="$temporary/publish.log"
+MOCK_GCLOUD_LOG="$publish_log" \
+  PATH="$fake_bin:$PATH" \
+  "$root_dir/scripts/publish-google-artifacts" \
+    --release-dir "$release_dir"
 
-short_log="$temporary/short.log"
-MOCK_REPOSITORIES=$'projects/axonops-artifacts/locations/europe-west2/repositories/apt-private\tAPT\nprojects/axonops-artifacts/locations/europe-west2/repositories/yum-private\tYUM\n' \
-  publish apt-private yum-private "$short_log"
-grep -Fq 'artifacts apt upload apt-private' "$short_log"
-grep -Fq 'artifacts yum upload yum-private' "$short_log"
-grep -Fq -- '--location=europe-west2' "$short_log"
-grep -Fq "$release_dir/sstable-tools_1.2.3-1_all.deb" "$short_log"
-grep -Fq "$release_dir/sstable-tools-1.2.3-1.noarch.rpm" "$short_log"
+grep -Fq 'artifacts apt upload axonops-apt' "$publish_log"
+grep -Fq 'artifacts yum upload axonops-yum' "$publish_log"
+grep -Fq -- '--project=axonops-public' "$publish_log"
+grep -Fq -- '--location=europe' "$publish_log"
+grep -Fq "$release_dir/sstable-tools_1.2.3-1_all.deb" "$publish_log"
+grep -Fq "$release_dir/sstable-tools-1.2.3-1.noarch.rpm" "$publish_log"
 
-resource_log="$temporary/resource.log"
-publish \
-  projects/axonops-artifacts/locations/us/repositories/apt-private \
-  projects/axonops-artifacts/locations/us/repositories/yum-private \
-  "$resource_log"
-grep -Fq 'artifacts repositories describe apt-private' "$resource_log"
-grep -Fq 'artifacts repositories describe yum-private' "$resource_log"
-grep -Fq -- '--location=us' "$resource_log"
-
-url_log="$temporary/url.log"
-publish \
-  https://europe-apt.pkg.dev/projects/axonops-artifacts/apt-private \
-  https://europe-yum.pkg.dev/projects/axonops-artifacts/yum-private \
-  "$url_log"
-grep -Fq 'artifacts repositories describe apt-private' "$url_log"
-grep -Fq 'artifacts repositories describe yum-private' "$url_log"
-grep -Fq 'artifacts apt upload apt-private' "$url_log"
-grep -Fq 'artifacts yum upload yum-private' "$url_log"
-grep -Fq -- '--location=europe' "$url_log"
-
-wrong_url_format_log="$temporary/wrong-url-format.log"
-: >"$wrong_url_format_log"
-if publish \
-    https://europe-yum.pkg.dev/projects/axonops-artifacts/apt-private \
-    https://europe-yum.pkg.dev/projects/axonops-artifacts/yum-private \
-    "$wrong_url_format_log"; then
-  printf 'Yum URL was unexpectedly accepted for an Apt repository\n' >&2
-  exit 1
-fi
-if grep -Fq 'artifacts apt upload' "$wrong_url_format_log"; then
-  printf 'Wrong-format repository URL reached package upload\n' >&2
-  exit 1
-fi
-
-ambiguous_log="$temporary/ambiguous.log"
-if MOCK_REPOSITORIES=$'projects/axonops-artifacts/locations/us/repositories/apt-private\tAPT\nprojects/axonops-artifacts/locations/eu/repositories/apt-private\tAPT\nprojects/axonops-artifacts/locations/eu/repositories/yum-private\tYUM\n' \
-    publish apt-private yum-private "$ambiguous_log"; then
-  printf 'Ambiguous repository identifier was unexpectedly accepted\n' >&2
-  exit 1
-fi
-if grep -Fq 'artifacts apt upload' "$ambiguous_log"; then
-  printf 'Ambiguous repository reached package upload\n' >&2
+if grep -Fq 'artifacts repositories' "$publish_log"; then
+  printf 'Publisher unexpectedly queried Artifact Registry repositories\n' >&2
   exit 1
 fi
 
