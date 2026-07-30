@@ -527,11 +527,12 @@ manually with an explicit stable version for release testing or recovery.
 
 Google Artifact Registry publication requires the `GCP_CREDENTIALS`,
 `GCP_PROJECT_ID`, `GCP_APT_REPOSITORY`, and `GCP_YUM_REPOSITORY` repository
-secrets. Repository values may be either a repository ID or a fully qualified
-resource such as
-`projects/PROJECT/locations/LOCATION/repositories/REPOSITORY`. A short ID is
-resolved across the configured project and must identify exactly one repository
-of the appropriate Apt or Yum format.
+secrets. Repository values may be a repository ID, a fully qualified resource,
+or the standard `pkg.dev` repository URL, such as
+`projects/PROJECT/locations/LOCATION/repositories/REPOSITORY` or
+`https://LOCATION-apt.pkg.dev/projects/PROJECT/REPOSITORY`. A short ID is
+resolved across the configured project and must identify exactly one
+repository of the appropriate Apt or Yum format.
 
 See the [release guide](docs/releasing.md) for the complete artifact list and
 package-revision details.
