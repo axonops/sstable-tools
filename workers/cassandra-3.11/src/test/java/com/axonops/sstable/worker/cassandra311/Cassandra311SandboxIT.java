@@ -62,7 +62,7 @@ public class Cassandra311SandboxIT {
                 cassandraHome, javaHome, productionRoot);
         try {
             CommandResult seed = runCqlsh(Arrays.asList(cqlsh.toString(), "127.0.0.1",
-                    Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT), "-e",
+                    Integer.toString(production.nativePort()), "-e",
                     "CREATE KEYSPACE stopped_source WITH replication = {'class': "
                             + "'SimpleStrategy', 'replication_factor': 1}; "
                             + "CREATE TABLE stopped_source.users ("
@@ -74,7 +74,7 @@ public class Cassandra311SandboxIT {
             Assert.assertEquals(seed.output, 0, seed.exitCode);
 
             CommandResult selected = runCqlsh(Arrays.asList(cqlsh.toString(), "127.0.0.1",
-                    Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT), "-e",
+                    Integer.toString(production.nativePort()), "-e",
                     "SELECT user_name, password, state FROM stopped_source.users;"));
             Assert.assertEquals(selected.output, 0, selected.exitCode);
             Assert.assertTrue(selected.output, selected.output.contains("source-user"));
@@ -185,29 +185,30 @@ public class Cassandra311SandboxIT {
         Map<String, String> installationBefore = fileMetadata(cassandraHome);
         Cassandra311ProductionFixture production = Cassandra311ProductionFixture.start(
                 cassandraHome, javaHome, productionRoot);
-        Path cqlsh = cassandraHome.resolve("bin/cqlsh");
-        assertProductionVersion(cqlsh);
-        assertProductionIsolated(cqlsh, "before worker startup");
-
-        Path liveSource = Files.createDirectories(
-                productionRoot.resolve("data/live-source"));
-        copySstableFixtures(fixtureDirectory, liveSource, "ma-2-big-");
-        Path rejectedLiveWorkspace = temporary.getRoot().toPath().resolve(
-                "live-source-workspace");
-        CommandResult rejectedLiveSource = run(command(controllerJava(), toolJar,
-                "workspace", "create", rejectedLiveWorkspace.toString(),
-                "--sstables", liveSource.toString(), "--schema", schema.toString()));
-        Assert.assertNotEquals(rejectedLiveSource.output, 0, rejectedLiveSource.exitCode);
-        Assert.assertTrue(rejectedLiveSource.output,
-                rejectedLiveSource.output.contains("active Cassandra process"));
-        Assert.assertTrue(rejectedLiveSource.output,
-                rejectedLiveSource.output.contains("outside every live Cassandra data"));
-        Assert.assertFalse("Live-source rejection left workspace artifacts",
-                Files.exists(rejectedLiveWorkspace));
-
         CommandResult start = null;
         boolean workerRunning = false;
         try {
+            Path cqlsh = cassandraHome.resolve("bin/cqlsh");
+            assertProductionVersion(cqlsh, production);
+            assertProductionIsolated(cqlsh, production, "before worker startup");
+
+            Path liveSource = Files.createDirectories(
+                    productionRoot.resolve("data/live-source"));
+            copySstableFixtures(fixtureDirectory, liveSource, "ma-2-big-");
+            SourceInventory capturedLiveSource = SourceInventory.capture(
+                    Collections.singletonList(liveSource));
+            Path liveWorkspace = temporary.getRoot().toPath().resolve(
+                    "live-source-workspace");
+            CommandResult acceptedLiveSource = run(command(controllerJava(), toolJar,
+                    "workspace", "create", liveWorkspace.toString(),
+                    "--sstables", liveSource.toString(), "--schema", schema.toString()));
+            Assert.assertEquals(acceptedLiveSource.output, 0, acceptedLiveSource.exitCode);
+            Assert.assertTrue(acceptedLiveSource.output,
+                    acceptedLiveSource.output.contains("workspace.state=VALIDATED"));
+            capturedLiveSource.verifyUnchanged();
+            production.assertRunning("Live-source workspace creation affected production "
+                    + "Cassandra");
+
             long futureTimestampMicros = System.currentTimeMillis() * 1000L
                     + TimeUnit.DAYS.toMicros(365);
             Path futureSource = createFutureSstableSource(cassandraHome, javaHome,
@@ -391,7 +392,7 @@ public class Cassandra311SandboxIT {
                     WorkspaceRepository.open(workspace).load().schemaIdentity().get(
                             "source.max-timestamp-micros"));
             production.assertRunning("Worker import affected production Cassandra");
-            assertProductionIsolated(cqlsh, "after worker import");
+            assertProductionIsolated(cqlsh, production, "after worker import");
 
             start = run(command(controllerJava(), toolJar,
                     "--cassandra-home", cassandraHome.toString(),
@@ -516,7 +517,7 @@ public class Cassandra311SandboxIT {
 
             WorkerEndpoint firstEndpoint = WorkerEndpoint.read(
                     workspace.resolve("state/worker.properties"));
-            assertWorkerEndpoint(firstEndpoint, nativeEndpoint);
+            assertWorkerEndpoint(firstEndpoint, nativeEndpoint, production);
             Path jcmd = javaHome.resolve("bin/jcmd");
             Assert.assertTrue("Selected Cassandra JDK has no jcmd: " + jcmd,
                     Files.isRegularFile(jcmd));
@@ -530,7 +531,7 @@ public class Cassandra311SandboxIT {
             waitForProcessExit(firstEndpoint.pid());
             workerRunning = false;
             production.assertRunning("Worker SIGKILL affected production Cassandra");
-            assertProductionIsolated(cqlsh, "after worker SIGKILL");
+            assertProductionIsolated(cqlsh, production, "after worker SIGKILL");
 
             CommandResult failedStatus = run(command(controllerJava(), toolJar,
                     "workspace", "status", workspace.toString()));
@@ -558,7 +559,7 @@ public class Cassandra311SandboxIT {
             Assert.assertNotEquals(credentials.password, restartedCredentials.password);
             WorkerEndpoint restartedEndpoint = WorkerEndpoint.read(
                     workspace.resolve("state/worker.properties"));
-            assertWorkerEndpoint(restartedEndpoint, nativeEndpoint);
+            assertWorkerEndpoint(restartedEndpoint, nativeEndpoint, production);
             CommandResult replayed = runCqlsh(cqlshCommand(cqlsh, nativeEndpoint, cqlshrc,
                     "SELECT user_name, password FROM blog.users;"));
             Assert.assertEquals(replayed.output, 0, replayed.exitCode);
@@ -718,7 +719,7 @@ public class Cassandra311SandboxIT {
             workerRunning = false;
             Assert.assertFalse(Files.exists(cqlshrc));
             production.assertRunning("Graceful worker stop affected production Cassandra");
-            assertProductionIsolated(cqlsh, "after graceful worker stop");
+            assertProductionIsolated(cqlsh, production, "after graceful worker stop");
 
             Path replayWorkspace = temporary.newFolder("delta-replay-workspace").toPath();
             Path deltaSstables = deltaExport.resolve("sstables");
@@ -771,7 +772,7 @@ public class Cassandra311SandboxIT {
             }
             capturedDelta.verifyUnchanged();
             production.assertRunning("Delta replay affected production Cassandra");
-            assertProductionIsolated(cqlsh, "after base-plus-delta replay");
+            assertProductionIsolated(cqlsh, production, "after base-plus-delta replay");
 
             capturedSource.verifyUnchanged();
             capturedDelta.verifyUnchanged();
@@ -797,18 +798,22 @@ public class Cassandra311SandboxIT {
                 fileMetadata(cassandraHome));
     }
 
-    private static void assertProductionVersion(Path cqlsh) throws Exception {
+    private static void assertProductionVersion(Path cqlsh,
+                                                Cassandra311ProductionFixture production)
+            throws Exception {
         CommandResult version = runCqlsh(Arrays.asList(cqlsh.toString(), "127.0.0.1",
-                Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT), "-e",
+                Integer.toString(production.nativePort()), "-e",
                 "SHOW VERSION"));
         Assert.assertEquals(version.output, 0, version.exitCode);
         Assert.assertTrue(version.output, version.output.contains("Cassandra 3.11.19"));
         Assert.assertTrue(version.output, version.output.contains("Native protocol v4"));
     }
 
-    private static void assertProductionIsolated(Path cqlsh, String phase) throws Exception {
+    private static void assertProductionIsolated(Path cqlsh,
+                                                 Cassandra311ProductionFixture production,
+                                                 String phase) throws Exception {
         CommandResult query = runCqlsh(Arrays.asList(cqlsh.toString(), "127.0.0.1",
-                Integer.toString(Cassandra311ProductionFixture.NATIVE_PORT), "-e",
+                Integer.toString(production.nativePort()), "-e",
                 "SELECT cluster_name FROM system.local; SELECT peer FROM system.peers;"));
         Assert.assertEquals(phase + ":\n" + query.output, 0, query.exitCode);
         Assert.assertTrue(phase + ":\n" + query.output,
@@ -818,19 +823,16 @@ public class Cassandra311SandboxIT {
     }
 
     private static void assertWorkerEndpoint(WorkerEndpoint endpoint,
-                                             String[] reportedNativeEndpoint) {
+                                             String[] reportedNativeEndpoint,
+                                             Cassandra311ProductionFixture production) {
         Assert.assertEquals("127.0.0.1", endpoint.nativeAddress());
         Assert.assertEquals("127.0.0.1", endpoint.controlAddress());
         Assert.assertEquals(reportedNativeEndpoint[0], endpoint.nativeAddress());
         Assert.assertEquals(Integer.parseInt(reportedNativeEndpoint[1]), endpoint.nativePort());
-        Assert.assertNotEquals(Cassandra311ProductionFixture.STORAGE_PORT,
-                endpoint.nativePort());
-        Assert.assertNotEquals(Cassandra311ProductionFixture.NATIVE_PORT,
-                endpoint.nativePort());
-        Assert.assertNotEquals(Cassandra311ProductionFixture.STORAGE_PORT,
-                endpoint.controlPort());
-        Assert.assertNotEquals(Cassandra311ProductionFixture.NATIVE_PORT,
-                endpoint.controlPort());
+        Assert.assertNotEquals(production.storagePort(), endpoint.nativePort());
+        Assert.assertNotEquals(production.nativePort(), endpoint.nativePort());
+        Assert.assertNotEquals(production.storagePort(), endpoint.controlPort());
+        Assert.assertNotEquals(production.nativePort(), endpoint.controlPort());
         Assert.assertNotEquals(endpoint.nativePort(), endpoint.controlPort());
     }
 
