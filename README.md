@@ -505,7 +505,9 @@ The [Release workflow](.github/workflows/release.yml) validates the tag, builds
 and tests every adapter with that exact Maven revision, rejects mismatched
 embedded JAR versions, creates and extracts both Linux packages, verifies their
 payloads and checksums, runs the release security gate, and publishes the
-resulting directory as a workflow artifact and GitHub Release.
+resulting directory as a workflow artifact and GitHub Release. After the
+security gate passes, it also publishes the DEB and RPM to the configured
+Google Artifact Registry Apt and Yum repositories.
 
 The security gate scans the built release with ClamAV, analyzes Java source with
 CodeQL `security-extended`, checks source secrets and configuration with Trivy,
@@ -522,6 +524,14 @@ tool metadata, ClamAV logs, CodeQL SARIF, Trivy JSON, and Maven dependency trees
 If the `RELEASE_GPG_PRIVATE_KEY` repository secret is configured, the workflow
 imports it and signs the final checksum file. The workflow can also be started
 manually with an explicit stable version for release testing or recovery.
+
+Google Artifact Registry publication requires the `GCP_CREDENTIALS`,
+`GCP_PROJECT_ID`, `GCP_APT_REPOSITORY`, and `GCP_YUM_REPOSITORY` repository
+secrets. Repository values may be either a repository ID or a fully qualified
+resource such as
+`projects/PROJECT/locations/LOCATION/repositories/REPOSITORY`. A short ID is
+resolved across the configured project and must identify exactly one repository
+of the appropriate Apt or Yum format.
 
 See the [release guide](docs/releasing.md) for the complete artifact list and
 package-revision details.

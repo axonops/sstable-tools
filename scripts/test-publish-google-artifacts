@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+temporary="$(mktemp -d)"
+cleanup() {
+  rm -rf -- "$temporary"
+}
+trap cleanup EXIT
+
+fake_bin="$temporary/bin"
+release_dir="$temporary/release/sstable-tools-1.2.3"
+mkdir -p "$fake_bin" "$release_dir"
+printf 'deb\n' >"$release_dir/sstable-tools_1.2.3-1_all.deb"
+printf 'rpm\n' >"$release_dir/sstable-tools-1.2.3-1.noarch.rpm"
+
+cat >"$fake_bin/gcloud" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+for argument in "$@"; do
+  printf '%q ' "$argument" >>"$MOCK_GCLOUD_LOG"
+done
+printf '\n' >>"$MOCK_GCLOUD_LOG"
+
+case "${1:-} ${2:-} ${3:-}" in
+  "artifacts repositories list")
+    printf '%b' "${MOCK_REPOSITORIES:-}"
+    ;;
+  "artifacts repositories describe")
+    case "${4:-}" in
+      apt-private) printf 'APT\n' ;;
+      yum-private) printf 'YUM\n' ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  "artifacts apt upload"|"artifacts yum upload")
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF
+chmod 0755 "$fake_bin/gcloud"
+
+publish() {
+  local apt_repository=$1
+  local yum_repository=$2
+  local log=$3
+  MOCK_GCLOUD_LOG="$log" \
+    MOCK_REPOSITORIES="${MOCK_REPOSITORIES:-}" \
+    PATH="$fake_bin:$PATH" \
+    "$root_dir/scripts/publish-google-artifacts" \
+      --project axonops-artifacts \
+      --apt-repository "$apt_repository" \
+      --yum-repository "$yum_repository" \
+      --release-dir "$release_dir"
+}
+
+short_log="$temporary/short.log"
+MOCK_REPOSITORIES=$'projects/axonops-artifacts/locations/europe-west2/repositories/apt-private\tAPT\nprojects/axonops-artifacts/locations/europe-west2/repositories/yum-private\tYUM\n' \
+  publish apt-private yum-private "$short_log"
+grep -Fq 'artifacts apt upload apt-private' "$short_log"
+grep -Fq 'artifacts yum upload yum-private' "$short_log"
+grep -Fq -- '--location=europe-west2' "$short_log"
+grep -Fq "$release_dir/sstable-tools_1.2.3-1_all.deb" "$short_log"
+grep -Fq "$release_dir/sstable-tools-1.2.3-1.noarch.rpm" "$short_log"
+
+resource_log="$temporary/resource.log"
+publish \
+  projects/axonops-artifacts/locations/us/repositories/apt-private \
+  projects/axonops-artifacts/locations/us/repositories/yum-private \
+  "$resource_log"
+grep -Fq 'artifacts repositories describe apt-private' "$resource_log"
+grep -Fq 'artifacts repositories describe yum-private' "$resource_log"
+grep -Fq -- '--location=us' "$resource_log"
+
+ambiguous_log="$temporary/ambiguous.log"
+if MOCK_REPOSITORIES=$'projects/axonops-artifacts/locations/us/repositories/apt-private\tAPT\nprojects/axonops-artifacts/locations/eu/repositories/apt-private\tAPT\nprojects/axonops-artifacts/locations/eu/repositories/yum-private\tYUM\n' \
+    publish apt-private yum-private "$ambiguous_log"; then
+  printf 'Ambiguous repository identifier was unexpectedly accepted\n' >&2
+  exit 1
+fi
+if grep -Fq 'artifacts apt upload' "$ambiguous_log"; then
+  printf 'Ambiguous repository reached package upload\n' >&2
+  exit 1
+fi
+
+printf 'Google Artifact Registry publication tests passed\n'

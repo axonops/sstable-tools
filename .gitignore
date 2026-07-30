@@ -15,6 +15,7 @@ hs_err_pid*
 # Maven artifacts
 
 target/
+gha-creds-*.json
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup
