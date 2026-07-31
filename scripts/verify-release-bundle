@@ -68,6 +68,40 @@ for release_line in 3.11 4.0 4.1 5.0; do
   }
 done
 
+package_home="$temporary/cassandra-package"
+package_lib="$package_home/lib"
+mkdir -p "$package_lib"
+touch "$package_home/apache-cassandra-5.0.99.jar"
+ln -s apache-cassandra-5.0.99.jar "$package_home/apache-cassandra.jar"
+touch "$package_lib/dependency.jar"
+capture_java="$temporary/capture-java"
+capture_args="$temporary/capture-args"
+# The generated script, rather than this verifier, expands its arguments.
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/bin/sh' \
+  'printf "%s\\n" "$@" >"$SSTABLE_TOOLS_CAPTURE_ARGS"' \
+  >"$capture_java"
+chmod 0755 "$capture_java"
+
+SSTABLE_TOOLS_JAVA="$capture_java" \
+SSTABLE_TOOLS_CAPTURE_ARGS="$capture_args" \
+  "$release_dir/sstable-tools" \
+  --cassandra-lib-dir "$package_home" --version
+grep -Fxq -- "$package_home" "$capture_args" || {
+  printf 'Package-layout Cassandra home was not forwarded from its root\n' >&2
+  exit 1
+}
+
+SSTABLE_TOOLS_JAVA="$capture_java" \
+SSTABLE_TOOLS_CAPTURE_ARGS="$capture_args" \
+  "$release_dir/sstable-tools" \
+  --cassandra-lib-dir "$package_lib" --version
+grep -Fxq -- "$package_home" "$capture_args" || {
+  printf 'Package-layout Cassandra home was not derived from its lib child\n' >&2
+  exit 1
+}
+
 unsupported_lib="$temporary/cassandra-unsupported/lib"
 mkdir -p "$unsupported_lib"
 touch "$unsupported_lib/apache-cassandra-6.0.0.jar"

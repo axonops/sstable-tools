@@ -6,13 +6,15 @@ usage() {
 Usage: sstable-tools [--cassandra-lib-dir <path>] [tool options] <command>
 
 Selects the matching SSTable Tools adapter from a Cassandra core JAR named
-apache-cassandra-<version>.jar or cassandra-all-<version>.jar.
+apache-cassandra-<version>.jar or cassandra-all-<version>.jar. The path may be
+a tarball lib directory or a packaged Cassandra root such as
+/usr/share/cassandra; both the root and its lib child are inventoried.
 
 Selection inputs, in order:
   --cassandra-lib-dir <path>
   CASSANDRA_LIB_DIR
-  --cassandra-home <path>/lib
-  CASSANDRA_HOME/lib
+  --cassandra-home <path>
+  CASSANDRA_HOME
 
 All remaining options and commands are forwarded to the selected adapter.
 EOF
@@ -55,17 +57,18 @@ done
 [ "$expect_home" = false ] || usage
 
 if [ -z "$cassandra_lib_dir" ] && [ -n "$cassandra_home" ]; then
-  cassandra_lib_dir=$cassandra_home/lib
+  cassandra_lib_dir=$cassandra_home
 fi
 if [ -z "$cassandra_lib_dir" ] && [ -n "${CASSANDRA_HOME:-}" ]; then
-  cassandra_lib_dir=$CASSANDRA_HOME/lib
+  cassandra_home=$CASSANDRA_HOME
+  cassandra_lib_dir=$cassandra_home
 fi
 if [ -z "$cassandra_lib_dir" ]; then
   printf 'error: set CASSANDRA_LIB_DIR or pass --cassandra-lib-dir <path>\n' >&2
   usage
 fi
 if [ ! -d "$cassandra_lib_dir" ]; then
-  printf 'error: Cassandra library directory does not exist: %s\n' \
+  printf 'error: Cassandra runtime directory does not exist: %s\n' \
     "$cassandra_lib_dir" >&2
   exit 66
 fi
@@ -73,6 +76,7 @@ cassandra_lib_dir=$(CDPATH='' cd -- "$cassandra_lib_dir" && pwd -P)
 
 cassandra_version=
 cassandra_core_jar=
+cassandra_core_dir=
 core_jar_count=0
 
 is_cassandra_version() {
@@ -103,36 +107,50 @@ is_cassandra_version() {
   esac
 }
 
-for candidate in \
-  "$cassandra_lib_dir"/apache-cassandra-*.jar \
-  "$cassandra_lib_dir"/cassandra-all-*.jar; do
-  [ -f "$candidate" ] || continue
-  filename=${candidate##*/}
-  case "$filename" in
-    apache-cassandra-*.jar)
-      version=${filename#apache-cassandra-}
-      ;;
-    cassandra-all-*.jar)
-      version=${filename#cassandra-all-}
-      ;;
-    *)
-      continue
-      ;;
-  esac
-  version=${version%.jar}
-  is_cassandra_version "$version" || continue
-  cassandra_version=$version
-  cassandra_core_jar=$candidate
-  core_jar_count=$((core_jar_count + 1))
-done
+scan_cassandra_core_dir() {
+  scan_dir=$1
+  for candidate in \
+    "$scan_dir"/apache-cassandra-*.jar \
+    "$scan_dir"/cassandra-all-*.jar; do
+    [ -f "$candidate" ] || continue
+    filename=${candidate##*/}
+    case "$filename" in
+      apache-cassandra-*.jar)
+        version=${filename#apache-cassandra-}
+        ;;
+      cassandra-all-*.jar)
+        version=${filename#cassandra-all-}
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    version=${version%.jar}
+    is_cassandra_version "$version" || continue
+    cassandra_version=$version
+    cassandra_core_jar=$candidate
+    cassandra_core_dir=$scan_dir
+    core_jar_count=$((core_jar_count + 1))
+  done
+}
+
+scan_cassandra_core_dir "$cassandra_lib_dir"
+if [ -d "$cassandra_lib_dir/lib" ]; then
+  scan_cassandra_core_dir "$cassandra_lib_dir/lib"
+fi
+if [ "${cassandra_lib_dir##*/}" = lib ]; then
+  cassandra_parent_dir=$(dirname -- "$cassandra_lib_dir")
+  scan_cassandra_core_dir "$cassandra_parent_dir"
+fi
 
 if [ "$core_jar_count" -eq 0 ]; then
   printf 'error: no apache-cassandra-<version>.jar or '\
-'cassandra-all-<version>.jar found in %s\n' "$cassandra_lib_dir" >&2
+'cassandra-all-<version>.jar found in the Cassandra runtime tree at %s\n' \
+    "$cassandra_lib_dir" >&2
   exit 65
 fi
 if [ "$core_jar_count" -ne 1 ]; then
-  printf 'error: multiple Cassandra core JARs found in %s\n' \
+  printf 'error: multiple Cassandra core JARs found in the runtime tree at %s\n' \
     "$cassandra_lib_dir" >&2
   exit 65
 fi
@@ -196,7 +214,11 @@ if ! command -v "$java_command" >/dev/null 2>&1; then
 fi
 
 if [ -z "$cassandra_home" ]; then
-  derived_home=$(dirname -- "$cassandra_lib_dir")
+  if [ "${cassandra_core_dir##*/}" = lib ]; then
+    derived_home=$(dirname -- "$cassandra_core_dir")
+  else
+    derived_home=$cassandra_core_dir
+  fi
   set -- --cassandra-home "$derived_home" "$@"
 fi
 
