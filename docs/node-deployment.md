@@ -2,10 +2,13 @@
 
 SSTable Tools is distributed with one auto-detecting launcher and four internal
 adapter JARs. A single DEB or RPM contains all four adapters. Point
-`sstable-tools` at the installed Cassandra `lib` directory. It reads the
-version from `apache-cassandra-<version>.jar` or
-`cassandra-all-<version>.jar` and selects the matching adapter. Cassandra
-classes are loaded only in a private worker process using that installation.
+`sstable-tools` at the installed Cassandra runtime root. For Apache Cassandra
+DEB/RPM installations this is `/usr/share/cassandra`; tarball installations
+may continue to use their `lib` directory. The launcher inventories both the
+root and its `lib` child, reads the version from
+`apache-cassandra-<version>.jar` or `cassandra-all-<version>.jar`, and selects
+the matching adapter. Cassandra classes are loaded only in a private worker
+process using that installation.
 
 | Cassandra | Java | Artifact |
 |---|---:|---|
@@ -40,7 +43,7 @@ sudo apt install ./sstable-tools_1.2.3-1_all.deb
 # or
 sudo dnf install ./sstable-tools-1.2.3-1.noarch.rpm
 
-CASSANDRA_LIB_DIR=/opt/apache-cassandra-5.0.4/lib sstable-tools --version
+CASSANDRA_LIB_DIR=/usr/share/cassandra sstable-tools --version
 ```
 
 The package installs only `sstable-tools` in `/usr/bin`, internal adapter JARs
@@ -53,14 +56,16 @@ requires an older matching JVM. `SSTABLE_TOOLS_JAVA` can override the Java
 executable used by the package launcher itself.
 
 Set `CASSANDRA_LIB_DIR` once for repeated invocations, or pass
-`--cassandra-lib-dir` immediately after `sstable-tools`. The launcher derives
-the Cassandra home from the directory's parent. You can instead pass
-`--cassandra-home`; in that case the launcher scans its `lib` child. Provide
-no Cassandra configuration argument: optional JVM module options and client
-resources are discovered from standard tarball, Debian, or RPM installation
-layouts. The installation's `cassandra.yaml` is neither required nor read; the
-tool generates a private sandbox configuration. It does not run a package
-service script or modify Cassandra's installation.
+`--cassandra-lib-dir` immediately after `sstable-tools`. The launcher accepts a
+tarball `lib` directory, a packaged root such as `/usr/share/cassandra`, or its
+`lib` child. It locates the core JAR and derives the correct Cassandra home,
+then the worker classpath includes JARs from both the home and `lib`. You can
+instead pass `--cassandra-home`; the launcher scans that root and its `lib`
+child. Provide no Cassandra configuration argument: optional JVM module options
+and client resources are discovered from standard tarball, Debian, or RPM
+installation layouts. The installation's `cassandra.yaml` is neither required
+nor read; the tool generates a private sandbox configuration. It does not run
+a package service script or modify Cassandra's installation.
 
 ## Operational Boundary
 

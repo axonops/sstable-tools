@@ -9,8 +9,8 @@ It is under active development and is not yet an operator-ready production tool.
 ## Launcher and Automatic Adapter Selection
 
 Use `sstable-tools` from the DEB/RPM, or `./sstable-tools` from the standalone
-archive. Point it at Cassandra's `lib` directory with either
-`--cassandra-lib-dir` or `CASSANDRA_LIB_DIR`:
+archive. Point it at Cassandra's tarball `lib` directory or its packaged
+runtime root with either `--cassandra-lib-dir` or `CASSANDRA_LIB_DIR`:
 
 ```shell
 tar -xzf sstable-tools-1.2.3.tar.gz
@@ -21,11 +21,14 @@ cd sstable-tools-1.2.3
   --version
 ```
 
-The launcher finds exactly one `apache-cassandra-<version>.jar` or
+The launcher scans the selected directory plus its nested or adjacent `lib`
+directory. It finds exactly one `apache-cassandra-<version>.jar` or
 `cassandra-all-<version>.jar`, maps versions `3.11.x`, `4.0.x`, `4.1.x`, and
-`5.0.x` to the matching adapter, derives the Cassandra home from the parent
-directory, and forwards the remaining arguments. Multiple or unsupported core
-JARs fail instead of guessing.
+`5.0.x` to the matching adapter, derives the Cassandra home from the core JAR
+location, and forwards the remaining arguments. This supports tarballs such as
+`/opt/apache-cassandra-5.0.8/lib` and DEB/RPM installations rooted at
+`/usr/share/cassandra`. Multiple or unsupported core JARs fail instead of
+guessing.
 
 The launcher chooses Java in this order:
 `SSTABLE_TOOLS_JAVA`, `JAVA_HOME/bin/java`, then `java` from `PATH`. It always
@@ -269,7 +272,7 @@ CASSANDRA_LIB_DIR=<path> sstable-tools [tool options] <command>
 
 | Option | Value and scope |
 |---|---|
-| `--cassandra-lib-dir <path>` | Cassandra `lib` directory used to detect the release and select an adapter. Equivalent to `CASSANDRA_LIB_DIR`. |
+| `--cassandra-lib-dir <path>` | Cassandra tarball `lib` directory or packaged runtime root used to detect the release and select an adapter. Equivalent to `CASSANDRA_LIB_DIR`. |
 | `--cassandra-home <path>` | Cassandra installation used by direct `cqlsh`, runtime commands, and workspace `import`, `start`, or `cqlsh`. |
 | `--java-home <path>` | Compatible Java installation for the selected Cassandra worker. |
 | `--sstables <path>` | Explicit `Data.db` or `TOC.txt` source. Repeat it or use comma-separated paths. Valid only with direct `cqlsh` and `workspace create`. |
@@ -295,8 +298,8 @@ and 5.0 query guards.
 
 | Variable | Purpose |
 |---|---|
-| `CASSANDRA_LIB_DIR` | Cassandra `lib` directory containing one supported core JAR; selects the adapter automatically. |
-| `CASSANDRA_HOME` | Fallback Cassandra home; the universal launcher scans `$CASSANDRA_HOME/lib`. |
+| `CASSANDRA_LIB_DIR` | Cassandra tarball `lib` directory or packaged runtime root; the launcher scans the selected directory and its nested or adjacent `lib`. |
+| `CASSANDRA_HOME` | Fallback Cassandra home; the launcher scans the home and its `lib` child. |
 | `SSTABLE_TOOLS_JAVA` | Exact Java executable used by the launcher. |
 | `JAVA_HOME` | Supplies `$JAVA_HOME/bin/java` when `SSTABLE_TOOLS_JAVA` is unset. |
 | `SSTABLE_TOOLS_JAVA_OPTS` | Additional whitespace-delimited launcher-JVM options, such as `-Xms256m -Xmx2g`. |
@@ -337,7 +340,7 @@ automatically from the selected installation; `--java-home` selects the worker
 JVM.
 
 ```shell
-sstable-tools --cassandra-lib-dir /usr/share/cassandra/lib \
+sstable-tools --cassandra-lib-dir /usr/share/cassandra \
   --java-home /usr/lib/jvm/java-11-openjdk \
   runtime preflight
 ```

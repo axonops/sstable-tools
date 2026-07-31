@@ -63,8 +63,11 @@ public class RuntimeDiscoveryTest {
         Path root = temporary.newFolder("package-layout").toPath();
         Path tool = Files.createDirectory(root.resolve("tool"));
         Path home = Files.createDirectory(root.resolve("usr-share-cassandra"));
-        Files.createDirectory(home.resolve("lib"));
+        Path lib = Files.createDirectory(home.resolve("lib"));
         Path server = createServerJar(home.resolve("apache-cassandra-4.1.3.jar"), "4.1.3");
+        Path serverAlias = Files.createSymbolicLink(
+                home.resolve("apache-cassandra.jar"), server.getFileName());
+        Path dependency = createEmptyJar(lib.resolve("dependency.jar"));
         Path conf = Files.createDirectory(root.resolve("etc-cassandra"));
         Path javaHome = createJavaHome(root.resolve("jdk-11"), "11.0.24");
         Map<String, String> environment = new HashMap<>();
@@ -79,6 +82,12 @@ public class RuntimeDiscoveryTest {
         Assert.assertEquals(home.toRealPath(), installation.home());
         Assert.assertEquals(conf.toRealPath(), installation.supportDirectory().get());
         Assert.assertEquals(server.toRealPath(), installation.serverJar());
+        Assert.assertTrue(Files.isSymbolicLink(serverAlias));
+        Assert.assertTrue(installation.classpath().contains(server.toRealPath()));
+        Assert.assertTrue(installation.classpath().contains(dependency.toRealPath()));
+        Assert.assertEquals(1, installation.classpath().stream()
+                .filter(server.toRealPath()::equals)
+                .count());
     }
 
     @Test
