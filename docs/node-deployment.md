@@ -45,10 +45,12 @@ CASSANDRA_LIB_DIR=/opt/apache-cassandra-5.0.4/lib sstable-tools --version
 
 The package installs only `sstable-tools` in `/usr/bin`, internal adapter JARs
 in `/usr/share/sstable-tools`, and release metadata in
-`/usr/share/doc/sstable-tools`. It requires a Java 17-or-newer launcher runtime.
-For Cassandra 3.11, 4.0, or 4.1, continue to pass `--java-home` when the
-Cassandra worker requires an older matching JVM. `SSTABLE_TOOLS_JAVA` can
-override the Java executable used by the package launcher itself.
+`/usr/share/doc/sstable-tools`. The DEB and RPM declare no package-manager
+dependencies, so installation does not pull in or enforce a Java or Cassandra
+package. Provide a Java 17-or-newer launcher runtime separately. For Cassandra
+3.11, 4.0, or 4.1, continue to pass `--java-home` when the Cassandra worker
+requires an older matching JVM. `SSTABLE_TOOLS_JAVA` can override the Java
+executable used by the package launcher itself.
 
 Set `CASSANDRA_LIB_DIR` once for repeated invocations, or pass
 `--cassandra-lib-dir` immediately after `sstable-tools`. The launcher derives

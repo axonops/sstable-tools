@@ -64,12 +64,19 @@ rpm_release="$(rpm -qp --qf '%{RELEASE}' "$rpm_package")"
   printf 'RPM package version does not match release %s\n' "$version" >&2
   exit 1
 }
-[[ "$(dpkg-deb -f "$deb" Depends)" == *"java17-runtime-headless"* ]] || {
-  printf 'Debian package does not declare its Java runtime dependency\n' >&2
+deb_dependencies="$(
+  dpkg-deb -f "$deb" Depends Pre-Depends Recommends Suggests Enhances
+)"
+[[ -z "$deb_dependencies" ]] || {
+  printf 'Debian package declares dependency relationships: %s\n' \
+    "$deb_dependencies" >&2
   exit 1
 }
-[[ "$(rpm -qp --requires "$rpm_package")" == *"java-headless"* ]] || {
-  printf 'RPM package does not declare its Java runtime dependency\n' >&2
+
+rpm_dependencies="$(rpm -qp --requires "$rpm_package")"
+[[ -z "$rpm_dependencies" ]] || {
+  printf 'RPM package declares dependencies:\n%s\n' \
+    "$rpm_dependencies" >&2
   exit 1
 }
 

@@ -479,7 +479,7 @@ JARs, an architecture-independent DEB, and a noarch RPM under
 `target/release/sstable-tools-$RELEASE_VERSION/`. It also creates the
 executable-mode-preserving standalone archive
 `target/release/sstable-tools-$RELEASE_VERSION.tar.gz`. Both Linux packages
-install one command:
+install one command and deliberately declare no package-manager dependencies:
 
 ```text
 sstable-tools
