@@ -374,6 +374,8 @@ public final class ChildProcessLauncher {
         command.add("-Dcassandra.start_rpc=false");
         command.add("-Dcassandra.start_native_transport=" + startNativeTransport);
         command.add("-Dcassandra.size_recorder_interval=0");
+        command.add("-Dcassandra.ignore_dc=true");
+        command.add("-Dcassandra.ignore_rack=true");
         command.add("-Djava.io.tmpdir=" + workspace.resolve("runtime/tmp"));
         command.add("-cp");
         command.add(joinClasspath(installation));

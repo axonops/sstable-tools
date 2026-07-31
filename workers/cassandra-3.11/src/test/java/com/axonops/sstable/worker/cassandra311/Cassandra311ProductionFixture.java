@@ -232,7 +232,9 @@ final class Cassandra311ProductionFixture {
                 + "start_native_transport: true\n"
                 + "native_transport_port: " + nativePort + "\n"
                 + "native_transport_max_threads: 16\n"
-                + "endpoint_snitch: SimpleSnitch\n"
+                // Deliberately differs from the sandbox's SimpleSnitch topology so
+                // importing system.local exercises the topology-ignore JVM flags.
+                + "endpoint_snitch: RackInferringSnitch\n"
                 + "dynamic_snitch: false\n"
                 + "internode_compression: none\n"
                 + "commitlog_sync: batch\n"
