@@ -16,14 +16,6 @@ vendor: AxonOps
 homepage: https://github.com/axonops/sstable-tools
 license: Apache-2.0
 
-overrides:
-  deb:
-    depends:
-      - java17-runtime-headless
-  rpm:
-    depends:
-      - java-headless >= 1:17
-
 contents:
   - src: ${SSTABLE_TOOLS_RELEASE_DIR}/sstable-tools
     dst: /usr/bin/sstable-tools

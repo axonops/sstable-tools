@@ -120,6 +120,10 @@ for the repository. `PACKAGE-CONTENTS-SHA256SUMS` is embedded in the DEB and
 RPM and covers their JARs and metadata. Final `SHA256SUMS` additionally covers
 both package archives.
 
+The DEB and RPM deliberately declare no package-manager dependencies. Package
+verification rejects Debian dependency-relationship fields or any RPM
+`Requires` entry.
+
 The package revision defaults to `1`. For a packaging-only rebuild of the same
 upstream version, pass `--package-release 2` (or the next positive integer) to
 `scripts/package-linux-packages`; do not create a different tool version.
