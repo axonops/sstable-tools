@@ -65,6 +65,8 @@ public class ChildProcessLauncherTest {
         Assert.assertTrue(command.contains("-Dcassandra.load_ring_state=false"));
         Assert.assertTrue(command.contains("-Dcassandra.start_rpc=false"));
         Assert.assertTrue(command.contains("-Dcassandra.start_native_transport=true"));
+        Assert.assertTrue(command.contains("-Dcassandra.ignore_dc=true"));
+        Assert.assertTrue(command.contains("-Dcassandra.ignore_rack=true"));
         Assert.assertTrue(command.contains("-XX:+DisableAttachMechanism"));
         Assert.assertTrue(command.contains("-Dcassandra.custom_query_handler_class="
                 + "com.axonops.sstable.worker.cassandra311.WorkspaceQueryHandler"));
@@ -117,6 +119,8 @@ public class ChildProcessLauncherTest {
         Assert.assertTrue(command.contains("-Dcassandra.join_ring=false"));
         Assert.assertTrue(command.contains("-Dcassandra.load_ring_state=false"));
         Assert.assertTrue(command.contains("-Dcassandra.start_rpc=false"));
+        Assert.assertTrue(command.contains("-Dcassandra.ignore_dc=true"));
+        Assert.assertTrue(command.contains("-Dcassandra.ignore_rack=true"));
         Assert.assertTrue(command.contains("-XX:+DisableAttachMechanism"));
     }
 

@@ -76,8 +76,11 @@ workspace on local storage with capacity for staged component copies, commitlog
 segments, and generated deltas.
 
 The private worker binds only loopback endpoints. It does not join gossip or
-start a source-node JMX service. The bundled workflow uses the matching
-installation's stock `cqlsh` against that private endpoint.
+start a source-node JMX service. It ignores datacenter and rack mismatches
+between imported `system.local` data and the sandbox's synthetic topology; it
+does not use those overrides to join or alter a Cassandra cluster. The bundled
+workflow uses the matching installation's stock `cqlsh` against that private
+endpoint.
 
 For the normal direct workflow, give explicit files or an `--output-dir`, a
 schema bundle, and an optional private workspace parent:
