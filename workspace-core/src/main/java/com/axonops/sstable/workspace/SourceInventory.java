@@ -243,6 +243,41 @@ public final class SourceInventory {
         }
     }
 
+    /** Returns the originally captured subset whose component sets live in one directory. */
+    public SourceInventory subsetInDirectory(Path directory) throws WorkspaceException {
+        if (directory == null || Files.isSymbolicLink(directory)
+                || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            throw new WorkspaceException("SSTable output directory must be an existing "
+                    + "non-symlink directory: " + directory);
+        }
+        final Path canonical;
+        try {
+            canonical = directory.toRealPath();
+        } catch (IOException e) {
+            throw new WorkspaceException("Cannot resolve SSTable output directory "
+                    + directory, e);
+        }
+        List<SstableSet> selected = new ArrayList<>();
+        for (SstableSet set : sets) {
+            if (canonical.equals(set.directory())) {
+                selected.add(set);
+            }
+        }
+        return new SourceInventory(selected);
+    }
+
+    /** Human-readable descriptors and canonical directories for import diagnostics. */
+    public String describeSelectedSstables() {
+        if (sets.isEmpty()) {
+            return "<none>";
+        }
+        List<String> selected = new ArrayList<>();
+        for (SstableSet set : sets) {
+            selected.add(set.descriptor() + " in " + set.directory());
+        }
+        return String.join(", ", selected);
+    }
+
     public int componentCount() {
         int count = 0;
         for (SstableSet set : sets) {

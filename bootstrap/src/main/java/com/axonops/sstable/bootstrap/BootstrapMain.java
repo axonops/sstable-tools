@@ -152,8 +152,8 @@ public final class BootstrapMain {
         out.println("Options:");
         out.println("  --cassandra-home <path>  Cassandra installation to use");
         out.println("  --java-home <path>       Compatible Java installation to use");
-        out.println("  --sstables <path>        Selected SSTable Data.db or TOC.txt (repeatable)");
-        out.println("  --output-dir <path>      Existing table directory for direct CQL output");
+        out.println("  --sstables <path>        Selected Data.db, TOC.txt, or directory (repeatable)");
+        out.println("  --output-dir <path>      Direct CQL publication directory (may accompany sources)");
         out.println("  --schema <path>          UTF-8 CQL schema bundle for selected SSTables");
         out.println("  --timestamp-policy <p>  wall-clock or after-source (start/direct cqlsh)");
         out.println("  --mode <mode>           delta or snapshot (workspace export)");

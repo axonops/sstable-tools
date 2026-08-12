@@ -2,10 +2,12 @@
 
 ## Decision
 
-The operator-facing interface is one command, `cqlsh`. It works either on an
-explicit list of SSTables or on one complete `--output-dir`, starts no
-production Cassandra services, and writes only newly created SSTables into the
-selected table directory.
+The operator-facing interface is one command, `cqlsh`. It reads an explicit
+list of SSTables, one or more complete table directories, or one complete
+`--output-dir`; starts no production Cassandra services; and writes only newly
+created SSTables into the selected publication directory. When sources span
+physical directories, `--sstables` selects all source sets and `--output-dir`
+selects one publication target.
 
 ```shell
 java -jar sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar \
@@ -23,6 +25,21 @@ complete SSTable component sets beside `nb-42-big-Data.db`.  There is no
 temporary directory in this normal workflow.
 
 A read-only session succeeds without creating output components.
+
+When one table spans Cassandra data directories, the same invocation selects
+every source and names one publication directory:
+
+```shell
+java -jar sstable-tools-cassandra-4.0-0.1.0-SNAPSHOT.jar \
+  --cassandra-home /opt/cassandra \
+  --sstables /data/system/local-<table-id>/nb-1-big-Data.db \
+  --sstables /data/system/local-<table-id>/nb-2-big-Data.db \
+  --sstables /log/data/system/local-<table-id>/nb-3-big-Data.db \
+  --sstables /log/data/system/local-<table-id>/nb-4-big-Data.db \
+  --output-dir /data/system/local-<table-id> \
+  --schema /backups/system-local.cql \
+  cqlsh --execute "UPDATE system.local USING TIMESTAMP 1785170000000000 SET cluster_name = 'restored' WHERE key = 'local';"
+```
 
 For scripts, `--execute` uses the same lifecycle:
 
@@ -49,19 +66,21 @@ java -jar sstable-tools-cassandra-4.1-0.1.0-SNAPSHOT.jar \
 
 ## What The User Supplies
 
-- Exactly one input mode: one or more `Data.db` or `TOC.txt` paths for one
-  table directory, or one existing non-symlink table directory supplied with
+- One or more `Data.db`, `TOC.txt`, or table-directory paths supplied with
+  `--sstables`, or one existing non-symlink table directory supplied with
   `--output-dir`. Explicit files expand only through their TOCs.
-- `--output-dir` inventories every complete SSTable directly in that one
-  directory. It never scans a data root, keyspace, or unrelated table. An
+- `--output-dir` alone inventories every complete SSTable directly in that
+  directory. Combined with `--sstables`, it is the publication destination and
+  its existing SSTables must be included in the selected source inventory. An
   empty directory is valid for an executed `INSERT`.
 - A schema CQL file for that table.
 - The matching installed Cassandra home.  Java is inferred from that
   installation when possible, with `--java-home` retained as an override.
 
-All selected source SSTables must be in the same directory.  This is necessary
-because the output is published beside them and because a CQL table maps to one
-SSTable directory.
+All selected source SSTables must describe the same logical table. They may
+span Cassandra data directories when an explicit `--output-dir` makes the
+publication destination unambiguous. Without `--output-dir`, the selected
+sources must remain in one directory and output is published beside them.
 
 ## Internal Lifecycle
 
@@ -79,8 +98,8 @@ private child directory:
 4. Run the installed release-matched `cqlsh` against that child.
 5. When `cqlsh` exits successfully, close client access, flush the imported
    table, verify the complete new component sets, and stop the child.
-6. Allocate new SSTable identifiers in the source table directory and publish
-   the verified components there atomically per component set.
+6. Allocate new SSTable identifiers above the complete selected baseline and
+   publish the verified components into the chosen target atomically per set.
 7. Remove the private workspace on success.  On failure, preserve it only for
    diagnostics and print its path; nothing is published beside the source.
 
@@ -89,25 +108,27 @@ their operational burden.
 
 ## Output Naming And Placement
 
-Original components are never modified, renamed, or deleted.  A mutation adds
-one or more complete new component sets directly in the selected source table
+Original components are never modified, renamed, or deleted. A mutation adds
+one or more complete new component sets directly in the selected publication
 directory.
 
-- Numeric baselines use one above the highest numeric generation already
-  present in the publication directory.
+- Numeric baselines use one above the highest numeric generation present in
+  every selected source directory or the publication directory, including
+  descriptors not explicitly selected for import.
 - Cassandra 5.0 infers `uuid_sstable_identifiers_enabled` from the explicitly
   selected descriptors. If any selected descriptor has Cassandra's
   28-character UUID/ULID-style identifier, the private sandbox writes
   UUID-style deltas and direct publication preserves the Cassandra-generated
   identifier. Mixed old numeric and UUID-style selections therefore produce a
   UUID-style delta.
-- Explicit mode infers from the supplied `--sstables`; output-directory mode
-  infers from every complete SSTable in the directory. An empty Cassandra 5.0
-  directory defaults to UUID-style output; older release lines default to
-  numeric. The installation's `cassandra.yaml` is not consulted.
+- Explicit mode, including a separate publication directory, infers from all
+  supplied `--sstables`; output-directory-only mode infers from every complete
+  SSTable in that directory. An empty Cassandra 5.0 directory defaults to
+  UUID-style output; older release lines default to numeric. The installation's
+  `cassandra.yaml` is not consulted.
 - Allocation happens immediately before publication and rejects any collision.
-  Output-directory mode also re-inventories the complete baseline and fails if
-  it changed after import.
+  Publication-directory mode re-inventories the selected subset belonging to
+  that target and fails if the directory changed after import.
   A stopped source node is a required precondition, so no concurrent Cassandra
   writer may allocate an identifier at the same time.
 

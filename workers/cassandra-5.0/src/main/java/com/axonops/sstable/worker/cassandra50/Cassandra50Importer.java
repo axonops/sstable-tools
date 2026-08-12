@@ -6,6 +6,7 @@ import com.axonops.sstable.worker.api.WorkerProtocol;
 import com.axonops.sstable.workspace.SourceComponent;
 import com.axonops.sstable.workspace.SourceInventory;
 import com.axonops.sstable.workspace.SstableSet;
+import com.axonops.sstable.workspace.SystemLocalImportDiagnostics;
 import com.axonops.sstable.workspace.WorkspaceManifest;
 import com.axonops.sstable.workspace.WorkspaceRepository;
 import java.io.File;
@@ -139,7 +140,7 @@ final class Cassandra50Importer {
                     relativeTable, validated.size(), liveSstables, logicalRows,
                     maximumSourceTimestamp(validated),
                     cfs.isAutoCompactionDisabled(), false,
-                    systemClusterName(schema.keyspace(), schema.table()));
+                    systemClusterName(schema.keyspace(), schema.table(), source));
         } catch (Exception failure) {
             try {
                 deleteTree(tableDirectory);
@@ -490,22 +491,26 @@ final class Cassandra50Importer {
         return result.one().getLong("count");
     }
 
-    private static String systemClusterName(String keyspace, String table) {
+    private static String systemClusterName(String keyspace,
+                                            String table,
+                                            SourceInventory source) {
         if (!"system".equals(keyspace) || !"local".equals(table)) {
             return null;
         }
         UntypedResultSet result = QueryProcessor.executeInternal(
                 "SELECT cluster_name FROM system.local");
         if (result == null || result.isEmpty()) {
-            throw new IllegalStateException("Cassandra did not return system.local cluster_name");
+            throw new IllegalStateException(SystemLocalImportDiagnostics.noLocalRow(source));
         }
         UntypedResultSet.Row row = result.one();
         if (!row.has("cluster_name")) {
-            throw new IllegalStateException("Cassandra did not return system.local cluster_name");
+            throw new IllegalStateException(
+                    SystemLocalImportDiagnostics.partialClusterNameSelection(source));
         }
         String clusterName = row.getString("cluster_name");
         if (clusterName == null || clusterName.trim().isEmpty()) {
-            throw new IllegalStateException("Imported system.local has no cluster_name");
+            throw new IllegalStateException(
+                    SystemLocalImportDiagnostics.emptyClusterName(source));
         }
         return clusterName;
     }

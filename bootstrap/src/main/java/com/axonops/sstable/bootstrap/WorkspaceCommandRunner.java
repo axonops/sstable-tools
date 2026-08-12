@@ -26,6 +26,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -456,9 +457,10 @@ final class WorkspaceCommandRunner {
 
     private static void create(BootstrapArguments arguments, PrintStream out)
             throws WorkspaceException {
-        List<Path> inventoryArguments = arguments.directOutputDirectory() == null
-                ? arguments.sourceDirectories()
-                : Collections.singletonList(arguments.directOutputDirectory());
+        List<Path> inventoryArguments = new ArrayList<>(arguments.sourceDirectories());
+        if (arguments.directOutputDirectory() != null) {
+            inventoryArguments.add(arguments.directOutputDirectory());
+        }
         requireSeparateArguments(arguments.workspacePath(), inventoryArguments);
         SchemaBundle schema = arguments.schemaPath() == null
                 ? null : SchemaBundle.capture(arguments.schemaPath());
@@ -468,10 +470,10 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.createAt(
                 arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
-            SourceInventory requested = arguments.directOutputDirectory() == null
-                    ? SourceInventory.capture(arguments.sourceDirectories())
-                    : SourceInventory.captureDirectoryAllowEmpty(
-                    arguments.directOutputDirectory());
+            SourceInventory requested = arguments.sourceDirectories().isEmpty()
+                    ? SourceInventory.captureDirectoryAllowEmpty(
+                    arguments.directOutputDirectory())
+                    : SourceInventory.capture(arguments.sourceDirectories());
             if (requested.sets().isEmpty()) {
                 requireEmptyBaselineInsert(arguments);
             }

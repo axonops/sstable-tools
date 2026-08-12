@@ -252,7 +252,7 @@ jobs:
   cassandra-311-sandbox:
     name: Cassandra 3.11.19 sandbox and cqlsh integration
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -383,10 +383,28 @@ jobs:
             --fixture mc-temperature \
             --output-version me
 
+      - name: Read and update Cassandra 3.11 system.local across two real data directories
+        run: >-
+          scripts/ci-system-local-cqlsh
+          --image cassandra:3.11.19
+          --tool-jar workers/cassandra-3.11/target/sstable-tools-cassandra-3.11-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-3.11.19"
+          --java-home "$CASSANDRA_JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-311-system-local"
+
+      - name: Upload Cassandra 3.11 system.local diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cassandra-311-system-local-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
+          path: ${{ runner.temp }}/cassandra-311-system-local
+
   cassandra-40-sandbox:
     name: Cassandra 4.0.18 stopped-SSTable sandbox and cqlsh integration
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -476,7 +494,7 @@ jobs:
             --java-home "$JAVA_HOME" \
           --output-root "${{ runner.temp }}/cassandra-40-import"
 
-      - name: Read and update a stopped Cassandra 4.0 system.local through stock cqlsh
+      - name: Read and update Cassandra 4.0 system.local across two real data directories
         run: >-
           scripts/ci-system-local-cqlsh
           --image cassandra:4.0.18
@@ -507,7 +525,7 @@ jobs:
   cassandra-41-import:
     name: Cassandra 4.1.11 stopped-SSTable import integration
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -597,7 +615,7 @@ jobs:
             --java-home "$JAVA_HOME" \
           --output-root "${{ runner.temp }}/cassandra-41-import"
 
-      - name: Read and update a stopped Cassandra 4.1 system.local through stock cqlsh
+      - name: Read and update Cassandra 4.1 system.local across two real data directories
         run: >-
           scripts/ci-system-local-cqlsh
           --image cassandra:4.1.11
@@ -628,7 +646,7 @@ jobs:
   cassandra-50-import:
     name: Cassandra 5.0.8 stopped-SSTable import integration
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -746,6 +764,15 @@ jobs:
           --output-version da
           --timestamp-base 2000000000000020
 
+      - name: Read and update Cassandra 5.0 system.local across two real data directories
+        run: >-
+          scripts/ci-system-local-cqlsh
+          --image cassandra:5.0.8
+          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-50-system-local"
+
       - name: Record Cassandra 5.0 emitted format provenance
         run: scripts/ci-emitted-format-provenance "${{ runner.temp }}/cassandra-50-import"
 
@@ -764,7 +791,9 @@ jobs:
           name: cassandra-50-import-diagnostics
           if-no-files-found: warn
           retention-days: 14
-          path: ${{ runner.temp }}/cassandra-50-import
+          path: |
+            ${{ runner.temp }}/cassandra-50-import
+            ${{ runner.temp }}/cassandra-50-system-local
 
   compatibility-report:
     name: Direct cqlsh compatibility report

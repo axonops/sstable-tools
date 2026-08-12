@@ -4,6 +4,7 @@ import com.axonops.sstable.workspace.ExportRecord;
 import com.axonops.sstable.workspace.ManifestFile;
 import com.axonops.sstable.workspace.SchemaBundle;
 import com.axonops.sstable.workspace.SourceInventory;
+import com.axonops.sstable.workspace.SstableSet;
 import com.axonops.sstable.workspace.WorkspaceException;
 import com.axonops.sstable.workspace.WorkspaceFileInventory;
 import com.axonops.sstable.workspace.WorkspaceFlushResult;
@@ -13,9 +14,11 @@ import com.axonops.sstable.workspace.WorkspaceRepository;
 import com.axonops.sstable.workspace.WorkspaceState;
 import com.axonops.sstable.workspace.WorkspaceVerificationResult;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -145,6 +148,81 @@ public class WorkspaceExportPublisherTest {
         Assert.assertTrue(Files.isRegularFile(output.resolve(deltaDescriptor + "-TOC.txt")));
     }
 
+    @Test
+    public void publishesIntoOneTargetFromSourcesSpanningMultipleDirectories()
+            throws Exception {
+        Fixture fixture = createSpanningFixture();
+        Path nonTarget = nonTargetDirectory(fixture);
+        int nonTargetFiles = fileCount(nonTarget);
+
+        List<String> descriptors = new WorkspaceExportPublisher().publishDeltaAdjacent(
+                fixture.repository, fixture.manifest, fixture.flush, fixture.verification,
+                fixture.source, true);
+
+        Assert.assertEquals(Collections.singletonList("mc-46-big"), descriptors);
+        Assert.assertTrue(Files.isRegularFile(
+                fixture.source.resolve("mc-46-big-Data.db")));
+        Assert.assertTrue(Files.isRegularFile(
+                fixture.source.resolve("mc-46-big-TOC.txt")));
+        Assert.assertEquals(2, fixture.manifest.sourceInventory().sets().size());
+        Assert.assertEquals(nonTargetFiles, fileCount(nonTarget));
+        Assert.assertFalse(Files.exists(nonTarget.resolve("mc-46-big-Data.db")));
+        fixture.manifest.sourceInventory().verifyUnchanged();
+    }
+
+    @Test
+    public void outputDirectoryOnlyBaselinePublishesAsBefore() throws Exception {
+        Fixture fixture = createFixture();
+
+        List<String> descriptors = new WorkspaceExportPublisher().publishDeltaAdjacent(
+                fixture.repository, fixture.manifest, fixture.flush, fixture.verification,
+                fixture.source, true);
+
+        Assert.assertEquals(Collections.singletonList("mc-42-big"), descriptors);
+    }
+
+    @Test
+    public void explicitSelectionAndOutputDirectoryMayShareOneTarget() throws Exception {
+        Fixture fixture = createExplicitFixture();
+
+        List<String> descriptors = new WorkspaceExportPublisher().publishDeltaAdjacent(
+                fixture.repository, fixture.manifest, fixture.flush, fixture.verification,
+                fixture.source, true);
+
+        Assert.assertEquals(Collections.singletonList("mc-42-big"), descriptors);
+    }
+
+    @Test
+    public void spanningSourcesWithoutOutputDirectoryRemainRejected() throws Exception {
+        Fixture fixture = createSpanningFixture();
+
+        try {
+            new WorkspaceExportPublisher().publishDeltaAdjacent(
+                    fixture.repository, fixture.manifest, fixture.flush,
+                    fixture.verification);
+            Assert.fail("Expected spanning sources without --output-dir to be rejected");
+        } catch (WorkspaceException failure) {
+            Assert.assertTrue(failure.getMessage(), failure.getMessage().contains(
+                    "requires all --sstables to be from one table directory"));
+        }
+    }
+
+    @Test
+    public void spanningPublicationRejectsAnUnexpectedTargetSstable() throws Exception {
+        Fixture fixture = createSpanningFixture();
+        writeDescriptor(fixture.source, "ma-99-big", (byte) 9);
+
+        try {
+            new WorkspaceExportPublisher().publishDeltaAdjacent(
+                    fixture.repository, fixture.manifest, fixture.flush,
+                    fixture.verification, fixture.source, true);
+            Assert.fail("Expected changed output-directory baseline to be rejected");
+        } catch (WorkspaceException failure) {
+            Assert.assertTrue(failure.getMessage(),
+                    failure.getMessage().contains("output directory changed"));
+        }
+    }
+
     private static void assertPublishFailure(WorkspaceExportPublisher publisher,
                                              Fixture fixture,
                                              Path output,
@@ -169,6 +247,52 @@ public class WorkspaceExportPublisherTest {
         writeDescriptor(source, sourceDescriptor, (byte) 7);
         SourceInventory sourceInventory = SourceInventory.capture(
                 Collections.singletonList(source));
+        return createFixture(source, sourceInventory, deltaDescriptor, release);
+    }
+
+    private Fixture createExplicitFixture() throws Exception {
+        Path source = temporary.newFolder("explicit-source").toPath().toRealPath();
+        writeDescriptor(source, "ma-41-big", (byte) 7);
+        SourceInventory sourceInventory = SourceInventory.capture(
+                Collections.singletonList(source.resolve("ma-41-big-Data.db")));
+        return createFixture(source, sourceInventory, "mc-2-big", "4.0.18");
+    }
+
+    private Fixture createSpanningFixture() throws Exception {
+        Path target = temporary.newFolder("spanning-target").toPath().toRealPath();
+        Path second = temporary.newFolder("spanning-second").toPath().toRealPath();
+        writeDescriptor(target, "ma-41-big", (byte) 7);
+        writeDescriptor(second, "ma-43-big", (byte) 6);
+        SourceInventory sourceInventory = SourceInventory.capture(
+                Arrays.asList(target.resolve("ma-41-big-Data.db"),
+                        second.resolve("ma-43-big-Data.db")));
+        writeDescriptor(second, "ma-45-big", (byte) 5);
+        return createFixture(target, sourceInventory, "mc-2-big", "4.0.18");
+    }
+
+    private static Path nonTargetDirectory(Fixture fixture) throws Exception {
+        for (SstableSet set : fixture.manifest.sourceInventory().sets()) {
+            if (!fixture.source.equals(set.directory())) {
+                return set.directory();
+            }
+        }
+        throw new AssertionError("Fixture has no non-target source directory");
+    }
+
+    private static int fileCount(Path directory) throws Exception {
+        int count = 0;
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory)) {
+            for (Path ignored : files) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private Fixture createFixture(Path source,
+                                  SourceInventory sourceInventory,
+                                  String deltaDescriptor,
+                                  String release) throws Exception {
         WorkspaceRepository repository = WorkspaceRepository.createAt(
                 temporary.newFolder("workspace").toPath());
         WorkspaceManifest manifest = WorkspaceManifest.create(sourceInventory);

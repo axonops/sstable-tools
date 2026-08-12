@@ -283,8 +283,8 @@ final class BootstrapArguments {
             throw usage("workspace create requires at least one --sstables source");
         }
         if (action == Action.DIRECT_CQLSH
-                && sourceDirectories.isEmpty() == (directOutputDirectory == null)) {
-            throw usage("cqlsh requires exactly one of --sstables or --output-dir");
+                && sourceDirectories.isEmpty() && directOutputDirectory == null) {
+            throw usage("cqlsh requires --sstables, --output-dir, or both");
         }
         if (action != Action.WORKSPACE_CREATE && action != Action.DIRECT_CQLSH
                 && !sourceDirectories.isEmpty()) {

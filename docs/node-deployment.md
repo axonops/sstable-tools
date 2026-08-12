@@ -99,6 +99,13 @@ SSTables. A failed operation retains its private workspace for diagnosis and
 publishes no delta. Do not replace or delete original source components during
 tool upgrade or rollback; JAR replacement is independent of Cassandra.
 
+If one logical table spans multiple Cassandra data directories, repeat
+`--sstables` for every physical table directory and add one `--output-dir` as
+the publication target. The target's existing SSTables must be included in the
+selection. Numeric identifiers are allocated above every descriptor present in
+each selected source directory, including SSTables outside the publication
+directory.
+
 For a first `INSERT` with no existing SSTables, create the table directory and
 use `--output-dir <directory>` instead of `--sstables`. If the directory later
 contains SSTables, the tool inventories all of them, derives numeric or

@@ -59,6 +59,36 @@ public class SourceInventoryTest {
     }
 
     @Test
+    public void selectsTheCapturedSubsetForOneOfMultipleDirectories() throws Exception {
+        Path data = WorkspaceTestFixtures.completeSstableDirectory(
+                temporary.newFolder("data-source").toPath());
+        Path logData = WorkspaceTestFixtures.completeSstableDirectory(
+                temporary.newFolder("log-data-source").toPath());
+        Files.move(logData.resolve("ma-1-big-TOC.txt"),
+                logData.resolve("mb-2-big-TOC.txt"));
+        Files.move(logData.resolve("ma-1-big-Data.db"),
+                logData.resolve("mb-2-big-Data.db"));
+        Files.move(logData.resolve("ma-1-big-Statistics.db"),
+                logData.resolve("mb-2-big-Statistics.db"));
+
+        SourceInventory inventory = SourceInventory.capture(Arrays.asList(data, logData));
+        SourceInventory dataSubset = inventory.subsetInDirectory(data);
+        SourceInventory logDataSubset = inventory.subsetInDirectory(logData);
+
+        Assert.assertEquals(2, inventory.sets().size());
+        Assert.assertEquals(1, dataSubset.sets().size());
+        Assert.assertEquals(data.toRealPath(), dataSubset.sets().get(0).directory());
+        Assert.assertEquals(1, logDataSubset.sets().size());
+        Assert.assertEquals(logData.toRealPath(), logDataSubset.sets().get(0).directory());
+        Assert.assertTrue(inventory.describeSelectedSstables(),
+                inventory.describeSelectedSstables().contains(
+                        "ma-1-big in " + data.toRealPath()));
+        Assert.assertTrue(inventory.describeSelectedSstables(),
+                inventory.describeSelectedSstables().contains(
+                        "mb-2-big in " + logData.toRealPath()));
+    }
+
+    @Test
     public void rejectsStandaloneDataComponent() throws Exception {
         Path source = temporary.newFolder("standalone").toPath();
         Files.write(source.resolve("ma-1-big-Data.db"), new byte[]{1});
