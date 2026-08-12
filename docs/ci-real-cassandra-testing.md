@@ -66,6 +66,13 @@ direct workflow selects only the published BTI set, performs `INSERT`,
 `UPDATE`, and `SELECT`, and publishes/reopens BTI output again. Mixed Big/BTI
 source sets remain outside the supported workflow.
 
+The same job runs the real two-`data_file_directories` `system.local` scenario
+twice. In `CASSANDRA_4` mode, stock Cassandra creates `nb` input and SSTable
+Tools must publish `nb` deltas. In `NONE` mode, both the stock node and the
+tool publish `oa`. Each run places source and generated SSTables in two actual
+Cassandra data roots, restarts the stock 5.0.8 node, and verifies the combined
+row through stock `cqlsh`.
+
 A separate `patch-line-floor` matrix downloads Cassandra 4.0.0 and 4.1.0,
 removes their installation `cassandra.yaml`, and runs runtime preflight. The
 adapter metadata unit tests accept every released patch from 4.0.0 through

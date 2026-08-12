@@ -672,8 +672,11 @@ jobs:
             https://archive.apache.org/dist/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
           echo '06b7af18c8f41dc13dbfdae186d565a5f91e71ea413c3c5373aec8a4e5074c6dee5632a0e5e98c21665f08f7291d7ca384f61a323c02610c6bca51e074b5a0c4  apache-cassandra-5.0.8-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-5.0.8-bin.tar.gz
-          mv apache-cassandra-5.0.8/conf/cassandra.yaml \
-            apache-cassandra-5.0.8/conf/cassandra.yaml.installation-not-used
+          sed -i -E \
+            's/^[[:space:]]*#?[[:space:]]*storage_compatibility_mode:.*/storage_compatibility_mode: NONE/' \
+            apache-cassandra-5.0.8/conf/cassandra.yaml
+          grep -Fxq 'storage_compatibility_mode: NONE' \
+            apache-cassandra-5.0.8/conf/cassandra.yaml
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
 
@@ -764,14 +767,25 @@ jobs:
           --output-version da
           --timestamp-base 2000000000000020
 
-      - name: Read and update Cassandra 5.0 system.local across two real data directories
+      - name: Read and update Cassandra 5.0 system.local in Cassandra 4 compatibility mode
         run: >-
           scripts/ci-system-local-cqlsh
           --image cassandra:5.0.8
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
           --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
           --java-home "$JAVA_HOME"
-          --output-root "${{ runner.temp }}/cassandra-50-system-local"
+          --output-root "${{ runner.temp }}/cassandra-50-system-local-cassandra-4"
+          --storage-compatibility-mode CASSANDRA_4
+
+      - name: Read and update Cassandra 5.0 system.local in native mode
+        run: >-
+          scripts/ci-system-local-cqlsh
+          --image cassandra:5.0.8
+          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-50-system-local-none"
+          --storage-compatibility-mode NONE
 
       - name: Record Cassandra 5.0 emitted format provenance
         run: scripts/ci-emitted-format-provenance "${{ runner.temp }}/cassandra-50-import"
@@ -793,7 +807,7 @@ jobs:
           retention-days: 14
           path: |
             ${{ runner.temp }}/cassandra-50-import
-            ${{ runner.temp }}/cassandra-50-system-local
+            ${{ runner.temp }}/cassandra-50-system-local-*
 
   compatibility-report:
     name: Direct cqlsh compatibility report

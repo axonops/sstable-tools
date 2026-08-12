@@ -117,8 +117,11 @@ final class WorkspaceCommandRunner {
             validateOutputFormat(adapter, requiredOutputFormat(manifest));
             SstableIdentifierStyle identifierStyle = SstableIdentifierStyle.recorded(
                     manifest.outputIdentity());
+            String storageCompatibilityMode = "5.0".equals(adapter.releaseLine())
+                    ? Cassandra50StorageCompatibility.required(manifest) : null;
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
-                    outputIdentity(requiredOutputFormat(manifest), identifierStyle));
+                    outputIdentity(requiredOutputFormat(manifest), identifierStyle,
+                            storageCompatibilityMode));
             WorkspaceTimestampState.prepare(repository, lock, manifest.workspaceId(),
                     timestampPolicy, sourceMaximumMicros, !timestampPolicyRecorded);
             repository.deleteOwnedFile(lock, WorkspaceFlushResult.WORKSPACE_PATH);
@@ -140,12 +143,12 @@ final class WorkspaceCommandRunner {
                         manifest.workspaceId(), nativePort, token, nativePassword,
                         adapter.releaseLine(), requiredOutputFormat(manifest),
                         importedSystemClusterName(manifest),
-                        identifierStyle.usesUuidIdentifiers());
+                        identifierStyle.usesUuidIdentifiers(), storageCompatibilityMode);
             } else {
                 Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
                         nativePort, token, nativePassword, adapter.releaseLine(),
                         requiredOutputFormat(manifest), importedSystemClusterName(manifest),
-                        identifierStyle.usesUuidIdentifiers());
+                        identifierStyle.usesUuidIdentifiers(), storageCompatibilityMode);
             }
             repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.ENDPOINT_PATH);
 
@@ -217,13 +220,16 @@ final class WorkspaceCommandRunner {
             validateOutputFormat(adapter, outputFormat);
             SstableIdentifierStyle identifierStyle = SstableIdentifierStyle.forImport(
                     manifest.sourceInventory(), adapter.releaseLine());
+            String storageCompatibilityMode = "5.0".equals(adapter.releaseLine())
+                    ? Cassandra50StorageCompatibility.resolve(installation,
+                            manifest.sourceInventory(), outputFormat) : null;
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
-                    outputIdentity(outputFormat, identifierStyle));
+                    outputIdentity(outputFormat, identifierStyle, storageCompatibilityMode));
             repository.save(lock, manifest);
             int unusedNativePort = allocateLoopbackPort();
             Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
                     unusedNativePort, adapter.releaseLine(), outputFormat,
-                    identifierStyle.usesUuidIdentifiers());
+                    identifierStyle.usesUuidIdentifiers(), storageCompatibilityMode);
             repository.deleteOwnedFile(lock, ImportResult.WORKSPACE_PATH);
 
             try {
@@ -1037,7 +1043,8 @@ final class WorkspaceCommandRunner {
     }
 
     private static Map<String, String> outputIdentity(String sstableFormat,
-                                                       SstableIdentifierStyle identifierStyle) {
+                                                       SstableIdentifierStyle identifierStyle,
+                                                       String storageCompatibilityMode) {
         Map<String, String> output = new LinkedHashMap<>();
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
@@ -1047,6 +1054,10 @@ final class WorkspaceCommandRunner {
         output.put("import.contract", "cassandra-3.11-refresh-v2");
         output.put("sstable.format", sstableFormat);
         output.put("sstable.identifier-style", identifierStyle.manifestValue());
+        if (storageCompatibilityMode != null) {
+            output.put(Cassandra50StorageCompatibility.MANIFEST_KEY,
+                    storageCompatibilityMode);
+        }
         return output;
     }
 

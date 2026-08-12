@@ -344,11 +344,12 @@ its runtime `Version.isCompatible` result is authoritative.
 | Cassandra 3.11 | Big `ma` through `me` | Big `me` |
 | Cassandra 4.0 | Big `ma` through `nb` | Big `nb` |
 | Cassandra 4.1 | Big `ma` through `nb` | Big `nb` |
-| Cassandra 5.0 | Big `ma` through `oa`; BTI `da` | Big `oa` or BTI `da` |
+| Cassandra 5.0 | Big `ma` through `oa`; BTI `da` | Big `nb` in `CASSANDRA_4`; Big `oa` or BTI `da` in `UPGRADING`/`NONE` |
 
-The 5.0 worker runs in full Cassandra 5 storage-compatibility mode. A mode that
-continues to emit Big `nb` is rejected for a 5.0 output workspace; users needing
-`nb` output select the 4.0 or 4.1 target explicitly.
+The 5.0 worker follows the target node's resolved storage-compatibility mode.
+This preserves Cassandra 4 rollback compatibility by emitting Big `nb` while
+the target remains in `CASSANDRA_4`, and enables Big `oa` or BTI `da` after the
+target moves to `UPGRADING` or `NONE`.
 
 Notable variants are:
 

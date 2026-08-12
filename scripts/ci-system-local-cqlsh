@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --image <image> --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path>\n' "$0" >&2
+  printf 'Usage: %s --image <image> --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--storage-compatibility-mode CASSANDRA_4|NONE]\n' "$0" >&2
   exit 64
 }
 
@@ -11,6 +11,7 @@ tool_jar=''
 cassandra_home=''
 java_home=''
 output_root=''
+storage_compatibility_mode=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -19,6 +20,7 @@ while [[ $# -gt 0 ]]; do
     --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
+    --storage-compatibility-mode) storage_compatibility_mode=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -31,6 +33,30 @@ done
   exit 1
 }
 [[ -x "$java_home/bin/java" ]] || { printf 'Invalid Java home: %s\n' "$java_home" >&2; exit 1; }
+case "$storage_compatibility_mode" in
+  ''|CASSANDRA_4|NONE) ;;
+  *) printf 'Unsupported storage compatibility mode: %s\n' \
+       "$storage_compatibility_mode" >&2; exit 64 ;;
+esac
+
+write_storage_compatibility_mode() {
+  input=$1
+  output=$2
+  awk -v mode="$storage_compatibility_mode" '
+    /^[[:space:]]*storage_compatibility_mode:[[:space:]]*/ {
+      print "storage_compatibility_mode: " mode
+      saw_mode = 1
+      next
+    }
+    { print }
+    END {
+      if (!saw_mode) {
+        print ""
+        print "storage_compatibility_mode: " mode
+      }
+    }
+  ' "$input" >"$output"
+}
 
 container="sstable-tools-system-local-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
 container=${container:0:63}
@@ -46,10 +72,27 @@ cleanup() {
 trap cleanup EXIT
 
 docker pull "$image"
-docker run -d --name "$container" \
+docker create --name "$container" \
   -e MAX_HEAP_SIZE=512M \
   -e HEAP_NEWSIZE=128M \
   "$image" >/dev/null
+if [[ -n "$storage_compatibility_mode" ]]; then
+  original_start_yaml="$output_root/source-cassandra.yaml"
+  configured_start_yaml="$output_root/source-cassandra-configured.yaml"
+  docker cp "$container:/etc/cassandra/cassandra.yaml" "$original_start_yaml"
+  write_storage_compatibility_mode "$original_start_yaml" "$configured_start_yaml"
+  docker cp "$configured_start_yaml" "$container:/etc/cassandra/cassandra.yaml"
+
+  runtime_yaml="$cassandra_home/conf/cassandra.yaml"
+  [[ -f "$runtime_yaml" ]] || {
+    printf 'Cassandra runtime configuration is missing: %s\n' "$runtime_yaml" >&2
+    exit 1
+  }
+  configured_runtime_yaml="$output_root/runtime-cassandra-configured.yaml"
+  write_storage_compatibility_mode "$runtime_yaml" "$configured_runtime_yaml"
+  cp "$configured_runtime_yaml" "$runtime_yaml"
+fi
+docker start "$container" >/dev/null
 
 ready=false
 for _ in $(seq 1 90); do
@@ -113,6 +156,19 @@ find "$source_dir" -maxdepth 1 -type f -printf '%p\n' \
 )
 find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print -quit \
   | grep -q . || { printf 'Stopped system.local source did not yield Data.db\n' >&2; exit 1; }
+expected_big_version=''
+case "$storage_compatibility_mode" in
+  CASSANDRA_4) expected_big_version=nb ;;
+  NONE) expected_big_version=oa ;;
+esac
+if [[ -n "$expected_big_version" ]]; then
+  find "$source_dir" -maxdepth 1 -type f -name "$expected_big_version-*-big-Data.db" \
+    -print -quit | grep -q . || {
+      printf 'Cassandra %s did not produce expected Big %s source SSTables\n' \
+        "$storage_compatibility_mode" "$expected_big_version" >&2
+      exit 1
+    }
+fi
 
 first_data_center='sstable-tools-dc'
 java -jar "$tool_jar" --cassandra-home "$cassandra_home" --java-home "$java_home" \
@@ -134,6 +190,12 @@ first_published=$(sed -n 's/^published\.sstables=//p' \
     "$first_published" >&2
   exit 1
 }
+if [[ -n "$expected_big_version" \
+      && "${first_published%%-*}" != "$expected_big_version" ]]; then
+  printf 'First published descriptor %s does not follow %s mode (expected %s)\n' \
+    "$first_published" "$storage_compatibility_mode" "$expected_big_version" >&2
+  exit 1
+fi
 find "$secondary_source_dir" -maxdepth 1 -type f -name '*-Data.db' -print -quit \
   | grep -q . || { printf 'First update did not create a second-directory Data.db\n' >&2; exit 1; }
 (
@@ -200,6 +262,12 @@ second_published=$(sed -n 's/^published\.sstables=//p' \
     "$second_published" >&2
   exit 1
 }
+if [[ -n "$expected_big_version" \
+      && "${second_published%%-*}" != "$expected_big_version" ]]; then
+  printf 'Second published descriptor %s does not follow %s mode (expected %s)\n' \
+    "$second_published" "$storage_compatibility_mode" "$expected_big_version" >&2
+  exit 1
+fi
 if grep -Fxq "$second_published" "$output_root/occupied-before-second-update.txt"; then
   printf 'Cross-directory identifier allocation reused %s\n' "$second_published" >&2
   exit 1

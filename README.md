@@ -226,8 +226,19 @@ datacenter or rack differs from the isolated worker's synthetic topology.
 
 ### Write Cassandra 5.0 BTI output
 
-On Cassandra 5.0, `--output-format bti` selects BTI `da` output. The default is
-Big `oa`; BTI is rejected by the 3.11, 4.0, and 4.1 adapters.
+On Cassandra 5.0, `--output-format bti` selects BTI `da` output. BTI requires
+the target Cassandra configuration to use `storage_compatibility_mode:
+UPGRADING` or `NONE`; it is unavailable in `CASSANDRA_4` mode. BTI is also
+rejected by the 3.11, 4.0, and 4.1 adapters.
+
+For Big output, SSTable Tools follows Cassandra 5.0's configured storage mode:
+`CASSANDRA_4` publishes Big `nb`, while `UPGRADING` and `NONE` publish Big
+`oa`. It reads `cassandra.yaml` from `CASSANDRA_CONF`, the selected tarball's
+`conf` directory, or `/etc/cassandra` for a packaged `/usr/share/cassandra`
+runtime. If no configuration is available, it infers native mode from `oa` or
+`da` input and otherwise uses Cassandra 5.0's safe `CASSANDRA_4` default. The
+configuration is consulted only to select the output compatibility mode; the
+isolated workspace still uses its own generated, loopback-only configuration.
 
 ```shell
 NOW_MICROS=$(date +%s%6N)
@@ -330,6 +341,7 @@ and 5.0 query guards.
 |---|---|
 | `CASSANDRA_LIB_DIR` | Cassandra tarball `lib` directory or packaged runtime root; the launcher scans the selected directory and its nested or adjacent `lib`. |
 | `CASSANDRA_HOME` | Fallback Cassandra home; the launcher scans the home and its `lib` child. |
+| `CASSANDRA_CONF` | Optional Cassandra configuration directory (or `cassandra.yaml` path). On Cassandra 5.0, it has precedence when resolving `storage_compatibility_mode`. |
 | `SSTABLE_TOOLS_JAVA` | Exact Java executable used by the launcher. |
 | `JAVA_HOME` | Supplies `$JAVA_HOME/bin/java` when `SSTABLE_TOOLS_JAVA` is unset. |
 | `SSTABLE_TOOLS_JAVA_OPTS` | Additional whitespace-delimited launcher-JVM options, such as `-Xms256m -Xmx2g`. |
@@ -444,7 +456,7 @@ source component hashes.
 | `cassandra-3.11` | 3.11.19 | 8 | Big `me` |
 | `cassandra-4.0` | 4.0.0-4.0.18 | 8-11 | Big `nb` |
 | `cassandra-4.1` | 4.1.0-4.1.11 | 11 | Big `nb` |
-| `cassandra-5.0` | 5.0.4-5.0.8 | 17 | Big `oa`, BTI `da` |
+| `cassandra-5.0` | 5.0.4-5.0.8 | 17 | Big `nb` (`CASSANDRA_4`), Big `oa`/BTI `da` (`UPGRADING` or `NONE`) |
 
 The 4.0 adapter compiles against the first patch in its release line. The 4.1
 adapter carries both native query-handler ABIs used across the 4.1 patch line.

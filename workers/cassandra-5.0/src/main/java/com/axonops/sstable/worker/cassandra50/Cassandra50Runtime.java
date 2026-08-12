@@ -296,9 +296,16 @@ public final class Cassandra50Runtime implements SandboxRuntimeAdapter, ImportRu
             throw new IllegalStateException("Configured SSTable output format " + selectedFormat
                     + " does not match workspace output format " + expectedFormat);
         }
-        if (!DatabaseDescriptor.getStorageCompatibilityMode().disabled()) {
-            throw new IllegalStateException("Cassandra 5.0 workspace must disable storage "
-                    + "compatibility mode before it can safely select BTI output");
+        String expectedStorageMode = manifest.outputIdentity().get(
+                "cassandra.storage-compatibility-mode");
+        if (expectedStorageMode == null) {
+            expectedStorageMode = "NONE";
+        }
+        String configuredStorageMode = DatabaseDescriptor.getStorageCompatibilityMode().name();
+        if (!expectedStorageMode.equals(configuredStorageMode)) {
+            throw new IllegalStateException("Configured Cassandra storage compatibility mode "
+                    + configuredStorageMode + " does not match workspace output mode "
+                    + expectedStorageMode);
         }
         requireLoopback("listen_address", DatabaseDescriptor.getListenAddress());
         requireLoopback("rpc_address", DatabaseDescriptor.getRpcAddress());
