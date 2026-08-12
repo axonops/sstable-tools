@@ -646,7 +646,7 @@ jobs:
   cassandra-50-import:
     name: Cassandra 5.0.8 stopped-SSTable import integration
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -672,10 +672,11 @@ jobs:
             https://archive.apache.org/dist/cassandra/5.0.8/apache-cassandra-5.0.8-bin.tar.gz
           echo '06b7af18c8f41dc13dbfdae186d565a5f91e71ea413c3c5373aec8a4e5074c6dee5632a0e5e98c21665f08f7291d7ca384f61a323c02610c6bca51e074b5a0c4  apache-cassandra-5.0.8-bin.tar.gz' | sha512sum --check
           tar -xzf apache-cassandra-5.0.8-bin.tar.gz
-          sed -i -E \
-            's/^[[:space:]]*#?[[:space:]]*storage_compatibility_mode:.*/storage_compatibility_mode: NONE/' \
-            apache-cassandra-5.0.8/conf/cassandra.yaml
-          grep -Fxq 'storage_compatibility_mode: NONE' \
+          "${GITHUB_WORKSPACE}/scripts/ci-configure-cassandra50-yaml" \
+            apache-cassandra-5.0.8/conf/cassandra.yaml \
+            apache-cassandra-5.0.8/conf/cassandra.yaml.configured \
+            CASSANDRA_4 big
+          mv apache-cassandra-5.0.8/conf/cassandra.yaml.configured \
             apache-cassandra-5.0.8/conf/cassandra.yaml
           python -m pip install --disable-pip-version-check --user \
             'cassandra-driver>=3.29,<4' 'six>=1.16'
@@ -692,6 +693,9 @@ jobs:
           --output-root "${{ runner.temp }}/cassandra-50-import"
           --import-cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
           --java-home "$JAVA_HOME"
+          --expect-format nb
+          --storage-compatibility-mode CASSANDRA_4
+          --sstable-format big
 
       - name: Mutate the imported SSTable through stock Cassandra 5.0 cqlsh
         run: |
@@ -724,7 +728,7 @@ jobs:
           java -jar "$TOOL_JAR" workspace stop "$WORKSPACE" \
             | tee "${{ runner.temp }}/cassandra-50-import/workspace-stop.log"
 
-      - name: Migrate direct Cassandra 5.0 Big nb input to Big oa output
+      - name: Exercise direct Cassandra 5.0 CASSANDRA_4 Big nb workflow
         run: |
           scripts/ci-direct-cqlsh-rejections \
             --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar \
@@ -737,37 +741,11 @@ jobs:
             --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8" \
             --java-home "$JAVA_HOME" \
             --output-root "${{ runner.temp }}/cassandra-50-import" \
-            --output-format big \
             --input-version nb \
-            --output-version oa \
-          --timestamp-base 2000000000000000
+            --output-version nb \
+            --timestamp-base 2000000000000000
 
-      - name: Convert direct Cassandra 5.0 Big oa input to BTI da output
-        run: >-
-          scripts/ci-direct-cqlsh
-          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
-          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
-          --java-home "$JAVA_HOME"
-          --output-root "${{ runner.temp }}/cassandra-50-import"
-          --output-format bti
-          --input-version oa
-          --output-version da
-          --timestamp-base 2000000000000010
-
-      - name: Exercise direct Cassandra 5.0 BTI da-only workflow
-        run: >-
-          scripts/ci-direct-cqlsh
-          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
-          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
-          --java-home "$JAVA_HOME"
-          --output-root "${{ runner.temp }}/cassandra-50-import"
-          --input-format bti
-          --input-version da
-          --output-format bti
-          --output-version da
-          --timestamp-base 2000000000000020
-
-      - name: Read and update Cassandra 5.0 system.local in Cassandra 4 compatibility mode
+      - name: Read and update Cassandra 5.0 system.local as CASSANDRA_4 Big nb
         run: >-
           scripts/ci-system-local-cqlsh
           --image cassandra:5.0.8
@@ -776,27 +754,51 @@ jobs:
           --java-home "$JAVA_HOME"
           --output-root "${{ runner.temp }}/cassandra-50-system-local-cassandra-4"
           --storage-compatibility-mode CASSANDRA_4
+          --sstable-format big
 
-      - name: Read and update Cassandra 5.0 system.local in native mode
+      - name: Read and update Cassandra 5.0 system.local as UPGRADING Big oa
         run: >-
           scripts/ci-system-local-cqlsh
           --image cassandra:5.0.8
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
           --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
           --java-home "$JAVA_HOME"
-          --output-root "${{ runner.temp }}/cassandra-50-system-local-none"
+          --output-root "${{ runner.temp }}/cassandra-50-system-local-upgrading-big"
+          --storage-compatibility-mode UPGRADING
+          --sstable-format big
+
+      - name: Read and update Cassandra 5.0 system.local as NONE Big oa
+        run: >-
+          scripts/ci-system-local-cqlsh
+          --image cassandra:5.0.8
+          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-50-system-local-none-big"
           --storage-compatibility-mode NONE
+          --sstable-format big
 
-      - name: Record Cassandra 5.0 emitted format provenance
-        run: scripts/ci-emitted-format-provenance "${{ runner.temp }}/cassandra-50-import"
+      - name: Read and update Cassandra 5.0 system.local as NONE BTI da
+        run: >-
+          scripts/ci-system-local-cqlsh
+          --image cassandra:5.0.8
+          --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
+          --cassandra-home "${{ runner.temp }}/apache-cassandra-5.0.8"
+          --java-home "$JAVA_HOME"
+          --output-root "${{ runner.temp }}/cassandra-50-system-local-none-bti"
+          --storage-compatibility-mode NONE
+          --sstable-format bti
 
-      - name: Upload Cassandra 5.0 emitted format provenance
+      - name: Record Cassandra 5.0 configured-output provenance
+        run: scripts/ci-configured-output-provenance "${{ runner.temp }}/cassandra-50-import"
+
+      - name: Upload Cassandra 5.0 configured-output provenance
         uses: actions/upload-artifact@v7
         with:
-          name: cassandra-50-emitted-format-provenance
+          name: cassandra-50-configured-output-provenance
           if-no-files-found: error
           retention-days: 14
-          path: ${{ runner.temp }}/cassandra-50-import/emitted-format-provenance.json
+          path: ${{ runner.temp }}/cassandra-50-import/configured-output-provenance.json
 
       - name: Upload import diagnostics
         if: failure()
@@ -831,10 +833,10 @@ jobs:
           pattern: cassandra-*-fixture-provenance
           path: target/fixture-provenance
 
-      - name: Download emitted-format provenance
+      - name: Download configured-output provenance
         uses: actions/download-artifact@v7
         with:
-          name: cassandra-50-emitted-format-provenance
+          name: cassandra-50-configured-output-provenance
           path: target/fixture-provenance/emitted
 
       - name: Publish compatibility report

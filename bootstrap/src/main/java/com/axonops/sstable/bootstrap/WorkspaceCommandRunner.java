@@ -216,13 +216,22 @@ final class WorkspaceCommandRunner {
             verifySchemaBundle(repository, manifest);
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
-            String outputFormat = requiredOutputFormat(manifest);
+            String requestedOutputFormat = manifest.outputIdentity().get("sstable.format");
+            String outputFormat;
+            String storageCompatibilityMode;
+            if ("5.0".equals(adapter.releaseLine())) {
+                Cassandra50StorageCompatibility.Settings settings =
+                        Cassandra50StorageCompatibility.resolveSettings(installation,
+                                manifest.sourceInventory(), requestedOutputFormat);
+                outputFormat = settings.outputFormat();
+                storageCompatibilityMode = settings.storageCompatibilityMode();
+            } else {
+                outputFormat = requestedOutputFormat == null ? "big" : requestedOutputFormat;
+                storageCompatibilityMode = null;
+            }
             validateOutputFormat(adapter, outputFormat);
             SstableIdentifierStyle identifierStyle = SstableIdentifierStyle.forImport(
                     manifest.sourceInventory(), adapter.releaseLine());
-            String storageCompatibilityMode = "5.0".equals(adapter.releaseLine())
-                    ? Cassandra50StorageCompatibility.resolve(installation,
-                            manifest.sourceInventory(), outputFormat) : null;
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
                     outputIdentity(outputFormat, identifierStyle, storageCompatibilityMode));
             repository.save(lock, manifest);
@@ -498,16 +507,25 @@ final class WorkspaceCommandRunner {
                     throw new WorkspaceException("Workspace is already initialized with a "
                             + "different SSTable source inventory: " + repository.root());
                 }
-                String existingFormat = requiredOutputFormat(manifest);
-                String requestedFormat = arguments.sstableOutputFormat().value();
-                if (!existingFormat.equals(requestedFormat)) {
-                    throw new WorkspaceException("Workspace is already initialized with SSTable "
-                            + "output format " + existingFormat);
+                String existingFormat = manifest.outputIdentity().get("sstable.format");
+                if (arguments.sstableOutputFormatSpecified()) {
+                    String requestedFormat = arguments.sstableOutputFormat().value();
+                    if (existingFormat != null && !existingFormat.equals(requestedFormat)) {
+                        throw new WorkspaceException("Workspace is already initialized with "
+                                + "SSTable output format " + existingFormat);
+                    }
+                    if (existingFormat == null) {
+                        manifest = manifest.withOutputIdentity(Collections.singletonMap(
+                                "sstable.format", requestedFormat));
+                        repository.save(lock, manifest);
+                    }
                 }
             } else {
                 manifest = WorkspaceManifest.create(requested);
-                manifest = manifest.withOutputIdentity(Collections.singletonMap(
-                        "sstable.format", arguments.sstableOutputFormat().value()));
+                if (arguments.sstableOutputFormatSpecified()) {
+                    manifest = manifest.withOutputIdentity(Collections.singletonMap(
+                            "sstable.format", arguments.sstableOutputFormat().value()));
+                }
                 if (schema != null) {
                     manifest = manifest.withSchemaIdentity(schema.identity());
                 }

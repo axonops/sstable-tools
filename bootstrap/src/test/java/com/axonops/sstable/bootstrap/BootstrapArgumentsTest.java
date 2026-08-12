@@ -121,6 +121,7 @@ public class BootstrapArgumentsTest {
         });
         Assert.assertEquals(BootstrapArguments.SstableOutputFormat.BTI,
                 create.sstableOutputFormat());
+        Assert.assertTrue(create.sstableOutputFormatSpecified());
 
         BootstrapArguments direct = BootstrapArguments.parse(new String[]{
                 "cqlsh", "--sstables", "source-Data.db", "--schema", "schema.cql",
@@ -128,6 +129,12 @@ public class BootstrapArgumentsTest {
         });
         Assert.assertEquals(BootstrapArguments.SstableOutputFormat.BIG,
                 direct.sstableOutputFormat());
+        Assert.assertTrue(direct.sstableOutputFormatSpecified());
+
+        BootstrapArguments inferred = BootstrapArguments.parse(new String[]{
+                "cqlsh", "--sstables", "source-Data.db", "--schema", "schema.cql"
+        });
+        Assert.assertFalse(inferred.sstableOutputFormatSpecified());
 
         assertUsageFailure(new String[]{"workspace", "start", "workspace",
                 "--output-format", "bti"}, "only valid with workspace create or cqlsh");

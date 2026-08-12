@@ -339,17 +339,18 @@ The following matrix is derived from the release branches' `BigFormat` and
 `BtiFormat` version implementations. The exact worker patch remains pinned and
 its runtime `Version.isCompatible` result is authoritative.
 
-| Target runtime | Accepted input | Default output |
+| Target runtime | Accepted input | Target-configured output |
 |---|---|---|
 | Cassandra 3.11 | Big `ma` through `me` | Big `me` |
 | Cassandra 4.0 | Big `ma` through `nb` | Big `nb` |
 | Cassandra 4.1 | Big `ma` through `nb` | Big `nb` |
-| Cassandra 5.0 | Big `ma` through `oa`; BTI `da` | Big `nb` in `CASSANDRA_4`; Big `oa` or BTI `da` in `UPGRADING`/`NONE` |
+| Cassandra 5.0 | Big `ma` through `oa`; BTI `da` | `CASSANDRA_4/big` → `nb`; `UPGRADING`/`NONE` plus `big` → `oa`; `UPGRADING`/`NONE` plus `bti` → `da` |
 
-The 5.0 worker follows the target node's resolved storage-compatibility mode.
-This preserves Cassandra 4 rollback compatibility by emitting Big `nb` while
-the target remains in `CASSANDRA_4`, and enables Big `oa` or BTI `da` after the
-target moves to `UPGRADING` or `NONE`.
+The 5.0 worker follows both the target node's resolved
+`storage_compatibility_mode` and `sstable.selected_format`. This preserves
+Cassandra 4 rollback compatibility by emitting Big `nb` while the target
+remains in `CASSANDRA_4`, emits Big `oa` when an upgrading/native node selects
+`big`, and emits BTI `da` only when that node selects `bti`.
 
 Notable variants are:
 

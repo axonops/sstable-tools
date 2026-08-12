@@ -11,6 +11,7 @@ cassandra_home=''
 java_home=''
 output_root=''
 output_format='big'
+output_format_specified=false
 input_format=''
 input_version=''
 output_version=''
@@ -37,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
-    --output-format) output_format=${2:-}; shift 2 ;;
+    --output-format) output_format=${2:-}; output_format_specified=true; shift 2 ;;
     --input-format) input_format=${2:-}; shift 2 ;;
     --input-version) input_version=${2:-}; shift 2 ;;
     --output-version) output_version=${2:-}; shift 2 ;;
@@ -84,10 +85,14 @@ source_args=()
 for source in "${initial_sources[@]}"; do
   source_args+=(--sstables "$source")
 done
+format_args=()
+if [[ "$output_format_specified" == true ]]; then
+  format_args+=(--output-format "$output_format")
+fi
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
-  --output-format "$output_format" cqlsh \
+  "${format_args[@]}" cqlsh \
   --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('direct-row', 'inserted', 'new') USING TIMESTAMP ${timestamp_base};" \
   | tee "$output_root/direct-cqlsh-insert.log"
 
@@ -116,7 +121,7 @@ done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
-  --output-format "$output_format" cqlsh \
+  "${format_args[@]}" cqlsh \
   --execute "UPDATE ci_source.events USING TIMESTAMP $((timestamp_base + 1)) SET payload = 'updated', state = 'ready' WHERE event_id = 'direct-row';" \
   | tee "$output_root/direct-cqlsh-update.log"
 
@@ -131,7 +136,7 @@ done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
-  --output-format "$output_format" cqlsh \
+  "${format_args[@]}" cqlsh \
   --execute "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'direct-row';" \
   | tee "$output_root/direct-cqlsh-select.log"
 

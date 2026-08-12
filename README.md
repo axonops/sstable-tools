@@ -125,7 +125,6 @@ INSERT_CQL="INSERT INTO acme.users (id, name) VALUES (1, 'Ada') USING TIMESTAMP 
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
   --output-dir /archive/acme/users-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/acme-users.cql \
-  --output-format bti \
   cqlsh --execute "$INSERT_CQL"
 ```
 
@@ -200,7 +199,6 @@ SYSTEM_CQL="UPDATE system.local USING TIMESTAMP $NOW_MICROS SET cluster_name = '
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
   --output-dir /archive/system/local-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/system.local.cql \
-  --output-format bti \
   cqlsh --execute "$SYSTEM_CQL"
 ```
 
@@ -224,30 +222,37 @@ Use SSTable Tools **v1.0.5 or newer** when mutating `system.local`. Version
 1.0.5 added the sandbox topology overrides required when the imported node's
 datacenter or rack differs from the isolated worker's synthetic topology.
 
-### Write Cassandra 5.0 BTI output
+### Cassandra 5.0 output format
 
-On Cassandra 5.0, `--output-format bti` selects BTI `da` output. BTI requires
-the target Cassandra configuration to use `storage_compatibility_mode:
-UPGRADING` or `NONE`; it is unavailable in `CASSANDRA_4` mode. BTI is also
-rejected by the 3.11, 4.0, and 4.1 adapters.
+SSTable Tools follows the selected Cassandra installation's `cassandra.yaml`;
+it does not offer a format-conversion mode. The effective output is:
 
-For Big output, SSTable Tools follows Cassandra 5.0's configured storage mode:
-`CASSANDRA_4` publishes Big `nb`, while `UPGRADING` and `NONE` publish Big
-`oa`. It reads `cassandra.yaml` from `CASSANDRA_CONF`, the selected tarball's
-`conf` directory, or `/etc/cassandra` for a packaged `/usr/share/cassandra`
-runtime. If no configuration is available, it infers native mode from `oa` or
-`da` input and otherwise uses Cassandra 5.0's safe `CASSANDRA_4` default. The
-configuration is consulted only to select the output compatibility mode; the
-isolated workspace still uses its own generated, loopback-only configuration.
+| `storage_compatibility_mode` | `sstable.selected_format` | Output |
+|---|---|---|
+| `CASSANDRA_4` | `big` | Big `nb` |
+| `UPGRADING` | `big` | Big `oa` |
+| `NONE` | `big` | Big `oa` |
+| `UPGRADING` or `NONE` | `bti` | BTI `da` |
+
+`CASSANDRA_4` with `bti` is invalid. The tool reads `cassandra.yaml` from
+`CASSANDRA_CONF`, the selected tarball's `conf` directory, or `/etc/cassandra`
+for a packaged `/usr/share/cassandra` runtime. An omitted
+`storage_compatibility_mode` defaults to `CASSANDRA_4`; an omitted
+`sstable.selected_format` defaults to `big`. If no configuration is available,
+the tool falls back to the selected SSTable inventory and refuses ambiguous
+mixed Big/BTI input.
+
+`--output-format` is only an optional assertion. It cannot override
+`cassandra.yaml`; a mismatch fails before import or publication with a clear
+"format conversion is not supported" error. Normally, omit it:
 
 ```shell
 NOW_MICROS=$(date +%s%6N)
 INSERT_CQL="INSERT INTO acme.users (id, name) VALUES (2, 'Ada') USING TIMESTAMP $NOW_MICROS;"
 
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
-  --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
+  --output-dir /archive/acme/users-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/acme-users.cql \
-  --output-format bti \
   cqlsh --execute "$INSERT_CQL"
 ```
 
@@ -260,8 +265,8 @@ uses numeric identifiers. For Cassandra 5.0, selecting a descriptor with Cassand
 Cassandra-generated UUID-style delta unchanged. A mixed numeric and UUID-style
 selection uses UUID-style output. With `--sstables`, inference uses only the
 explicitly selected descriptors. With `--output-dir`, it uses every complete
-SSTable in that directory. Publication does not read the installation's
-`cassandra.yaml`.
+SSTable in that directory. Output format and Cassandra 5.0 format version come
+from the selected installation's `cassandra.yaml`.
 
 After a successful direct mutation, later commands for that table should select
 both the original descriptors and every published sibling descriptor that
@@ -320,7 +325,7 @@ CASSANDRA_LIB_DIR=<path> sstable-tools [tool options] <command>
 | `--output-dir <path>` | Existing non-symlink publication directory for direct `cqlsh`. Used alone, it is also the complete baseline. Combined with `--sstables`, it selects where deltas are published and its existing SSTables must all be included in the selected source inventory. |
 | `--schema <path>` | UTF-8 CQL schema bundle. Required by direct `cqlsh`; recorded by `workspace create`. |
 | `--timestamp-policy <policy>` | `wall-clock` or `after-source`. Valid with direct `cqlsh` and `workspace start`; the choice is persisted for a managed workspace. |
-| `--output-format <format>` | `big` (default) or `bti`. Valid with direct `cqlsh` and `workspace create`; `bti` requires Cassandra 5.0. |
+| `--output-format <format>` | Optional `big` or `bti` assertion for direct `cqlsh` and `workspace create`. It cannot override Cassandra 5.0 `sstable.selected_format`; mismatches fail rather than convert. |
 | `--tmp-dir <path>` | Parent for private direct-CQLSH workspaces. Default: `/tmp/sstable-tools`. |
 | `--execute <cql>` | Run one CQL statement and exit. Valid with direct `cqlsh` and `workspace cqlsh`. |
 | `--allow-live-cassandra-output` | Bypass the confirmation before direct CQLSH publishes new SSTables into a directory owned by a running Cassandra process. Intended for explicit non-interactive acknowledgement. |
@@ -341,7 +346,7 @@ and 5.0 query guards.
 |---|---|
 | `CASSANDRA_LIB_DIR` | Cassandra tarball `lib` directory or packaged runtime root; the launcher scans the selected directory and its nested or adjacent `lib`. |
 | `CASSANDRA_HOME` | Fallback Cassandra home; the launcher scans the home and its `lib` child. |
-| `CASSANDRA_CONF` | Optional Cassandra configuration directory (or `cassandra.yaml` path). On Cassandra 5.0, it has precedence when resolving `storage_compatibility_mode`. |
+| `CASSANDRA_CONF` | Optional Cassandra configuration directory (or `cassandra.yaml` path). On Cassandra 5.0, it has precedence when resolving `storage_compatibility_mode` and `sstable.selected_format`. |
 | `SSTABLE_TOOLS_JAVA` | Exact Java executable used by the launcher. |
 | `JAVA_HOME` | Supplies `$JAVA_HOME/bin/java` when `SSTABLE_TOOLS_JAVA` is unset. |
 | `SSTABLE_TOOLS_JAVA_OPTS` | Additional whitespace-delimited launcher-JVM options, such as `-Xms256m -Xmx2g`. |
@@ -418,7 +423,6 @@ export CASSANDRA_LIB_DIR=/opt/apache-cassandra-5.0.8/lib
 "$TOOL" \
   --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
   --schema /archive/acme-users.cql \
-  --output-format big \
   workspace create "$CASE"
 
 "$TOOL" workspace import "$CASE"

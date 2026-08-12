@@ -28,6 +28,28 @@ final class Cassandra50StorageCompatibility {
                     + "([A-Za-z0-9_]+)\\1\\s*(?:#.*)?$");
     private static final Pattern SETTING_KEY = Pattern.compile(
             "^\\s*storage_compatibility_mode\\s*:.*$");
+    private static final Pattern FORMAT_SETTING = Pattern.compile(
+            "^\\s*selected_format\\s*:\\s*(['\"]?)([A-Za-z0-9_]+)\\1\\s*(?:#.*)?$");
+    private static final Pattern FORMAT_SETTING_KEY = Pattern.compile(
+            "^\\s*selected_format\\s*:.*$");
+
+    static final class Settings {
+        private final String storageCompatibilityMode;
+        private final String outputFormat;
+
+        private Settings(String storageCompatibilityMode, String outputFormat) {
+            this.storageCompatibilityMode = storageCompatibilityMode;
+            this.outputFormat = outputFormat;
+        }
+
+        String storageCompatibilityMode() {
+            return storageCompatibilityMode;
+        }
+
+        String outputFormat() {
+            return outputFormat;
+        }
+    }
 
     private Cassandra50StorageCompatibility() {
     }
@@ -35,18 +57,37 @@ final class Cassandra50StorageCompatibility {
     static String resolve(CassandraInstallation installation,
                           SourceInventory inventory,
                           String outputFormat) throws WorkspaceException {
-        return resolve(installation.home(), inventory, outputFormat, System.getenv());
+        return resolveSettings(installation.home(), inventory, outputFormat, System.getenv())
+                .storageCompatibilityMode();
     }
 
     static String resolve(Path cassandraHome,
                           SourceInventory inventory,
                           String outputFormat,
                           Map<String, String> environment) throws WorkspaceException {
+        return resolveSettings(cassandraHome, inventory, outputFormat, environment)
+                .storageCompatibilityMode();
+    }
+
+    static Settings resolveSettings(CassandraInstallation installation,
+                                    SourceInventory inventory,
+                                    String requestedOutputFormat)
+            throws WorkspaceException {
+        return resolveSettings(installation.home(), inventory, requestedOutputFormat,
+                System.getenv());
+    }
+
+    static Settings resolveSettings(Path cassandraHome,
+                                    SourceInventory inventory,
+                                    String requestedOutputFormat,
+                                    Map<String, String> environment)
+            throws WorkspaceException {
         Path configuration = configurationPath(cassandraHome, environment);
-        String mode = configuration == null
-                ? inferFromInventory(inventory) : readMode(configuration);
-        validateOutputFormat(mode, outputFormat, configuration);
-        return mode;
+        Settings settings = configuration == null
+                ? inferredSettings(inventory, requestedOutputFormat)
+                : readSettings(configuration);
+        validateSettings(settings, requestedOutputFormat, configuration);
+        return settings;
     }
 
     static String required(WorkspaceManifest manifest) throws WorkspaceException {
@@ -111,7 +152,7 @@ final class Cassandra50StorageCompatibility {
         return null;
     }
 
-    private static String readMode(Path configuration) throws WorkspaceException {
+    private static Settings readSettings(Path configuration) throws WorkspaceException {
         final List<String> lines;
         try {
             lines = Files.readAllLines(configuration, StandardCharsets.UTF_8);
@@ -119,24 +160,41 @@ final class Cassandra50StorageCompatibility {
             throw new WorkspaceException("Cannot read Cassandra storage compatibility mode from "
                     + configuration, e);
         }
-        String selected = null;
+        String selectedMode = null;
+        String selectedFormat = null;
         for (String line : lines) {
             Matcher matcher = SETTING.matcher(line);
-            if (!matcher.matches()) {
-                if (SETTING_KEY.matcher(line).matches()) {
-                    throw new WorkspaceException("Malformed storage_compatibility_mode in "
-                            + configuration + ": " + line.trim());
+            if (matcher.matches()) {
+                if (selectedMode != null) {
+                    throw new WorkspaceException("Duplicate storage_compatibility_mode in "
+                            + configuration);
                 }
+                selectedMode = normalized(matcher.group(2), configuration.toString());
                 continue;
             }
-            if (selected != null) {
-                throw new WorkspaceException("Duplicate storage_compatibility_mode in "
-                        + configuration);
+            if (SETTING_KEY.matcher(line).matches()) {
+                throw new WorkspaceException("Malformed storage_compatibility_mode in "
+                        + configuration + ": " + line.trim());
             }
-            selected = normalized(matcher.group(2), configuration.toString());
+
+            Matcher formatMatcher = FORMAT_SETTING.matcher(line);
+            if (formatMatcher.matches()) {
+                if (selectedFormat != null) {
+                    throw new WorkspaceException("Duplicate selected_format in "
+                            + configuration);
+                }
+                selectedFormat = normalizedFormat(formatMatcher.group(2),
+                        configuration.toString());
+                continue;
+            }
+            if (FORMAT_SETTING_KEY.matcher(line).matches()) {
+                throw new WorkspaceException("Malformed selected_format in "
+                        + configuration + ": " + line.trim());
+            }
         }
         // Cassandra 5.0 defaults to Cassandra 4 storage compatibility when omitted.
-        return selected == null ? CASSANDRA_4 : selected;
+        return new Settings(selectedMode == null ? CASSANDRA_4 : selectedMode,
+                selectedFormat == null ? "big" : selectedFormat);
     }
 
     private static String inferFromInventory(SourceInventory inventory)
@@ -150,19 +208,57 @@ final class Cassandra50StorageCompatibility {
         return CASSANDRA_4;
     }
 
-    private static void validateOutputFormat(String mode,
-                                             String outputFormat,
-                                             Path configuration)
+    private static Settings inferredSettings(SourceInventory inventory,
+                                             String requestedOutputFormat)
             throws WorkspaceException {
-        if (CASSANDRA_4.equals(mode) && "bti".equals(outputFormat)) {
+        boolean hasBig = false;
+        boolean hasBti = false;
+        for (SstableSet set : inventory.sets()) {
+            hasBig |= "big".equals(set.format());
+            hasBti |= "bti".equals(set.format());
+        }
+        if (hasBig && hasBti && requestedOutputFormat == null) {
+            throw new WorkspaceException("Cannot infer Cassandra 5.0 selected_format from "
+                    + "mixed Big and BTI SSTables without a readable cassandra.yaml");
+        }
+        String format = requestedOutputFormat != null
+                ? normalizedFormat(requestedOutputFormat, "--output-format")
+                : hasBti ? "bti" : "big";
+        return new Settings(inferFromInventory(inventory), format);
+    }
+
+    private static void validateSettings(Settings settings,
+                                         String requestedOutputFormat,
+                                         Path configuration)
+            throws WorkspaceException {
+        if (CASSANDRA_4.equals(settings.storageCompatibilityMode())
+                && "bti".equals(settings.outputFormat())) {
             String source = configuration == null
                     ? "the selected/existing SSTables"
                     : configuration.toString();
             throw new WorkspaceException("Cassandra 5.0 BTI output is unavailable in "
                     + "storage_compatibility_mode CASSANDRA_4 resolved from " + source
-                    + "; use Big output or set the target Cassandra configuration to "
-                    + "UPGRADING or NONE");
+                    + "; correct the target Cassandra configuration");
         }
+        if (requestedOutputFormat != null) {
+            String requested = normalizedFormat(requestedOutputFormat, "--output-format");
+            if (!requested.equals(settings.outputFormat())) {
+                throw new WorkspaceException("--output-format " + requested
+                        + " does not match Cassandra selected_format "
+                        + settings.outputFormat() + " resolved from " + configuration
+                        + "; SSTable format conversion is not supported");
+            }
+        }
+    }
+
+    private static String normalizedFormat(String value, String source)
+            throws WorkspaceException {
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if (!"big".equals(normalized) && !"bti".equals(normalized)) {
+            throw new WorkspaceException("Unsupported selected_format '" + value + "' in "
+                    + source + "; expected big or bti");
+        }
+        return normalized;
     }
 
     private static String normalized(String value, String source) throws WorkspaceException {

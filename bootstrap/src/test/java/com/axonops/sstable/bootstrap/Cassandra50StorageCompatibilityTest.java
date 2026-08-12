@@ -47,6 +47,40 @@ public class Cassandra50StorageCompatibilityTest {
         Assert.assertEquals(Cassandra50StorageCompatibility.CASSANDRA_4,
                 Cassandra50StorageCompatibility.resolve(home, emptyInventory(), "big",
                         Collections.<String, String>emptyMap()));
+        Assert.assertEquals("big", Cassandra50StorageCompatibility.resolveSettings(home,
+                emptyInventory(), null, Collections.<String, String>emptyMap()).outputFormat());
+    }
+
+    @Test
+    public void configuredSelectedFormatIsAuthoritative() throws Exception {
+        Path btiHome = configuredHome("configured-bti", "NONE", "bti");
+        Cassandra50StorageCompatibility.Settings bti =
+                Cassandra50StorageCompatibility.resolveSettings(btiHome, emptyInventory(), null,
+                        Collections.<String, String>emptyMap());
+        Assert.assertEquals(Cassandra50StorageCompatibility.NONE,
+                bti.storageCompatibilityMode());
+        Assert.assertEquals("bti", bti.outputFormat());
+
+        Path bigHome = configuredHome("configured-big", "UPGRADING", "big");
+        Cassandra50StorageCompatibility.Settings big =
+                Cassandra50StorageCompatibility.resolveSettings(bigHome, emptyInventory(), null,
+                        Collections.<String, String>emptyMap());
+        Assert.assertEquals(Cassandra50StorageCompatibility.UPGRADING,
+                big.storageCompatibilityMode());
+        Assert.assertEquals("big", big.outputFormat());
+    }
+
+    @Test
+    public void outputFormatOptionCannotRequestAConversion() throws Exception {
+        Path home = configuredHome("configured-bti-mismatch", "NONE", "bti");
+        try {
+            Cassandra50StorageCompatibility.resolveSettings(home, emptyInventory(), "big",
+                    Collections.<String, String>emptyMap());
+            Assert.fail("Expected selected_format mismatch rejection");
+        } catch (WorkspaceException expected) {
+            Assert.assertTrue(expected.getMessage().contains("does not match"));
+            Assert.assertTrue(expected.getMessage().contains("conversion is not supported"));
+        }
     }
 
     @Test
@@ -81,20 +115,25 @@ public class Cassandra50StorageCompatibilityTest {
         Path home = configuredHome("home-mode", "CASSANDRA_4");
         Path external = temporary.newFolder("external-conf").toPath();
         Files.write(external.resolve("cassandra.yaml"),
-                Collections.singletonList("storage_compatibility_mode: NONE"),
+                Arrays.asList("sstable:", "  selected_format: bti",
+                        "storage_compatibility_mode: NONE"),
                 StandardCharsets.UTF_8);
         Map<String, String> environment = new HashMap<>();
         environment.put("CASSANDRA_CONF", external.toString());
 
         Assert.assertEquals(Cassandra50StorageCompatibility.NONE,
-                Cassandra50StorageCompatibility.resolve(home, emptyInventory(), "big",
+                Cassandra50StorageCompatibility.resolve(home, emptyInventory(), "bti",
                         environment));
+        Assert.assertEquals("bti", Cassandra50StorageCompatibility.resolveSettings(home,
+                emptyInventory(), null, environment).outputFormat());
     }
 
     @Test
     public void rejectsBtiInCassandra4CompatibilityMode() throws Exception {
+        Path home = configuredHome("cassandra-4-bti", "CASSANDRA_4", "bti");
         try {
-            resolveConfigured("CASSANDRA_4", "bti");
+            Cassandra50StorageCompatibility.resolveSettings(home, emptyInventory(), null,
+                    Collections.<String, String>emptyMap());
             Assert.fail("Expected BTI compatibility rejection");
         } catch (WorkspaceException expected) {
             Assert.assertTrue(expected.getMessage().contains("BTI output is unavailable"));
@@ -134,19 +173,37 @@ public class Cassandra50StorageCompatibilityTest {
         } catch (WorkspaceException expected) {
             Assert.assertTrue(expected.getMessage().contains("Malformed"));
         }
+
+        Path duplicateFormat = configuredHome("duplicate-format", "NONE", "big");
+        Files.write(duplicateFormat.resolve("conf/cassandra.yaml"),
+                Arrays.asList("sstable:", "  selected_format: big",
+                        "  selected_format: bti", "storage_compatibility_mode: NONE"),
+                StandardCharsets.UTF_8);
+        try {
+            Cassandra50StorageCompatibility.resolveSettings(duplicateFormat,
+                    emptyInventory(), null, Collections.<String, String>emptyMap());
+            Assert.fail("Expected duplicate format rejection");
+        } catch (WorkspaceException expected) {
+            Assert.assertTrue(expected.getMessage().contains("Duplicate selected_format"));
+        }
     }
 
     private String resolveConfigured(String mode, String format) throws Exception {
-        Path home = configuredHome("configured-" + mode + "-" + format, mode);
+        Path home = configuredHome("configured-" + mode + "-" + format, mode, format);
         return Cassandra50StorageCompatibility.resolve(home, emptyInventory(), format,
                 Collections.<String, String>emptyMap());
     }
 
     private Path configuredHome(String name, String mode) throws Exception {
+        return configuredHome(name, mode, "big");
+    }
+
+    private Path configuredHome(String name, String mode, String format) throws Exception {
         Path home = temporary.newFolder(name).toPath();
         Path conf = Files.createDirectories(home.resolve("conf"));
         Files.write(conf.resolve("cassandra.yaml"),
-                Collections.singletonList("storage_compatibility_mode: " + mode),
+                Arrays.asList("sstable:", "  selected_format: " + format,
+                        "storage_compatibility_mode: " + mode),
                 StandardCharsets.UTF_8);
         return home;
     }

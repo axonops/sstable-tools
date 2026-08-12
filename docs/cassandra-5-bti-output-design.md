@@ -1,4 +1,4 @@
-# Cassandra 5.0 BTI output design
+# Cassandra 5.0 SSTable output selection design
 
 ## Scope
 
@@ -10,28 +10,30 @@ contract.
 
 ## User contract
 
-Add `--output-format big|bti` to `workspace create` and direct `cqlsh`.
+The selected Cassandra installation is authoritative. SSTable Tools reads
+`storage_compatibility_mode` and `sstable.selected_format` from its
+`cassandra.yaml` and does not expose a format-conversion workflow.
 
-- `bti` is accepted only by the Cassandra 5.0 adapter; `big` remains available
-  to every supported adapter.
-- `big` is the default for backward-compatible existing workflows.
-- `bti` selects Cassandra's configured BTI writer and publishes `da-*-bti`
-  component sets.
-- `bti` is rejected when the resolved storage compatibility mode is
-  `CASSANDRA_4`.
-- It is not accepted by 3.11, 4.0, or 4.1 adapters.
-- A later `workspace start`, `import`, `flush`, or `export` cannot override
-  the recorded value.
+- `CASSANDRA_4` plus `big` publishes Big `nb`.
+- `UPGRADING` or `NONE` plus `big` publishes Big `oa`.
+- `UPGRADING` or `NONE` plus `bti` publishes BTI `da`.
+- `CASSANDRA_4` plus `bti` is rejected as an invalid Cassandra configuration.
+- `--output-format big|bti`, when supplied, is a consistency assertion. It
+  cannot override `cassandra.yaml`, and a mismatch fails before import.
+- A later `workspace start`, `import`, `flush`, or `export` cannot override the
+  resolved value.
 
-The selected output format is independent of the input set. A 5.0 workspace
-may import compatible Big and BTI sets only when Cassandra validates the
-combination. Generated deltas always use the selected writer format.
+The input set may contain SSTables Cassandra can read, but generated deltas
+always use the target installation's configured mode and writer format.
 
 ## Persistent state
 
-The format is stored as the immutable `sstable.format` output-identity entry
-during creation before any source is staged. At import, the selected Cassandra
-5.0 runtime resolves and records `cassandra.storage-compatibility-mode`.
+For new workspaces the format remains unresolved during Cassandra-free
+creation. At import, the selected Cassandra 5.0 runtime resolves and records
+the immutable `sstable.format` and
+`cassandra.storage-compatibility-mode` output-identity entries.
+An explicit `--output-format` is recorded earlier only as an assertion and
+must match the resolved installation setting.
 Existing imported manifests without that entry retain the old `NONE` behavior.
 
 The controller passes the recorded value, not a caller-supplied later value,
@@ -52,15 +54,14 @@ registers both formats, so selecting BTI does not prevent reading compatible
 Big input. The runtime verifies `DatabaseDescriptor.getSelectedSSTableFormat()`
 matches the manifest before importing or starting native transport.
 
-The private Cassandra 5.0 sandbox sets `storage_compatibility_mode` to the
-resolved target value. Resolution checks `CASSANDRA_CONF`, the selected
-runtime's `conf/cassandra.yaml`, and `/etc/cassandra/cassandra.yaml` for a
-packaged `/usr/share/cassandra` runtime. An omitted YAML setting means
-`CASSANDRA_4`, matching Cassandra 5.0's default. When no configuration is
-available, `oa`/`da` input selects native mode; `nb`, older input, or an empty
-inventory selects the safe `CASSANDRA_4` default. The target configuration is
-read only for this setting; the worker still runs from a generated,
-loopback-only configuration inside its private workspace.
+The private Cassandra 5.0 sandbox sets both `storage_compatibility_mode` and
+`sstable.selected_format` to the resolved target values. Resolution checks
+`CASSANDRA_CONF`, the selected runtime's `conf/cassandra.yaml`, and
+`/etc/cassandra/cassandra.yaml` for a packaged `/usr/share/cassandra` runtime.
+An omitted mode means `CASSANDRA_4`; an omitted format means `big`. When no
+configuration is available, the inventory supplies a conservative fallback;
+mixed Big/BTI input is rejected as ambiguous. The worker still runs from a
+generated, loopback-only configuration inside its private workspace.
 
 The same generated sandbox configuration infers
 `uuid_sstable_identifiers_enabled` from the explicitly selected SSTable
@@ -76,25 +77,25 @@ is validated against the selected format and mode: Big must be `nb-big` in
 
 ## Failure behavior
 
-Invalid output formats, a request on a non-5.0 adapter, a mismatch between
-the manifest and generated YAML, or a generated delta in another format fail
-before publication. A Cassandra storage-compatibility mode that prevents the
-selected writer is rejected during runtime preflight, before import changes
-the workspace. Cassandra 5.0 vector types are rejected explicitly because
-they do not yet have direct-cqlsh round-trip coverage.
+Invalid output formats, an explicit `--output-format` that disagrees with
+`cassandra.yaml`, a mismatch between the manifest and generated YAML, or a
+generated delta in another format fail before publication. A Cassandra
+storage-compatibility mode that prevents the selected writer is rejected
+during runtime preflight, before import changes the workspace. Cassandra 5.0
+vector types are rejected explicitly because they do not yet have
+direct-cqlsh round-trip coverage.
 
 ## Test plan
 
 1. Unit-test CLI parsing, immutable output identity, and runtime configuration
    generation.
-2. Run direct stock Cassandra 5.0 `cqlsh` with `--output-format bti` against
-   a stopped Big fixture, then verify published `da-*-bti` output.
+2. Run direct stock Cassandra 5.0 `cqlsh` against fixtures created with the
+   same target YAML settings and verify that input and output remain `nb/big`,
+   `oa/big`, or `da/bti` as configured.
 3. For each fixture, run direct stock `cqlsh` `SELECT`, timestamped `INSERT`,
    timestamped `UPDATE`, source-hash verification, delta publication, and a
    fresh reopen of source plus delta.
-4. Exercise mixed Big/BTI input only after Cassandra's reader accepts it;
-   otherwise assert the failure is actionable and source files remain intact.
-5. Run the real multi-directory `system.local` mutation and restart scenario
-   in both `CASSANDRA_4` (`nb`) and `NONE` (`oa`) modes.
-6. Reject BTI in `CASSANDRA_4`, future `ob`/`db`, missing BTI index components,
-   and a manifest/YAML output-format mismatch before write publication.
+4. Run the real multi-directory `system.local` mutation and restart scenario
+   for `CASSANDRA_4/big`, `UPGRADING/big`, `NONE/big`, and `NONE/bti`.
+5. Reject BTI in `CASSANDRA_4`, future `ob`/`db`, missing BTI index components,
+   and an explicit format/YAML mismatch before write publication.

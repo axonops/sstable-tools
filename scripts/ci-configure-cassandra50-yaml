@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 4 ]]; then
+  printf 'Usage: %s <input-yaml> <output-yaml> CASSANDRA_4|UPGRADING|NONE big|bti\n' \
+    "$0" >&2
+  exit 64
+fi
+
+input=$1
+output=$2
+mode=$3
+format=$4
+
+case "$mode" in
+  CASSANDRA_4|UPGRADING|NONE) ;;
+  *) printf 'Unsupported storage compatibility mode: %s\n' "$mode" >&2; exit 64 ;;
+esac
+case "$format" in
+  big|bti) ;;
+  *) printf 'Unsupported SSTable format: %s\n' "$format" >&2; exit 64 ;;
+esac
+if [[ "$mode" == CASSANDRA_4 && "$format" == bti ]]; then
+  printf 'CASSANDRA_4 mode cannot use BTI\n' >&2
+  exit 64
+fi
+[[ -f "$input" && "$input" != "$output" ]] || {
+  printf 'Input must be a file and output must be a different path\n' >&2
+  exit 64
+}
+
+awk -v mode="$mode" -v format="$format" '
+  function emit_format() {
+    if (in_sstable && !saw_format) {
+      print "  selected_format: " format
+      saw_format = 1
+    }
+  }
+  /^[[:space:]]*#?[[:space:]]*sstable:[[:space:]]*(#.*)?$/ {
+    emit_format()
+    print "sstable:"
+    in_sstable = 1
+    saw_sstable = 1
+    next
+  }
+  in_sstable && /^[[:space:]]*#?[[:space:]]*selected_format:[[:space:]]*/ {
+    print "  selected_format: " format
+    saw_format = 1
+    next
+  }
+  in_sstable && /^[^[:space:]#][^:]*:[[:space:]]*/ {
+    emit_format()
+    in_sstable = 0
+  }
+  /^[[:space:]]*storage_compatibility_mode:[[:space:]]*/ {
+    print "storage_compatibility_mode: " mode
+    saw_mode = 1
+    next
+  }
+  { print }
+  END {
+    emit_format()
+    if (!saw_sstable) {
+      print ""
+      print "sstable:"
+      print "  selected_format: " format
+    }
+    if (!saw_mode) {
+      print ""
+      print "storage_compatibility_mode: " mode
+    }
+  }
+' "$input" >"$output"
+
+grep -Fxq "  selected_format: $format" "$output"
+grep -Fxq "storage_compatibility_mode: $mode" "$output"

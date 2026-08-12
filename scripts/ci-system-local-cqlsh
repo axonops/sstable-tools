@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --image <image> --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--storage-compatibility-mode CASSANDRA_4|NONE]\n' "$0" >&2
+  printf 'Usage: %s --image <image> --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--storage-compatibility-mode CASSANDRA_4|UPGRADING|NONE --sstable-format big|bti]\n' "$0" >&2
   exit 64
 }
 
@@ -12,6 +12,7 @@ cassandra_home=''
 java_home=''
 output_root=''
 storage_compatibility_mode=''
+sstable_format=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,6 +22,7 @@ while [[ $# -gt 0 ]]; do
     --java-home) java_home=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
     --storage-compatibility-mode) storage_compatibility_mode=${2:-}; shift 2 ;;
+    --sstable-format) sstable_format=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -34,29 +36,23 @@ done
 }
 [[ -x "$java_home/bin/java" ]] || { printf 'Invalid Java home: %s\n' "$java_home" >&2; exit 1; }
 case "$storage_compatibility_mode" in
-  ''|CASSANDRA_4|NONE) ;;
+  ''|CASSANDRA_4|UPGRADING|NONE) ;;
   *) printf 'Unsupported storage compatibility mode: %s\n' \
        "$storage_compatibility_mode" >&2; exit 64 ;;
 esac
+case "$sstable_format" in
+  ''|big|bti) ;;
+  *) printf 'Unsupported SSTable format: %s\n' "$sstable_format" >&2; exit 64 ;;
+esac
+if [[ -n "$storage_compatibility_mode" || -n "$sstable_format" ]]; then
+  [[ -n "$storage_compatibility_mode" && -n "$sstable_format" ]] || usage
+fi
+if [[ "$storage_compatibility_mode" == CASSANDRA_4 && "$sstable_format" == bti ]]; then
+  printf 'CASSANDRA_4 mode cannot use BTI\n' >&2
+  exit 64
+fi
 
-write_storage_compatibility_mode() {
-  input=$1
-  output=$2
-  awk -v mode="$storage_compatibility_mode" '
-    /^[[:space:]]*storage_compatibility_mode:[[:space:]]*/ {
-      print "storage_compatibility_mode: " mode
-      saw_mode = 1
-      next
-    }
-    { print }
-    END {
-      if (!saw_mode) {
-        print ""
-        print "storage_compatibility_mode: " mode
-      }
-    }
-  ' "$input" >"$output"
-}
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 container="sstable-tools-system-local-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
 container=${container:0:63}
@@ -80,7 +76,8 @@ if [[ -n "$storage_compatibility_mode" ]]; then
   original_start_yaml="$output_root/source-cassandra.yaml"
   configured_start_yaml="$output_root/source-cassandra-configured.yaml"
   docker cp "$container:/etc/cassandra/cassandra.yaml" "$original_start_yaml"
-  write_storage_compatibility_mode "$original_start_yaml" "$configured_start_yaml"
+  "$script_dir/ci-configure-cassandra50-yaml" "$original_start_yaml" \
+    "$configured_start_yaml" "$storage_compatibility_mode" "$sstable_format"
   docker cp "$configured_start_yaml" "$container:/etc/cassandra/cassandra.yaml"
 
   runtime_yaml="$cassandra_home/conf/cassandra.yaml"
@@ -89,7 +86,8 @@ if [[ -n "$storage_compatibility_mode" ]]; then
     exit 1
   }
   configured_runtime_yaml="$output_root/runtime-cassandra-configured.yaml"
-  write_storage_compatibility_mode "$runtime_yaml" "$configured_runtime_yaml"
+  "$script_dir/ci-configure-cassandra50-yaml" "$runtime_yaml" \
+    "$configured_runtime_yaml" "$storage_compatibility_mode" "$sstable_format"
   cp "$configured_runtime_yaml" "$runtime_yaml"
 fi
 docker start "$container" >/dev/null
@@ -156,16 +154,26 @@ find "$source_dir" -maxdepth 1 -type f -printf '%p\n' \
 )
 find "$source_dir" -maxdepth 1 -type f -name '*-Data.db' -print -quit \
   | grep -q . || { printf 'Stopped system.local source did not yield Data.db\n' >&2; exit 1; }
-expected_big_version=''
+expected_version=''
+expected_format=''
 case "$storage_compatibility_mode" in
-  CASSANDRA_4) expected_big_version=nb ;;
-  NONE) expected_big_version=oa ;;
+  CASSANDRA_4) expected_version=nb ;;
+  UPGRADING|NONE)
+    if [[ "$sstable_format" == bti ]]; then
+      expected_version=da
+    else
+      expected_version=oa
+    fi
+    ;;
 esac
-if [[ -n "$expected_big_version" ]]; then
-  find "$source_dir" -maxdepth 1 -type f -name "$expected_big_version-*-big-Data.db" \
+if [[ -n "$expected_version" ]]; then
+  expected_format=$sstable_format
+  find "$source_dir" -maxdepth 1 -type f \
+    -name "$expected_version-*-$expected_format-Data.db" \
     -print -quit | grep -q . || {
-      printf 'Cassandra %s did not produce expected Big %s source SSTables\n' \
-        "$storage_compatibility_mode" "$expected_big_version" >&2
+      printf 'Cassandra %s/%s did not produce expected %s/%s source SSTables\n' \
+        "$storage_compatibility_mode" "$sstable_format" \
+        "$expected_version" "$expected_format" >&2
       exit 1
     }
 fi
@@ -190,10 +198,11 @@ first_published=$(sed -n 's/^published\.sstables=//p' \
     "$first_published" >&2
   exit 1
 }
-if [[ -n "$expected_big_version" \
-      && "${first_published%%-*}" != "$expected_big_version" ]]; then
-  printf 'First published descriptor %s does not follow %s mode (expected %s)\n' \
-    "$first_published" "$storage_compatibility_mode" "$expected_big_version" >&2
+if [[ -n "$expected_version" \
+      && "$first_published" != "$expected_version"-*-$expected_format ]]; then
+  printf 'First published descriptor %s does not follow %s/%s (expected %s/%s)\n' \
+    "$first_published" "$storage_compatibility_mode" "$sstable_format" \
+    "$expected_version" "$expected_format" >&2
   exit 1
 fi
 find "$secondary_source_dir" -maxdepth 1 -type f -name '*-Data.db' -print -quit \
@@ -262,10 +271,11 @@ second_published=$(sed -n 's/^published\.sstables=//p' \
     "$second_published" >&2
   exit 1
 }
-if [[ -n "$expected_big_version" \
-      && "${second_published%%-*}" != "$expected_big_version" ]]; then
-  printf 'Second published descriptor %s does not follow %s mode (expected %s)\n' \
-    "$second_published" "$storage_compatibility_mode" "$expected_big_version" >&2
+if [[ -n "$expected_version" \
+      && "$second_published" != "$expected_version"-*-$expected_format ]]; then
+  printf 'Second published descriptor %s does not follow %s/%s (expected %s/%s)\n' \
+    "$second_published" "$storage_compatibility_mode" "$sstable_format" \
+    "$expected_version" "$expected_format" >&2
   exit 1
 fi
 if grep -Fxq "$second_published" "$output_root/occupied-before-second-update.txt"; then

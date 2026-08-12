@@ -59,19 +59,17 @@ interface, verifies the original component hashes, and reopens the combined
 older-format migration behavior from the current 3.11.19 producer format
 (`me`).
 
-The Cassandra 5.0.8 job starts from the release's default stopped Big `nb`
-source. Direct `cqlsh` selects that `nb` set to publish Big `oa`, then selects
-only the `oa` set to publish BTI `da` with `--output-format bti`. A final
-direct workflow selects only the published BTI set, performs `INSERT`,
-`UPDATE`, and `SELECT`, and publishes/reopens BTI output again. Mixed Big/BTI
-source sets remain outside the supported workflow.
+The Cassandra 5.0.8 job configures the source node and selected installation
+identically; it does not exercise format conversion. The generic direct
+workflow runs as `CASSANDRA_4` plus Big and verifies `nb` input and `nb`
+output.
 
 The same job runs the real two-`data_file_directories` `system.local` scenario
-twice. In `CASSANDRA_4` mode, stock Cassandra creates `nb` input and SSTable
-Tools must publish `nb` deltas. In `NONE` mode, both the stock node and the
-tool publish `oa`. Each run places source and generated SSTables in two actual
-Cassandra data roots, restarts the stock 5.0.8 node, and verifies the combined
-row through stock `cqlsh`.
+four times: `CASSANDRA_4/big` produces `nb/big`, `UPGRADING/big` and
+`NONE/big` produce `oa/big`, and `NONE/bti` produces `da/bti`. Each run places
+source and generated SSTables in two actual Cassandra data roots, restarts the
+stock 5.0.8 node with the same YAML settings, and verifies the combined row
+through stock `cqlsh`.
 
 A separate `patch-line-floor` matrix downloads Cassandra 4.0.0 and 4.1.0,
 removes their installation `cassandra.yaml`, and runs runtime preflight. The

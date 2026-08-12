@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path> [--expect-format <version> --import-cassandra-home <path> --java-home <path>]\n' "$0" >&2
+  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path> [--expect-format <version> --import-cassandra-home <path> --java-home <path>] [--storage-compatibility-mode CASSANDRA_4|UPGRADING|NONE --sstable-format big|bti]\n' "$0" >&2
   exit 64
 }
 
@@ -13,6 +13,8 @@ output_root=''
 import_cassandra_home=''
 java_home=''
 expected_format=''
+storage_compatibility_mode=''
+sstable_format=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +25,8 @@ while [[ $# -gt 0 ]]; do
     --import-cassandra-home) import_cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
     --expect-format) expected_format=${2:-}; shift 2 ;;
+    --storage-compatibility-mode) storage_compatibility_mode=${2:-}; shift 2 ;;
+    --sstable-format) sstable_format=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -37,6 +41,21 @@ if [[ -n "$import_cassandra_home" || -n "$java_home" ]]; then
   }
   [[ -x "$java_home/bin/java" ]] || { printf 'Invalid Java home: %s\n' "$java_home" >&2; exit 1; }
 fi
+if [[ -n "$storage_compatibility_mode" || -n "$sstable_format" ]]; then
+  [[ "$release" == 5.0 && -n "$storage_compatibility_mode" \
+    && -n "$sstable_format" ]] || usage
+fi
+case "$storage_compatibility_mode" in
+  ''|CASSANDRA_4|UPGRADING|NONE) ;;
+  *) usage ;;
+esac
+case "$sstable_format" in
+  ''|big|bti) ;;
+  *) usage ;;
+esac
+if [[ "$storage_compatibility_mode" == CASSANDRA_4 && "$sstable_format" == bti ]]; then
+  usage
+fi
 
 container="sstable-tools-ci-${release//./-}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
 container=${container:0:63}
@@ -50,15 +69,25 @@ cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 docker pull "$image"
-docker run -d --name "$container" \
+docker create --name "$container" \
   -e MAX_HEAP_SIZE=512M \
   -e HEAP_NEWSIZE=128M \
   "$image" >/dev/null
+if [[ -n "$storage_compatibility_mode" ]]; then
+  original_yaml="$output_root/source-cassandra.yaml"
+  configured_yaml="$output_root/source-cassandra-configured.yaml"
+  docker cp "$container:/etc/cassandra/cassandra.yaml" "$original_yaml"
+  "$script_dir/ci-configure-cassandra50-yaml" "$original_yaml" "$configured_yaml" \
+    "$storage_compatibility_mode" "$sstable_format"
+  docker cp "$configured_yaml" "$container:/etc/cassandra/cassandra.yaml"
+fi
+docker start "$container" >/dev/null
 
 ready=false
-for attempt in $(seq 1 90); do
+for _ in $(seq 1 90); do
   if docker exec "$container" cqlsh 127.0.0.1 9042 -e \
       'SELECT release_version FROM system.local;' >"$output_root/cqlsh-ready.log" 2>&1; then
     ready=true
@@ -123,7 +152,8 @@ selected_sstable="$(find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -qui
 }
 if [[ -n "$expected_format" ]]; then
   selected_name=$(basename "$selected_sstable")
-  [[ "$selected_name" == "$expected_format"-*-big-Data.db ]] || {
+  expected_sstable_format=${sstable_format:-big}
+  [[ "$selected_name" == "$expected_format"-*-$expected_sstable_format-Data.db ]] || {
     printf 'Expected %s SSTable format, found %s\n' "$expected_format" "$selected_name" >&2
     exit 1
   }
