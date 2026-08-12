@@ -16,6 +16,21 @@ input_version=''
 output_version=''
 timestamp_base='2000000000000000'
 
+verify_original_fixture_unchanged() {
+  if ! (
+    cd "$source_dir"
+    sha256sum --check --status "$output_root/source-components.sha256"
+  ); then
+    printf 'Original stock-Cassandra fixture changed unexpectedly:\n' >&2
+    (
+      cd "$source_dir"
+      sha256sum --check "$output_root/source-components.sha256"
+    ) >&2 || true
+    return 1
+  fi
+  printf 'Verified original stock-Cassandra fixture is unchanged (immutability check).\n'
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tool-jar) tool_jar=${2:-}; shift 2 ;;
@@ -87,10 +102,7 @@ if [[ "$output_format" == 'bti' ]]; then
     exit 1
   }
 fi
-(
-  cd "$source_dir"
-  sha256sum --check "$output_root/source-components.sha256"
-)
+verify_original_fixture_unchanged
 
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 if [[ -z "$output_version" && ${#all_sources[@]} -le ${#initial_sources[@]} ]]; then
@@ -109,10 +121,7 @@ java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home"
   | tee "$output_root/direct-cqlsh-update.log"
 
 grep -q 'published.sstables=' "$output_root/direct-cqlsh-update.log"
-(
-  cd "$source_dir"
-  sha256sum --check "$output_root/source-components.sha256"
-)
+verify_original_fixture_unchanged
 
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 source_args=()
