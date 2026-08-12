@@ -103,6 +103,13 @@ final class Cassandra50Importer {
                 // daemon. This worker is disposable, so reset its tracker rather than truncate:
                 // truncation writes another private system.local SSTable during its own flush.
                 cfs.clearUnsafe();
+                // Tracker reset prevents new reads from seeing the private bootstrap SSTables,
+                // but reads which started before the reset can still lazily open BTI index
+                // components. Wait for those reads before removing the component files.
+                org.apache.cassandra.utils.concurrent.OpOrder.Barrier readBarrier =
+                        cfs.newReadOrderingBarrier();
+                readBarrier.issue();
+                readBarrier.await();
                 // clearUnsafe only removes the bootstrap SSTables from Cassandra's tracker.
                 // Remove their components as well, while the path is still proven to be owned
                 // by this private workspace before the explicit source set is attached.
