@@ -102,7 +102,7 @@ docker stop "$container" >/dev/null
 }
 docker cp "$container:$table_dir/." "$captured_source"
 
-cp "$captured_source"/* "$source_dir/"
+find "$captured_source" -maxdepth 1 -type f -exec cp -t "$source_dir" -- {} +
 
 find "$source_dir" -maxdepth 1 -type f -printf '%p\n' \
   | sort | tee "$output_root/source-components.txt"
