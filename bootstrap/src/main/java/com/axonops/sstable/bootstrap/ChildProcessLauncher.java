@@ -2,9 +2,11 @@ package com.axonops.sstable.bootstrap;
 
 import com.axonops.sstable.worker.api.WorkerEndpoint;
 import com.axonops.sstable.worker.api.ImportResult;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -20,6 +22,9 @@ public final class ChildProcessLauncher {
     static final String WORKER_MAIN = "com.axonops.sstable.worker.api.WorkerMain";
     private static final long SANDBOX_START_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(2);
     private static final long IMPORT_TIMEOUT_MILLIS = TimeUnit.MINUTES.toMillis(5);
+    private static final String IMPORT_FAILURE_PREFIX =
+            "error: Cassandra import worker failed: ";
+    private static final int MAX_IMPORT_DIAGNOSTIC_LINES = 4096;
     private final boolean inheritIo;
 
     public ChildProcessLauncher() {
@@ -194,8 +199,7 @@ public final class ChildProcessLauncher {
             }
             if (child.exitValue() != 0) {
                 throw new BootstrapException(BootstrapException.CHILD_EXIT_CODE,
-                        "Cassandra import worker exited with code " + child.exitValue()
-                                + "; inspect " + logs.resolve("import.err"));
+                        importFailureMessage(child.exitValue(), logs.resolve("import.err")));
             }
             try {
                 return ImportResult.read(workspace.resolve(ImportResult.WORKSPACE_PATH));
@@ -211,6 +215,33 @@ public final class ChildProcessLauncher {
         } finally {
             removeShutdownHook(shutdownHook);
         }
+    }
+
+    static String importFailureMessage(int exitCode, Path errorLog) {
+        String fallback = "Cassandra import worker exited with code " + exitCode
+                + "; inspect " + errorLog;
+        if (!Files.isRegularFile(errorLog, LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(errorLog)) {
+            return fallback;
+        }
+        try (BufferedReader reader = Files.newBufferedReader(errorLog,
+                StandardCharsets.UTF_8)) {
+            for (int index = 0; index < MAX_IMPORT_DIAGNOSTIC_LINES; index++) {
+                String line = reader.readLine();
+                if (line == null) {
+                    break;
+                }
+                if (line.startsWith(IMPORT_FAILURE_PREFIX)) {
+                    String diagnostic = line.substring("error: ".length()).trim();
+                    if (!diagnostic.isEmpty()) {
+                        return diagnostic + "; full diagnostics: " + errorLog;
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // The retained workspace still contains the full import log when it is readable.
+        }
+        return fallback;
     }
 
     private static void closeQuietly(InputStream input) {

@@ -2,6 +2,7 @@ package com.axonops.sstable.bootstrap;
 
 import com.axonops.sstable.worker.api.RuntimeAdapter;
 import com.axonops.sstable.worker.api.WorkerMain;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -162,6 +163,33 @@ public class ChildProcessLauncherTest {
                 UUID.fromString("20a0d99c-f07a-4ef3-8999-e063aad5c183"));
         Assert.assertTrue(command.contains("--add-opens=java.base/java.io=ALL-UNNAMED"));
         Assert.assertTrue(command.contains("--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"));
+    }
+
+    @Test
+    public void importFailureSurfacesTheWorkerDiagnostic() throws Exception {
+        Path error = temporary.newFile("import.err").toPath();
+        Files.write(error, Arrays.asList(
+                "INFO Cassandra import started",
+                "error: Cassandra import worker failed: IllegalStateException: Imported "
+                        + "system.local contains the local row but no live cluster_name cell; "
+                        + "the selection is partial. Select every SSTable for system.local; "
+                        + "selected SSTables: nb-8-big in /log/data/system/local-id",
+                "java.lang.IllegalStateException: stack trace"), StandardCharsets.UTF_8);
+
+        String message = ChildProcessLauncher.importFailureMessage(4, error);
+
+        Assert.assertTrue(message.startsWith("Cassandra import worker failed: "));
+        Assert.assertTrue(message.contains("selection is partial"));
+        Assert.assertTrue(message.contains("nb-8-big in /log/data/system/local-id"));
+        Assert.assertTrue(message.endsWith("full diagnostics: " + error));
+    }
+
+    @Test
+    public void importFailureFallsBackWhenTheWorkerDiagnosticIsAbsent() throws Exception {
+        Path error = temporary.newFile("empty-import.err").toPath();
+
+        Assert.assertEquals("Cassandra import worker exited with code 4; inspect " + error,
+                ChildProcessLauncher.importFailureMessage(4, error));
     }
 
     private static Path locationOf(Class<?> type) throws Exception {
