@@ -58,6 +58,11 @@ else
 fi
 mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
 [[ ${#initial_sources[@]} -gt 0 ]] || { printf 'No source Data.db files found\n' >&2; exit 1; }
+printf 'Direct cqlsh selected input (%s/%s):\n' \
+  "${input_version:-any-version}" "${input_format:-any-format}"
+printf '  %s\n' "${initial_sources[@]##*/}"
+printf 'Direct cqlsh required output: %s/%s\n' \
+  "${output_version:-runtime-current-version}" "$output_format"
 initial_tocs=$(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l)
 
 source_args=()

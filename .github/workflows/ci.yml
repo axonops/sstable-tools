@@ -724,7 +724,7 @@ jobs:
           java -jar "$TOOL_JAR" workspace stop "$WORKSPACE" \
             | tee "${{ runner.temp }}/cassandra-50-import/workspace-stop.log"
 
-      - name: Exercise direct Cassandra 5.0 Big oa cqlsh workflow
+      - name: Migrate direct Cassandra 5.0 Big nb input to Big oa output
         run: |
           scripts/ci-direct-cqlsh-rejections \
             --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar \
@@ -742,7 +742,7 @@ jobs:
             --output-version oa \
           --timestamp-base 2000000000000000
 
-      - name: Exercise direct Cassandra 5.0 BTI cqlsh workflow
+      - name: Convert direct Cassandra 5.0 Big oa input to BTI da output
         run: >-
           scripts/ci-direct-cqlsh
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
@@ -754,7 +754,7 @@ jobs:
           --output-version da
           --timestamp-base 2000000000000010
 
-      - name: Exercise Cassandra 5.0 BTI-only direct cqlsh workflow
+      - name: Exercise direct Cassandra 5.0 BTI da-only workflow
         run: >-
           scripts/ci-direct-cqlsh
           --tool-jar workers/cassandra-5.0/target/sstable-tools-cassandra-5.0-0.1.0-SNAPSHOT.jar
