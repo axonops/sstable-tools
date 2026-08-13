@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path> [--expect-format <version> --import-cassandra-home <path> --java-home <path>]\n' "$0" >&2
+  printf 'Usage: %s --image <image> --release <line> --tool-jar <path> --output-root <path> [--expect-format <version> --import-cassandra-home <path> --java-home <path>] [--storage-compatibility-mode CASSANDRA_4|UPGRADING|NONE --sstable-format big|bti] [--compression compressed|uncompressed]\n' "$0" >&2
   exit 64
 }
 
@@ -13,6 +13,9 @@ output_root=''
 import_cassandra_home=''
 java_home=''
 expected_format=''
+storage_compatibility_mode=''
+sstable_format=''
+compression=compressed
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +26,9 @@ while [[ $# -gt 0 ]]; do
     --import-cassandra-home) import_cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
     --expect-format) expected_format=${2:-}; shift 2 ;;
+    --storage-compatibility-mode) storage_compatibility_mode=${2:-}; shift 2 ;;
+    --sstable-format) sstable_format=${2:-}; shift 2 ;;
+    --compression) compression=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -37,6 +43,25 @@ if [[ -n "$import_cassandra_home" || -n "$java_home" ]]; then
   }
   [[ -x "$java_home/bin/java" ]] || { printf 'Invalid Java home: %s\n' "$java_home" >&2; exit 1; }
 fi
+if [[ -n "$storage_compatibility_mode" || -n "$sstable_format" ]]; then
+  [[ "$release" == 5.0 && -n "$storage_compatibility_mode" \
+    && -n "$sstable_format" ]] || usage
+fi
+case "$storage_compatibility_mode" in
+  ''|CASSANDRA_4|UPGRADING|NONE) ;;
+  *) usage ;;
+esac
+case "$sstable_format" in
+  ''|big|bti) ;;
+  *) usage ;;
+esac
+case "$compression" in
+  compressed|uncompressed) ;;
+  *) usage ;;
+esac
+if [[ "$storage_compatibility_mode" == CASSANDRA_4 && "$sstable_format" == bti ]]; then
+  usage
+fi
 
 container="sstable-tools-ci-${release//./-}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
 container=${container:0:63}
@@ -50,15 +75,25 @@ cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 docker pull "$image"
-docker run -d --name "$container" \
+docker create --name "$container" \
   -e MAX_HEAP_SIZE=512M \
   -e HEAP_NEWSIZE=128M \
   "$image" >/dev/null
+if [[ -n "$storage_compatibility_mode" ]]; then
+  original_yaml="$output_root/source-cassandra.yaml"
+  configured_yaml="$output_root/source-cassandra-configured.yaml"
+  docker cp "$container:/etc/cassandra/cassandra.yaml" "$original_yaml"
+  "$script_dir/ci-configure-cassandra50-yaml" "$original_yaml" "$configured_yaml" \
+    "$storage_compatibility_mode" "$sstable_format"
+  docker cp "$configured_yaml" "$container:/etc/cassandra/cassandra.yaml"
+fi
+docker start "$container" >/dev/null
 
 ready=false
-for attempt in $(seq 1 90); do
+for _ in $(seq 1 90); do
   if docker exec "$container" cqlsh 127.0.0.1 9042 -e \
       'SELECT release_version FROM system.local;' >"$output_root/cqlsh-ready.log" 2>&1; then
     ready=true
@@ -79,13 +114,24 @@ run_cqlsh() {
 }
 
 run_cqlsh "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};"
-run_cqlsh 'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);'
-run_cqlsh "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('source-row', 'seed', 'new');"
+run_cqlsh 'CREATE TYPE ci_source.contact (email text, code int);'
+table_cql='CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text, tags set<text>, attrs map<text, text>, point tuple<int, text>, contact frozen<contact>)'
+if [[ "$compression" == uncompressed ]]; then
+  table_cql+=" WITH compression = {'enabled': 'false'}"
+fi
+run_cqlsh "$table_cql;"
+run_cqlsh "INSERT INTO ci_source.events (event_id, payload, state, tags, attrs, point, contact) VALUES ('source-row', 'seed', 'new', {'blue', 'green'}, {'first': 'one'}, (7, 'north'), {email: 'source@example.test', code: 42});"
 run_cqlsh "UPDATE ci_source.events SET payload = 'updated', state = 'ready' WHERE event_id = 'source-row';"
+run_cqlsh "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('ttl-row', 'expires-later', 'ready') USING TTL 604800;"
+run_cqlsh "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('tombstone-row', 'retained', 'delete-me');"
+run_cqlsh "DELETE state FROM ci_source.events WHERE event_id = 'tombstone-row';"
 selected="$(docker exec "$container" cqlsh 127.0.0.1 9042 -e \
-  "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'source-row';")"
+  "SELECT event_id, payload, state, tags, attrs, point, contact FROM ci_source.events;")"
 printf '%s\n' "$selected"
-[[ "$selected" == *source-row* && "$selected" == *updated* && "$selected" == *ready* ]] || {
+[[ "$selected" == *source-row* && "$selected" == *updated* && "$selected" == *ready* \
+  && "$selected" == *source@example.test* && "$selected" == *ttl-row* \
+  && "$selected" == *expires-later* && "$selected" == *tombstone-row* \
+  && "$selected" != *delete-me* ]] || {
   printf 'Stock cqlsh did not return the expected mutated row\n' >&2
   exit 1
 }
@@ -123,7 +169,8 @@ selected_sstable="$(find "$source_dir" -maxdepth 1 -name '*-Data.db' -print -qui
 }
 if [[ -n "$expected_format" ]]; then
   selected_name=$(basename "$selected_sstable")
-  [[ "$selected_name" == "$expected_format"-*-big-Data.db ]] || {
+  expected_sstable_format=${sstable_format:-big}
+  [[ "$selected_name" == "$expected_format"-*-$expected_sstable_format-Data.db ]] || {
     printf 'Expected %s SSTable format, found %s\n' "$expected_format" "$selected_name" >&2
     exit 1
   }
@@ -139,13 +186,14 @@ fi
 
 printf '%s\n' \
   "CREATE KEYSPACE ci_source WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};" \
-  'CREATE TABLE ci_source.events (event_id text PRIMARY KEY, payload text, state text);' \
+  'CREATE TYPE ci_source.contact (email text, code int);' \
+  "$table_cql;" \
   >"$schema"
 
-node - "$provenance" "$release" "$producer_version" "$image" "$partitioner" "$format_version" "$format" "$source_dir" <<'NODE'
+node - "$provenance" "$release" "$producer_version" "$image" "$partitioner" "$format_version" "$format" "$compression" "$source_dir" <<'NODE'
 const crypto = require('crypto');
 const fs = require('fs');
-const [output, releaseLine, producerVersion, image, partitioner, formatVersion, format, sourceDir] = process.argv.slice(2);
+const [output, releaseLine, producerVersion, image, partitioner, formatVersion, format, compression, sourceDir] = process.argv.slice(2);
 const schema = fs.readFileSync(`${require('path').dirname(output)}/schema.cql`, 'utf8');
 const components = fs.readdirSync(sourceDir, { withFileTypes: true })
   .filter((entry) => entry.isFile())
@@ -166,15 +214,22 @@ const manifest = {
   sstable: {
     format,
     formatVersion,
-    compression: 'default Cassandra table compression',
+    compression,
     components,
   },
   schema,
   sourceMutationScript: [
-    "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('source-row', 'seed', 'new');",
+    "INSERT INTO ci_source.events (event_id, payload, state, tags, attrs, point, contact) VALUES ('source-row', 'seed', 'new', {'blue', 'green'}, {'first': 'one'}, (7, 'north'), {email: 'source@example.test', code: 42});",
     "UPDATE ci_source.events SET payload = 'updated', state = 'ready' WHERE event_id = 'source-row';",
+    "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('ttl-row', 'expires-later', 'ready') USING TTL 604800;",
+    "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('tombstone-row', 'retained', 'delete-me');",
+    "DELETE state FROM ci_source.events WHERE event_id = 'tombstone-row';",
   ],
-  expectedLogicalRows: [{ event_id: 'source-row', payload: 'updated', state: 'ready' }],
+  expectedLogicalRows: [
+    { event_id: 'source-row', payload: 'updated', state: 'ready' },
+    { event_id: 'ttl-row', payload: 'expires-later', state: 'ready', ttlSeconds: 604800 },
+    { event_id: 'tombstone-row', payload: 'retained', state: null },
+  ],
 };
 fs.writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`);
 NODE

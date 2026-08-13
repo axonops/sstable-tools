@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --release-line <line> --versions "<versions>" --tool-jar <path> --java-home <path>\n' "$0" >&2
+  exit 64
+}
+
+release_line=''
+versions=''
+tool_jar=''
+java_home=''
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release-line) release_line=${2:-}; shift 2 ;;
+    --versions) versions=${2:-}; shift 2 ;;
+    --tool-jar) tool_jar=${2:-}; shift 2 ;;
+    --java-home) java_home=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ "$release_line" =~ ^[0-9]+\.[0-9]+$ && -n "$versions" \
+  && -f "$tool_jar" && -x "$java_home/bin/java" ]] || usage
+
+temporary=$(mktemp -d)
+trap 'rm -rf -- "$temporary"' EXIT
+tested=0
+
+for version in $versions; do
+  [[ "$version" =~ ^${release_line//./\.}\.[0-9]+$ ]] || {
+    printf 'Version %s does not belong to Cassandra %s\n' \
+      "$version" "$release_line" >&2
+    exit 64
+  }
+
+  home="$temporary/apache-cassandra-$version"
+  pom="$temporary/cassandra-$version.pom.xml"
+  mkdir -p "$home/lib"
+  printf '%s\n' \
+    '<?xml version="1.0" encoding="UTF-8"?>' \
+    '<project xmlns="http://maven.apache.org/POM/4.0.0"' \
+    '         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' \
+    '         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">' \
+    '  <modelVersion>4.0.0</modelVersion>' \
+    '  <groupId>com.axonops.ci</groupId>' \
+    '  <artifactId>cassandra-runtime</artifactId>' \
+    '  <version>1</version>' \
+    '  <dependencies>' \
+    '    <dependency>' \
+    '      <groupId>org.apache.cassandra</groupId>' \
+    '      <artifactId>cassandra-all</artifactId>' \
+    "      <version>$version</version>" \
+    '    </dependency>' \
+    '  </dependencies>' \
+    '</project>' >"$pom"
+
+  mvn -B -ntp -q -f "$pom" dependency:copy-dependencies \
+    -DincludeScope=runtime -DoutputDirectory="$home/lib"
+
+  output=$("$java_home/bin/java" -jar "$tool_jar" \
+    --cassandra-home "$home" --java-home "$java_home" runtime preflight)
+  printf 'Cassandra %s: %s\n' "$version" "$output"
+  [[ "$output" == "WORKER_READY protocol=3 release=$version" ]] || {
+    printf 'Unexpected runtime preflight result for Cassandra %s\n' "$version" >&2
+    exit 1
+  }
+  tested=$((tested + 1))
+done
+
+[[ $tested -gt 0 ]] || { printf 'No Cassandra versions were tested\n' >&2; exit 1; }
+printf 'Verified %d Cassandra %s patch runtimes.\n' "$tested" "$release_line"

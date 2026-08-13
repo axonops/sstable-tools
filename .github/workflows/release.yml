@@ -12,7 +12,7 @@ on:
         type: string
 
 permissions:
-  actions: read
+  actions: write
   contents: write
   security-events: read
 
@@ -20,7 +20,7 @@ jobs:
   publish:
     name: Build and publish release bundle
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Check out release source
         uses: actions/checkout@v6
@@ -74,6 +74,14 @@ jobs:
           }
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
           printf 'tag=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful full CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          scripts/release-ci-gate
+          --ref "$GITHUB_REF_NAME"
+          --sha "$GITHUB_SHA"
 
       - name: Build and verify all artifacts
         run: >-

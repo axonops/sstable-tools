@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -eq 1 && -d "$1/source" ]] || { printf 'Usage: %s <output-root>\n' "$0" >&2; exit 64; }
+root=$1
+node - "$root/source" "$root/configured-output-provenance.json" <<'NODE'
+const crypto = require('crypto'); const fs = require('fs'); const path = require('path');
+const [dir, output] = process.argv.slice(2);
+const root = path.dirname(dir);
+const parent = path.dirname(root);
+function record(mode, format, version, sourceDir, publicationLog) {
+  const match = fs.readFileSync(publicationLog, 'utf8').match(/^published\.sstables=([^\r\n]+)$/m);
+  if (!match || !new RegExp(`^${version}-[0-9]+-${format}$`).test(match[1])) {
+    throw new Error(`missing ${mode}/${format} ${version} publication in ${publicationLog}`);
+  }
+  const prefix = `${match[1]}-`;
+  const data = `${prefix}Data.db`;
+  if (!fs.existsSync(path.join(sourceDir, data))) throw new Error(`missing ${data} in ${sourceDir}`);
+  const components = fs.readdirSync(sourceDir).filter((name) => name.startsWith(prefix) && fs.statSync(path.join(sourceDir, name)).isFile()).sort()
+    .map((name) => ({name, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(sourceDir, name))).digest('hex')}));
+  return {storageCompatibilityMode: mode, selectedFormat: format, formatVersion: version, components};
+}
+const configuredOutputs = [
+  record('CASSANDRA_4', 'big', 'nb', dir, path.join(root, 'direct-cqlsh-update.log')),
+  record('UPGRADING', 'big', 'oa', path.join(parent, 'cassandra-50-system-local-upgrading-big', 'source-data'), path.join(parent, 'cassandra-50-system-local-upgrading-big', 'direct-update.log')),
+  record('UPGRADING', 'bti', 'da', path.join(parent, 'cassandra-50-system-local-upgrading-bti', 'source-data'), path.join(parent, 'cassandra-50-system-local-upgrading-bti', 'direct-update.log')),
+  record('NONE', 'big', 'oa', path.join(parent, 'cassandra-50-system-local-none-big', 'source-data'), path.join(parent, 'cassandra-50-system-local-none-big', 'direct-update.log')),
+  record('NONE', 'bti', 'da', path.join(parent, 'cassandra-50-system-local-none-bti', 'source-data'), path.join(parent, 'cassandra-50-system-local-none-bti', 'direct-update.log')),
+];
+fs.writeFileSync(output, `${JSON.stringify({cassandraVersion:'5.0.8', configuredOutputs}, null, 2)}\n`);
+NODE

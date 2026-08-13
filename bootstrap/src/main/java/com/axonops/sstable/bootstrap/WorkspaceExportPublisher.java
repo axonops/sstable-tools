@@ -143,7 +143,8 @@ final class WorkspaceExportPublisher {
         SourceInventory targetInventory =
                 SourceInventory.captureDirectoryAllowEmpty(target);
         if (requireCompleteInventoryMatch
-                && !manifest.sourceInventory().equals(targetInventory)) {
+                && !manifest.sourceInventory().subsetInDirectory(target)
+                .equals(targetInventory)) {
             throw new WorkspaceException("SSTable output directory changed after its baseline "
                     + "was imported; no SSTables were published: " + target);
         }
@@ -151,7 +152,8 @@ final class WorkspaceExportPublisher {
                 new ArrayList<>(byDescriptor.keySet()),
                 manifest.outputIdentity().containsKey("sstable.identifier-style")
                         ? SstableIdentifierStyle.recorded(manifest.outputIdentity())
-                        : SstableIdentifierStyle.infer(manifest.sourceInventory()));
+                        : SstableIdentifierStyle.infer(manifest.sourceInventory()),
+                manifest.sourceInventory());
         publishComponentSets(repository, target, byDescriptor, targetDescriptors);
         manifest.sourceInventory().verifyUnchanged();
         List<String> result = new ArrayList<>(targetDescriptors.values());
@@ -229,9 +231,18 @@ final class WorkspaceExportPublisher {
 
     private static Map<String, String> allocateDescriptors(Path target,
                                                              List<String> descriptors,
-                                                             SstableIdentifierStyle style)
+                                                             SstableIdentifierStyle style,
+                                                             SourceInventory sourceInventory)
             throws WorkspaceException {
-        Set<String> occupied = tocDescriptors(target);
+        Set<Path> inventoriedDirectories = new HashSet<>();
+        inventoriedDirectories.add(target);
+        for (SstableSet set : sourceInventory.sets()) {
+            inventoriedDirectories.add(set.directory());
+        }
+        Set<String> occupied = new HashSet<>();
+        for (Path directory : inventoriedDirectories) {
+            occupied.addAll(tocDescriptors(directory));
+        }
         Map<String, String> result = new TreeMap<>();
         long nextNumeric = style.usesUuidIdentifiers()
                 ? -1L : nextNumericIdentifier(occupied);

@@ -121,6 +121,7 @@ public class BootstrapArgumentsTest {
         });
         Assert.assertEquals(BootstrapArguments.SstableOutputFormat.BTI,
                 create.sstableOutputFormat());
+        Assert.assertTrue(create.sstableOutputFormatSpecified());
 
         BootstrapArguments direct = BootstrapArguments.parse(new String[]{
                 "cqlsh", "--sstables", "source-Data.db", "--schema", "schema.cql",
@@ -128,6 +129,12 @@ public class BootstrapArgumentsTest {
         });
         Assert.assertEquals(BootstrapArguments.SstableOutputFormat.BIG,
                 direct.sstableOutputFormat());
+        Assert.assertTrue(direct.sstableOutputFormatSpecified());
+
+        BootstrapArguments inferred = BootstrapArguments.parse(new String[]{
+                "cqlsh", "--sstables", "source-Data.db", "--schema", "schema.cql"
+        });
+        Assert.assertFalse(inferred.sstableOutputFormatSpecified());
 
         assertUsageFailure(new String[]{"workspace", "start", "workspace",
                 "--output-format", "bti"}, "only valid with workspace create or cqlsh");
@@ -136,14 +143,17 @@ public class BootstrapArgumentsTest {
     }
 
     @Test
-    public void directCqlshRequiresOneInputModeAndSchema() throws Exception {
+    public void directCqlshRequiresAnInputAndSchema() throws Exception {
         assertUsageFailure(new String[]{"cqlsh", "--schema", "schema.cql"},
-                "exactly one of --sstables or --output-dir");
+                "requires --sstables, --output-dir, or both");
         assertUsageFailure(new String[]{"cqlsh", "--sstables", "source-Data.db"},
                 "requires --schema");
-        assertUsageFailure(new String[]{"cqlsh", "--sstables", "source-Data.db",
-                "--output-dir", "output", "--schema", "schema.cql"},
-                "exactly one of --sstables or --output-dir");
+        BootstrapArguments spanning = BootstrapArguments.parse(new String[]{
+                "cqlsh", "--sstables", "data/source-Data.db",
+                "--sstables", "log-data/source-Data.db", "--output-dir", "output",
+                "--schema", "schema.cql"});
+        Assert.assertEquals(2, spanning.sourceDirectories().size());
+        Assert.assertEquals(Paths.get("output"), spanning.directOutputDirectory());
         assertUsageFailure(new String[]{"workspace", "status", "workspace", "--tmp-dir",
                 "/var/tmp/sstable-tools"}, "only valid with cqlsh");
     }

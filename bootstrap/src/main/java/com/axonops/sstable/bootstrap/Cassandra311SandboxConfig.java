@@ -74,8 +74,25 @@ final class Cassandra311SandboxConfig {
                       String sstableFormat,
                       String clusterName,
                       boolean uuidSstableIdentifiers) throws WorkspaceException {
+        write(repository, lock, workspaceId, nativePort, controlToken, nativePassword,
+                releaseLine, sstableFormat, clusterName, uuidSstableIdentifiers,
+                Cassandra50StorageCompatibility.NONE);
+    }
+
+    static void write(WorkspaceRepository repository,
+                      WorkspaceLock lock,
+                      UUID workspaceId,
+                      int nativePort,
+                      String controlToken,
+                      String nativePassword,
+                      String releaseLine,
+                      String sstableFormat,
+                      String clusterName,
+                      boolean uuidSstableIdentifiers,
+                      String storageCompatibilityMode) throws WorkspaceException {
         writeSandbox(repository, lock, workspaceId, nativePort, controlToken, nativePassword,
-                releaseLine, sstableFormat, clusterName, uuidSstableIdentifiers, true);
+                releaseLine, sstableFormat, clusterName, uuidSstableIdentifiers,
+                storageCompatibilityMode, true);
     }
 
     static void writeWithDeferredNativeTransport(WorkspaceRepository repository,
@@ -103,8 +120,26 @@ final class Cassandra311SandboxConfig {
                                                  String clusterName,
                                                  boolean uuidSstableIdentifiers)
             throws WorkspaceException {
+        writeWithDeferredNativeTransport(repository, lock, workspaceId, nativePort,
+                controlToken, nativePassword, releaseLine, sstableFormat, clusterName,
+                uuidSstableIdentifiers, Cassandra50StorageCompatibility.NONE);
+    }
+
+    static void writeWithDeferredNativeTransport(WorkspaceRepository repository,
+                                                 WorkspaceLock lock,
+                                                 UUID workspaceId,
+                                                 int nativePort,
+                                                 String controlToken,
+                                                 String nativePassword,
+                                                 String releaseLine,
+                                                 String sstableFormat,
+                                                 String clusterName,
+                                                 boolean uuidSstableIdentifiers,
+                                                 String storageCompatibilityMode)
+            throws WorkspaceException {
         writeSandbox(repository, lock, workspaceId, nativePort, controlToken, nativePassword,
-                releaseLine, sstableFormat, clusterName, uuidSstableIdentifiers, false);
+                releaseLine, sstableFormat, clusterName, uuidSstableIdentifiers,
+                storageCompatibilityMode, false);
     }
 
     private static void writeSandbox(WorkspaceRepository repository,
@@ -117,6 +152,7 @@ final class Cassandra311SandboxConfig {
                                      String sstableFormat,
                                      String clusterName,
                                      boolean uuidSstableIdentifiers,
+                                     String storageCompatibilityMode,
                                      boolean startNativeTransport)
             throws WorkspaceException {
         if (nativePort < 1 || nativePort > 65535
@@ -125,7 +161,8 @@ final class Cassandra311SandboxConfig {
             throw new WorkspaceException("Invalid Cassandra 3.11 sandbox endpoint inputs");
         }
         writeConfiguration(repository, lock, workspaceId, nativePort, startNativeTransport,
-                releaseLine, sstableFormat, clusterName, uuidSstableIdentifiers);
+                releaseLine, sstableFormat, clusterName, uuidSstableIdentifiers,
+                storageCompatibilityMode);
         repository.writeOwnedFile(lock, CONTROL_TOKEN_PATH,
                 (controlToken + "\n").getBytes(StandardCharsets.US_ASCII));
         String cqlshrc = "[authentication]\n"
@@ -167,13 +204,25 @@ final class Cassandra311SandboxConfig {
                             String releaseLine,
                             String sstableFormat,
                             boolean uuidSstableIdentifiers) throws WorkspaceException {
+        writeImport(repository, lock, workspaceId, nativePort, releaseLine, sstableFormat,
+                uuidSstableIdentifiers, Cassandra50StorageCompatibility.NONE);
+    }
+
+    static void writeImport(WorkspaceRepository repository,
+                            WorkspaceLock lock,
+                            UUID workspaceId,
+                            int nativePort,
+                            String releaseLine,
+                            String sstableFormat,
+                            boolean uuidSstableIdentifiers,
+                            String storageCompatibilityMode) throws WorkspaceException {
         if (nativePort < 1 || nativePort > 65535) {
             throw new WorkspaceException("Invalid Cassandra 3.11 import endpoint input");
         }
         repository.deleteOwnedFile(lock, CQLSHRC_PATH);
         repository.deleteOwnedFile(lock, WorkspaceTimestampState.WORKSPACE_PATH);
         writeConfiguration(repository, lock, workspaceId, nativePort, false, releaseLine,
-                sstableFormat, null, uuidSstableIdentifiers);
+                sstableFormat, null, uuidSstableIdentifiers, storageCompatibilityMode);
     }
 
     private static void writeConfiguration(WorkspaceRepository repository,
@@ -184,7 +233,8 @@ final class Cassandra311SandboxConfig {
                                            String releaseLine,
                                            String sstableFormat,
                                            String clusterName,
-                                           boolean uuidSstableIdentifiers)
+                                           boolean uuidSstableIdentifiers,
+                                           String storageCompatibilityMode)
             throws WorkspaceException {
         boolean supportsThrift = "3.11".equals(releaseLine);
         boolean supportsCommitlogBatchWindow = !"5.0".equals(releaseLine);
@@ -244,7 +294,8 @@ final class Cassandra311SandboxConfig {
                 ? "commitlog_sync_batch_window_in_ms: 2\n" : "")
                 + "commitlog_total_space_in_mb: 64\n"
                 + "commitlog_segment_size_in_mb: 16\n"
-                + ("5.0".equals(releaseLine) ? "storage_compatibility_mode: NONE\n" : "")
+                + ("5.0".equals(releaseLine) ? "storage_compatibility_mode: "
+                + storageCompatibilityMode + "\n" : "")
                 + (supportsUuidSstableIdentifiers ? "uuid_sstable_identifiers_enabled: "
                 + uuidSstableIdentifiers + "\n" : "")
                 + ("5.0".equals(releaseLine) ? "sstable:\n  selected_format: "

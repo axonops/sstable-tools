@@ -6,6 +6,112 @@ SSTable Tools queries and mutates explicitly selected, stopped Cassandra
 SSTables with the matching installed Cassandra release and its stock `cqlsh`.
 It is under active development and is not yet an operator-ready production tool.
 
+## Quick Start
+
+Install either Linux package from a release, or unpack the standalone archive:
+
+```shell
+# Debian or Ubuntu
+sudo dpkg -i sstable-tools_1.2.3-1_all.deb
+
+# RHEL, Rocky Linux, AlmaLinux, or another RPM-based distribution
+sudo rpm -i sstable-tools-1.2.3-1.noarch.rpm
+
+# Standalone archive
+tar -xzf sstable-tools-1.2.3.tar.gz
+```
+
+The packages deliberately do not declare a Java or Cassandra package
+dependency. The machine must already have a Java runtime supported by the
+selected Cassandra release. The packaged command is `/usr/bin/sstable-tools`;
+the archive contains `./sstable-tools`.
+
+Point the launcher at Cassandra once. Packaged Cassandra normally uses
+`/usr/share/cassandra`; a tarball installation normally uses its `lib`
+directory:
+
+```shell
+export CASSANDRA_LIB_DIR=/usr/share/cassandra
+# Or: export CASSANDRA_LIB_DIR=/opt/apache-cassandra-5.0.8/lib
+
+sstable-tools --version
+sstable-tools runtime preflight
+```
+
+Prepare these inputs before opening an SSTable:
+
+- A stopped table directory, completed snapshot, or backup copied outside the
+  live Cassandra data directories.
+- A CQL schema bundle containing the exact keyspace, table, table ID, primary
+  key, columns, and referenced UDTs for those SSTables.
+- Every SSTable that contributes to the logical table. Cassandra may spread
+  one table across multiple `data_file_directories`.
+
+Query every SSTable in one complete table directory without publishing files:
+
+```shell
+TABLE_DIR=/archive/acme/users-7ad54392bcdd35a684174e047860b377
+SCHEMA=/archive/acme-users.cql
+
+sstable-tools \
+  --output-dir "$TABLE_DIR" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "SELECT id, name FROM acme.users WHERE id = 1;"
+```
+
+Update that table by supplying a timestamp in Unix microseconds:
+
+```shell
+NOW_MICROS=$(date +%s%6N)
+
+sstable-tools \
+  --output-dir "$TABLE_DIR" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "UPDATE acme.users USING TIMESTAMP $NOW_MICROS SET name = 'Grace' WHERE id = 1;"
+```
+
+Use the current clock only when it is ahead of the source timestamps. If the
+source contains future-dated cells, choose a value above the reported source
+maximum; see [Write timestamps](#write-timestamps).
+
+The update never modifies an existing SSTable. It publishes one new verified
+component set beside the originals and reports it as
+`published.sstables=<descriptor>`. Running the `SELECT` command again with the
+same complete `--output-dir` reads the originals and the new delta together.
+
+For a table split across two Cassandra data directories, select both complete
+table directories and name exactly one publication directory:
+
+```shell
+PRIMARY=/data/acme/users-7ad54392bcdd35a684174e047860b377
+SECONDARY=/log/data/acme/users-7ad54392bcdd35a684174e047860b377
+NOW_MICROS=$(date +%s%6N)
+
+sstable-tools \
+  --sstables "$PRIMARY" \
+  --sstables "$SECONDARY" \
+  --output-dir "$PRIMARY" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "UPDATE acme.users USING TIMESTAMP $NOW_MICROS SET name = 'Grace' WHERE id = 1;"
+
+sstable-tools \
+  --sstables "$PRIMARY" \
+  --sstables "$SECONDARY" \
+  --output-dir "$PRIMARY" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "SELECT id, name FROM acme.users WHERE id = 1;"
+```
+
+The second command is the required read-back pattern: it includes the source
+SSTables from both directories plus the delta published into `PRIMARY`. For an
+empty destination, use the [first-SSTable example](#create-the-first-sstable-in-an-output-directory).
+For `system.local`, including a table spread across multiple directories, use
+the [system-table example](#query-or-update-a-system-table).
+
 ## Launcher and Automatic Adapter Selection
 
 Use `sstable-tools` from the DEB/RPM, or `./sstable-tools` from the standalone
@@ -47,12 +153,15 @@ command with `./` when running from an unpacked release archive.
 
 ## Direct CQLSH
 
-The primary interface is one command. Supply either explicit `Data.db` or
-`TOC.txt` paths with `--sstables`, or one table directory with `--output-dir`,
-plus a schema bundle and the matching Cassandra installation. The two input
-modes are mutually exclusive. The tool opens stock `cqlsh`; on a clean exit
-after a mutation it publishes verified new SSTable component sets into the
-selected table directory.
+The primary interface is one command. Use `--sstables` to select explicit
+`Data.db`/`TOC.txt` files or complete table directories, plus a schema bundle
+and the matching Cassandra installation. If the selected SSTables span more
+than one Cassandra data directory, also use `--output-dir` to choose the table
+directory where new SSTables will be published. `--output-dir` can still be
+used alone to treat one complete directory as both the baseline and the
+publication destination. The tool opens stock `cqlsh`; on a clean exit after a
+mutation it publishes verified new SSTable component sets into the chosen
+directory.
 
 ```shell
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
@@ -84,20 +193,30 @@ sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
 
 ### Select multiple SSTables
 
-All selected descriptors must belong to the same table directory. Repeat
-`--sstables` or provide a comma-separated list:
+Repeat `--sstables` or provide a comma-separated list. SSTables for one logical
+table may come from any number of Cassandra `data_file_directories`. When they
+span physical directories, supply `--output-dir` as the single publication
+destination:
 
 ```shell
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
-  --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
-  --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-43-big-Data.db \
+  --sstables /data/acme/users-7ad54392bcdd35a684174e047860b377/nb-41-big-Data.db \
+  --sstables /data/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
+  --sstables /log/data/acme/users-7ad54392bcdd35a684174e047860b377/nb-43-big-Data.db \
+  --sstables /log/data/acme/users-7ad54392bcdd35a684174e047860b377/nb-44-big-Data.db \
+  --output-dir /data/acme/users-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/acme-users.cql \
   cqlsh --execute "SELECT id, name FROM acme.users;"
 ```
 
 The direct command accepts `SELECT` plus non-conditional `INSERT` and `UPDATE`
 for the selected table. It does not scan data roots, keyspaces, or unrelated
-tables. All selected SSTables must be in one table directory.
+tables. Every selected descriptor must belong to the same logical table and
+match the supplied schema. When `--sstables` and `--output-dir` are combined,
+every pre-existing SSTable in the output directory must be part of the
+selection; the tool checks that target subset again before publication. With
+`--sstables` alone, all selected SSTables must still reside in one directory so
+the publication destination is unambiguous.
 
 ### Create the first SSTable in an output directory
 
@@ -112,7 +231,6 @@ INSERT_CQL="INSERT INTO acme.users (id, name) VALUES (1, 'Ada') USING TIMESTAMP 
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
   --output-dir /archive/acme/users-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/acme-users.cql \
-  --output-format bti \
   cqlsh --execute "$INSERT_CQL"
 ```
 
@@ -187,7 +305,6 @@ SYSTEM_CQL="UPDATE system.local USING TIMESTAMP $NOW_MICROS SET cluster_name = '
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
   --output-dir /archive/system/local-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/system.local.cql \
-  --output-format bti \
   cqlsh --execute "$SYSTEM_CQL"
 ```
 
@@ -195,32 +312,67 @@ This inventories the complete stopped table directory, changes only the
 isolated copy, and publishes verified sibling SSTables into the same directory.
 It does not change a running node or Cassandra installation.
 
-### Write Cassandra 5.0 BTI output
+If a system table spans Cassandra data directories, select every physical
+table directory and choose one as the publication target:
 
-On Cassandra 5.0, `--output-format bti` selects BTI `da` output. The default is
-Big `oa`; BTI is rejected by the 3.11, 4.0, and 4.1 adapters.
+```shell
+sstable-tools --cassandra-lib-dir /opt/apache-cassandra-4.0.18/lib \
+  --sstables /data/system/local-7ad54392bcdd35a684174e047860b377 \
+  --sstables /log/data/system/local-7ad54392bcdd35a684174e047860b377 \
+  --output-dir /data/system/local-7ad54392bcdd35a684174e047860b377 \
+  --schema /archive/system.local.cql \
+  cqlsh --execute "$SYSTEM_CQL"
+```
+
+Use SSTable Tools **v1.0.5 or newer** when mutating `system.local`. Version
+1.0.5 added the sandbox topology overrides required when the imported node's
+datacenter or rack differs from the isolated worker's synthetic topology.
+
+### Cassandra 5.0 output format
+
+SSTable Tools follows the selected Cassandra installation's `cassandra.yaml`;
+it does not offer a format-conversion mode. The effective output is:
+
+| `storage_compatibility_mode` | `sstable.selected_format` | Output |
+|---|---|---|
+| `CASSANDRA_4` | `big` | Big `nb` |
+| `UPGRADING` | `big` | Big `oa` |
+| `NONE` | `big` | Big `oa` |
+| `UPGRADING` or `NONE` | `bti` | BTI `da` |
+
+`CASSANDRA_4` with `bti` is invalid. The tool reads `cassandra.yaml` from
+`CASSANDRA_CONF`, the selected tarball's `conf` directory, or `/etc/cassandra`
+for a packaged `/usr/share/cassandra` runtime. An omitted
+`storage_compatibility_mode` defaults to `CASSANDRA_4`; an omitted
+`sstable.selected_format` defaults to `big`. If no configuration is available,
+the tool falls back to the selected SSTable inventory and refuses ambiguous
+mixed Big/BTI input.
+
+`--output-format` is only an optional assertion. It cannot override
+`cassandra.yaml`; a mismatch fails before import or publication with a clear
+"format conversion is not supported" error. Normally, omit it:
 
 ```shell
 NOW_MICROS=$(date +%s%6N)
 INSERT_CQL="INSERT INTO acme.users (id, name) VALUES (2, 'Ada') USING TIMESTAMP $NOW_MICROS;"
 
 sstable-tools --cassandra-lib-dir /opt/apache-cassandra-5.0.8/lib \
-  --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
+  --output-dir /archive/acme/users-7ad54392bcdd35a684174e047860b377 \
   --schema /archive/acme-users.cql \
-  --output-format bti \
   cqlsh --execute "$INSERT_CQL"
 ```
 
 Original components are never modified. Every adapter allocates the next
-available numeric SSTable identifier when the selected baseline uses numeric
-identifiers. For Cassandra 5.0, selecting a descriptor with Cassandra's
+available numeric SSTable identifier above every descriptor present in the
+selected source directories and the publication directory when the baseline
+uses numeric identifiers. For Cassandra 5.0, selecting a descriptor with Cassandra's
 28-character UUID/ULID-style identifier enables
 `uuid_sstable_identifiers_enabled` in the private sandbox and publishes the
 Cassandra-generated UUID-style delta unchanged. A mixed numeric and UUID-style
 selection uses UUID-style output. With `--sstables`, inference uses only the
 explicitly selected descriptors. With `--output-dir`, it uses every complete
-SSTable in that directory. Publication does not read the installation's
-`cassandra.yaml`.
+SSTable in that directory. Output format and Cassandra 5.0 format version come
+from the selected installation's `cassandra.yaml`.
 
 After a successful direct mutation, later commands for that table should select
 both the original descriptors and every published sibling descriptor that
@@ -275,11 +427,11 @@ CASSANDRA_LIB_DIR=<path> sstable-tools [tool options] <command>
 | `--cassandra-lib-dir <path>` | Cassandra tarball `lib` directory or packaged runtime root used to detect the release and select an adapter. Equivalent to `CASSANDRA_LIB_DIR`. |
 | `--cassandra-home <path>` | Cassandra installation used by direct `cqlsh`, runtime commands, and workspace `import`, `start`, or `cqlsh`. |
 | `--java-home <path>` | Compatible Java installation for the selected Cassandra worker. |
-| `--sstables <path>` | Explicit `Data.db` or `TOC.txt` source. Repeat it or use comma-separated paths. Valid only with direct `cqlsh` and `workspace create`. |
-| `--output-dir <path>` | Existing non-symlink table directory used as the complete baseline and publication destination. Valid only with direct `cqlsh` and mutually exclusive with `--sstables`. |
+| `--sstables <path>` | Explicit `Data.db`, `TOC.txt`, or table-directory source. Repeat it or use comma-separated paths; one logical table may span physical directories. Valid only with direct `cqlsh` and `workspace create`. |
+| `--output-dir <path>` | Existing non-symlink publication directory for direct `cqlsh`. Used alone, it is also the complete baseline. Combined with `--sstables`, it selects where deltas are published and its existing SSTables must all be included in the selected source inventory. |
 | `--schema <path>` | UTF-8 CQL schema bundle. Required by direct `cqlsh`; recorded by `workspace create`. |
 | `--timestamp-policy <policy>` | `wall-clock` or `after-source`. Valid with direct `cqlsh` and `workspace start`; the choice is persisted for a managed workspace. |
-| `--output-format <format>` | `big` (default) or `bti`. Valid with direct `cqlsh` and `workspace create`; `bti` requires Cassandra 5.0. |
+| `--output-format <format>` | Optional `big` or `bti` assertion for direct `cqlsh` and `workspace create`. It cannot override Cassandra 5.0 `sstable.selected_format`; mismatches fail rather than convert. |
 | `--tmp-dir <path>` | Parent for private direct-CQLSH workspaces. Default: `/tmp/sstable-tools`. |
 | `--execute <cql>` | Run one CQL statement and exit. Valid with direct `cqlsh` and `workspace cqlsh`. |
 | `--allow-live-cassandra-output` | Bypass the confirmation before direct CQLSH publishes new SSTables into a directory owned by a running Cassandra process. Intended for explicit non-interactive acknowledgement. |
@@ -300,6 +452,7 @@ and 5.0 query guards.
 |---|---|
 | `CASSANDRA_LIB_DIR` | Cassandra tarball `lib` directory or packaged runtime root; the launcher scans the selected directory and its nested or adjacent `lib`. |
 | `CASSANDRA_HOME` | Fallback Cassandra home; the launcher scans the home and its `lib` child. |
+| `CASSANDRA_CONF` | Optional Cassandra configuration directory (or `cassandra.yaml` path). On Cassandra 5.0, it has precedence when resolving `storage_compatibility_mode` and `sstable.selected_format`. |
 | `SSTABLE_TOOLS_JAVA` | Exact Java executable used by the launcher. |
 | `JAVA_HOME` | Supplies `$JAVA_HOME/bin/java` when `SSTABLE_TOOLS_JAVA` is unset. |
 | `SSTABLE_TOOLS_JAVA_OPTS` | Additional whitespace-delimited launcher-JVM options, such as `-Xms256m -Xmx2g`. |
@@ -376,7 +529,6 @@ export CASSANDRA_LIB_DIR=/opt/apache-cassandra-5.0.8/lib
 "$TOOL" \
   --sstables /archive/acme/users-7ad54392bcdd35a684174e047860b377/nb-42-big-Data.db \
   --schema /archive/acme-users.cql \
-  --output-format big \
   workspace create "$CASE"
 
 "$TOOL" workspace import "$CASE"
@@ -405,21 +557,51 @@ All release adapters currently require
 `org.apache.cassandra.dht.Murmur3Partitioner`.
 
 The CI matrix creates stopped SSTables with stock Cassandra `cqlsh`, then runs
-the matching thin JAR and stock `cqlsh` direct workflow. It verifies `INSERT`,
-`UPDATE`, `SELECT`, flush, sibling publication, direct reopen, and unchanged
-source component hashes.
+the matching thin JAR and stock `cqlsh` direct workflow. Its source tables
+exercise scalar values, sets, maps, tuples, frozen UDTs, TTLs, and deleted
+cells. It verifies `INSERT`, `UPDATE`, `DELETE`, `SELECT`, flush, sibling
+publication, direct reopen, and unchanged source component hashes.
 
 | Artifact | Supported Cassandra patches | Java runtime | Direct output |
 |---|---:|---:|---|
 | `cassandra-3.11` | 3.11.19 | 8 | Big `me` |
 | `cassandra-4.0` | 4.0.0-4.0.18 | 8-11 | Big `nb` |
 | `cassandra-4.1` | 4.1.0-4.1.11 | 11 | Big `nb` |
-| `cassandra-5.0` | 5.0.4-5.0.8 | 17 | Big `oa`, BTI `da` |
+| `cassandra-5.0` | 5.0.4-5.0.8 | 17 | Big `nb` (`CASSANDRA_4`), Big `oa`/BTI `da` (`UPGRADING` or `NONE`) |
 
 The 4.0 adapter compiles against the first patch in its release line. The 4.1
 adapter carries both native query-handler ABIs used across the 4.1 patch line.
-CI preflights the first patch and runs the full stopped-SSTable and stock-cqlsh
-workflow on the latest supported patch.
+CI resolves Cassandra's real Maven runtime and starts the adapter against every
+declared 4.0.x, 4.1.x, and 5.0.x patch. Cassandra 4.0 is checked on both Java 8
+and Java 11.
+
+Real Cassandra producer/import coverage includes 3.11.0 and 3.11.19, 4.0.0
+and 4.0.18, 4.1.0 and 4.1.11, and 5.0.4 and 5.0.8. Cassandra 3.11.0 is an
+older-format producer imported by the supported 3.11.19 runtime; it is not an
+additional supported runtime. The latest patch in each release line runs the
+full stopped-SSTable and stock-cqlsh workflow, and Cassandra 5.0.4 also runs
+the direct workflow as the minimum supported 5.0 runtime.
+
+The Cassandra 5.0.8 acceptance job uses real two-`data_file_directories`
+`system.local` SSTables and tests each supported YAML-driven output:
+
+| `storage_compatibility_mode` | `sstable.selected_format` | Required output |
+|---|---|---|
+| `CASSANDRA_4` | `big` | `nb` Big |
+| `UPGRADING` | `big` | `oa` Big |
+| `NONE` | `big` | `oa` Big |
+| `UPGRADING` | `bti` | `da` BTI |
+| `NONE` | `bti` | `da` BTI |
+
+Those tests reopen the combined table through stock Cassandra after publishing
+into one of the two data directories. The BTI path additionally rejects sets
+missing `Partitions.db` or `Rows.db`, repeats multi-directory imports to catch
+ordering races, and the Big path includes an uncompressed table.
+
+Release-package CI installs the dependency-free DEB and RPM into separate clean
+Java 17 containers and invokes the installed universal launcher. See
+[Real Cassandra CI coverage](docs/ci-real-cassandra-testing.md) for the full
+test topology and the distinction between full-node and linkage coverage.
 
 The direct workflow intentionally has no `sstableloader`, streaming, clean-node
 import, or broad filesystem discovery.
@@ -504,13 +686,15 @@ git tag -a "v$RELEASE_VERSION" -m "SSTable Tools $RELEASE_VERSION"
 git push origin "v$RELEASE_VERSION"
 ```
 
-The [Release workflow](.github/workflows/release.yml) validates the tag, builds
-and tests every adapter with that exact Maven revision, rejects mismatched
-embedded JAR versions, creates and extracts both Linux packages, verifies their
-payloads and checksums, runs the release security gate, and publishes the
-resulting directory as a workflow artifact and GitHub Release. After the
-security gate passes, it also publishes the DEB and RPM to the configured
-Google Artifact Registry Apt and Yum repositories.
+The [Release workflow](.github/workflows/release.yml) first requires a
+successful full [CI workflow](.github/workflows/ci.yml) for the exact release
+commit. It reuses matching evidence when available; otherwise it dispatches CI
+for the release ref and waits for it to pass. Only then does it build and test
+every adapter with that exact Maven revision, reject mismatched embedded JAR
+versions, create and verify both Linux packages, run the release security gate,
+and publish the resulting directory as a workflow artifact and GitHub Release.
+After the security gate passes, it also publishes the DEB and RPM to the
+configured Google Artifact Registry Apt and Yum repositories.
 
 The security gate scans the built release with ClamAV, analyzes Java source with
 CodeQL `security-extended`, checks source secrets and configuration with Trivy,

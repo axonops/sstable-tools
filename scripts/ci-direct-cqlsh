@@ -11,10 +11,26 @@ cassandra_home=''
 java_home=''
 output_root=''
 output_format='big'
+output_format_specified=false
 input_format=''
 input_version=''
 output_version=''
 timestamp_base='2000000000000000'
+
+verify_original_fixture_unchanged() {
+  if ! (
+    cd "$source_dir"
+    sha256sum --check --status "$output_root/source-components.sha256"
+  ); then
+    printf 'Original stock-Cassandra fixture changed unexpectedly:\n' >&2
+    (
+      cd "$source_dir"
+      sha256sum --check "$output_root/source-components.sha256"
+    ) >&2 || true
+    return 1
+  fi
+  printf 'Verified original stock-Cassandra fixture is unchanged (immutability check).\n'
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     --cassandra-home) cassandra_home=${2:-}; shift 2 ;;
     --java-home) java_home=${2:-}; shift 2 ;;
     --output-root) output_root=${2:-}; shift 2 ;;
-    --output-format) output_format=${2:-}; shift 2 ;;
+    --output-format) output_format=${2:-}; output_format_specified=true; shift 2 ;;
     --input-format) input_format=${2:-}; shift 2 ;;
     --input-version) input_version=${2:-}; shift 2 ;;
     --output-version) output_version=${2:-}; shift 2 ;;
@@ -58,16 +74,25 @@ else
 fi
 mapfile -t initial_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$source_pattern" -print | sort)
 [[ ${#initial_sources[@]} -gt 0 ]] || { printf 'No source Data.db files found\n' >&2; exit 1; }
+printf 'Direct cqlsh selected input (%s/%s):\n' \
+  "${input_version:-any-version}" "${input_format:-any-format}"
+printf '  %s\n' "${initial_sources[@]##*/}"
+printf 'Direct cqlsh required output: %s/%s\n' \
+  "${output_version:-runtime-current-version}" "$output_format"
 initial_tocs=$(find "$source_dir" -maxdepth 1 -type f -name '*-TOC.txt' | wc -l)
 
 source_args=()
 for source in "${initial_sources[@]}"; do
   source_args+=(--sstables "$source")
 done
+format_args=()
+if [[ "$output_format_specified" == true ]]; then
+  format_args+=(--output-format "$output_format")
+fi
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
-  --output-format "$output_format" cqlsh \
+  "${format_args[@]}" cqlsh \
   --execute "INSERT INTO ci_source.events (event_id, payload, state) VALUES ('direct-row', 'inserted', 'new') USING TIMESTAMP ${timestamp_base};" \
   | tee "$output_root/direct-cqlsh-insert.log"
 
@@ -82,10 +107,7 @@ if [[ "$output_format" == 'bti' ]]; then
     exit 1
   }
 fi
-(
-  cd "$source_dir"
-  sha256sum --check "$output_root/source-components.sha256"
-)
+verify_original_fixture_unchanged
 
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 if [[ -z "$output_version" && ${#all_sources[@]} -le ${#initial_sources[@]} ]]; then
@@ -99,15 +121,12 @@ done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
-  --output-format "$output_format" cqlsh \
+  "${format_args[@]}" cqlsh \
   --execute "UPDATE ci_source.events USING TIMESTAMP $((timestamp_base + 1)) SET payload = 'updated', state = 'ready' WHERE event_id = 'direct-row';" \
   | tee "$output_root/direct-cqlsh-update.log"
 
 grep -q 'published.sstables=' "$output_root/direct-cqlsh-update.log"
-(
-  cd "$source_dir"
-  sha256sum --check "$output_root/source-components.sha256"
-)
+verify_original_fixture_unchanged
 
 mapfile -t all_sources < <(find "$source_dir" -maxdepth 1 -type f -name "$output_source_pattern" -print | sort)
 source_args=()
@@ -117,7 +136,7 @@ done
 
 java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
   --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
-  --output-format "$output_format" cqlsh \
+  "${format_args[@]}" cqlsh \
   --execute "SELECT event_id, payload, state FROM ci_source.events WHERE event_id = 'direct-row';" \
   | tee "$output_root/direct-cqlsh-select.log"
 
@@ -125,6 +144,23 @@ grep -q 'direct-row' "$output_root/direct-cqlsh-select.log"
 grep -q 'updated' "$output_root/direct-cqlsh-select.log"
 grep -q 'ready' "$output_root/direct-cqlsh-select.log"
 grep -q 'published.sstables=none' "$output_root/direct-cqlsh-select.log"
+
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  "${format_args[@]}" cqlsh \
+  --execute 'SELECT event_id, payload, state, tags, attrs, point, contact FROM ci_source.events;' \
+  | tee "$output_root/direct-cqlsh-source-shapes.log"
+
+grep -q 'source-row' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'source@example.test' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'ttl-row' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'expires-later' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'tombstone-row' "$output_root/direct-cqlsh-source-shapes.log"
+if grep -q 'delete-me' "$output_root/direct-cqlsh-source-shapes.log"; then
+  printf 'Deleted source value was visible through direct cqlsh\n' >&2
+  exit 1
+fi
+grep -q 'published.sstables=none' "$output_root/direct-cqlsh-source-shapes.log"
 [[ ! -d "$tmp_parent" || -z "$(find "$tmp_parent" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print -quit)" ]] || {
   printf 'Direct cqlsh left a successful private workspace behind\n' >&2
   exit 1

@@ -26,6 +26,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -116,8 +117,11 @@ final class WorkspaceCommandRunner {
             validateOutputFormat(adapter, requiredOutputFormat(manifest));
             SstableIdentifierStyle identifierStyle = SstableIdentifierStyle.recorded(
                     manifest.outputIdentity());
+            String storageCompatibilityMode = "5.0".equals(adapter.releaseLine())
+                    ? Cassandra50StorageCompatibility.required(manifest) : null;
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
-                    outputIdentity(requiredOutputFormat(manifest), identifierStyle));
+                    outputIdentity(requiredOutputFormat(manifest), identifierStyle,
+                            storageCompatibilityMode));
             WorkspaceTimestampState.prepare(repository, lock, manifest.workspaceId(),
                     timestampPolicy, sourceMaximumMicros, !timestampPolicyRecorded);
             repository.deleteOwnedFile(lock, WorkspaceFlushResult.WORKSPACE_PATH);
@@ -139,12 +143,12 @@ final class WorkspaceCommandRunner {
                         manifest.workspaceId(), nativePort, token, nativePassword,
                         adapter.releaseLine(), requiredOutputFormat(manifest),
                         importedSystemClusterName(manifest),
-                        identifierStyle.usesUuidIdentifiers());
+                        identifierStyle.usesUuidIdentifiers(), storageCompatibilityMode);
             } else {
                 Cassandra311SandboxConfig.write(repository, lock, manifest.workspaceId(),
                         nativePort, token, nativePassword, adapter.releaseLine(),
                         requiredOutputFormat(manifest), importedSystemClusterName(manifest),
-                        identifierStyle.usesUuidIdentifiers());
+                        identifierStyle.usesUuidIdentifiers(), storageCompatibilityMode);
             }
             repository.deleteOwnedFile(lock, Cassandra311SandboxConfig.ENDPOINT_PATH);
 
@@ -212,17 +216,29 @@ final class WorkspaceCommandRunner {
             verifySchemaBundle(repository, manifest);
 
             RuntimeIdentity identity = RuntimeIdentity.capture(installation);
-            String outputFormat = requiredOutputFormat(manifest);
+            String requestedOutputFormat = manifest.outputIdentity().get("sstable.format");
+            String outputFormat;
+            String storageCompatibilityMode;
+            if ("5.0".equals(adapter.releaseLine())) {
+                Cassandra50StorageCompatibility.Settings settings =
+                        Cassandra50StorageCompatibility.resolveSettings(installation,
+                                manifest.sourceInventory(), requestedOutputFormat);
+                outputFormat = settings.outputFormat();
+                storageCompatibilityMode = settings.storageCompatibilityMode();
+            } else {
+                outputFormat = requestedOutputFormat == null ? "big" : requestedOutputFormat;
+                storageCompatibilityMode = null;
+            }
             validateOutputFormat(adapter, outputFormat);
             SstableIdentifierStyle identifierStyle = SstableIdentifierStyle.forImport(
                     manifest.sourceInventory(), adapter.releaseLine());
             manifest = manifest.withRuntimeIdentity(identity.asMap(adapter),
-                    outputIdentity(outputFormat, identifierStyle));
+                    outputIdentity(outputFormat, identifierStyle, storageCompatibilityMode));
             repository.save(lock, manifest);
             int unusedNativePort = allocateLoopbackPort();
             Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
                     unusedNativePort, adapter.releaseLine(), outputFormat,
-                    identifierStyle.usesUuidIdentifiers());
+                    identifierStyle.usesUuidIdentifiers(), storageCompatibilityMode);
             repository.deleteOwnedFile(lock, ImportResult.WORKSPACE_PATH);
 
             try {
@@ -456,9 +472,10 @@ final class WorkspaceCommandRunner {
 
     private static void create(BootstrapArguments arguments, PrintStream out)
             throws WorkspaceException {
-        List<Path> inventoryArguments = arguments.directOutputDirectory() == null
-                ? arguments.sourceDirectories()
-                : Collections.singletonList(arguments.directOutputDirectory());
+        List<Path> inventoryArguments = new ArrayList<>(arguments.sourceDirectories());
+        if (arguments.directOutputDirectory() != null) {
+            inventoryArguments.add(arguments.directOutputDirectory());
+        }
         requireSeparateArguments(arguments.workspacePath(), inventoryArguments);
         SchemaBundle schema = arguments.schemaPath() == null
                 ? null : SchemaBundle.capture(arguments.schemaPath());
@@ -468,10 +485,10 @@ final class WorkspaceCommandRunner {
         WorkspaceRepository repository = WorkspaceRepository.createAt(
                 arguments.workspacePath());
         try (WorkspaceLock lock = repository.acquire()) {
-            SourceInventory requested = arguments.directOutputDirectory() == null
-                    ? SourceInventory.capture(arguments.sourceDirectories())
-                    : SourceInventory.captureDirectoryAllowEmpty(
-                    arguments.directOutputDirectory());
+            SourceInventory requested = arguments.sourceDirectories().isEmpty()
+                    ? SourceInventory.captureDirectoryAllowEmpty(
+                    arguments.directOutputDirectory())
+                    : SourceInventory.capture(arguments.sourceDirectories());
             if (requested.sets().isEmpty()) {
                 requireEmptyBaselineInsert(arguments);
             }
@@ -490,16 +507,25 @@ final class WorkspaceCommandRunner {
                     throw new WorkspaceException("Workspace is already initialized with a "
                             + "different SSTable source inventory: " + repository.root());
                 }
-                String existingFormat = requiredOutputFormat(manifest);
-                String requestedFormat = arguments.sstableOutputFormat().value();
-                if (!existingFormat.equals(requestedFormat)) {
-                    throw new WorkspaceException("Workspace is already initialized with SSTable "
-                            + "output format " + existingFormat);
+                String existingFormat = manifest.outputIdentity().get("sstable.format");
+                if (arguments.sstableOutputFormatSpecified()) {
+                    String requestedFormat = arguments.sstableOutputFormat().value();
+                    if (existingFormat != null && !existingFormat.equals(requestedFormat)) {
+                        throw new WorkspaceException("Workspace is already initialized with "
+                                + "SSTable output format " + existingFormat);
+                    }
+                    if (existingFormat == null) {
+                        manifest = manifest.withOutputIdentity(Collections.singletonMap(
+                                "sstable.format", requestedFormat));
+                        repository.save(lock, manifest);
+                    }
                 }
             } else {
                 manifest = WorkspaceManifest.create(requested);
-                manifest = manifest.withOutputIdentity(Collections.singletonMap(
-                        "sstable.format", arguments.sstableOutputFormat().value()));
+                if (arguments.sstableOutputFormatSpecified()) {
+                    manifest = manifest.withOutputIdentity(Collections.singletonMap(
+                            "sstable.format", arguments.sstableOutputFormat().value()));
+                }
                 if (schema != null) {
                     manifest = manifest.withSchemaIdentity(schema.identity());
                 }
@@ -1035,7 +1061,8 @@ final class WorkspaceCommandRunner {
     }
 
     private static Map<String, String> outputIdentity(String sstableFormat,
-                                                       SstableIdentifierStyle identifierStyle) {
+                                                       SstableIdentifierStyle identifierStyle,
+                                                       String storageCompatibilityMode) {
         Map<String, String> output = new LinkedHashMap<>();
         output.put("sandbox.config-contract", "cassandra-3.11-isolated-v1");
         output.put("sandbox.network", "loopback-only");
@@ -1045,6 +1072,10 @@ final class WorkspaceCommandRunner {
         output.put("import.contract", "cassandra-3.11-refresh-v2");
         output.put("sstable.format", sstableFormat);
         output.put("sstable.identifier-style", identifierStyle.manifestValue());
+        if (storageCompatibilityMode != null) {
+            output.put(Cassandra50StorageCompatibility.MANIFEST_KEY,
+                    storageCompatibilityMode);
+        }
         return output;
     }
 

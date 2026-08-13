@@ -29,8 +29,9 @@ the private worker.
 The source owner must be stopped. The tool copies only the explicit component
 sets to a private workspace, starts a loopback-only isolated worker with gossip,
 streaming, and JMX disabled, and verifies source hashes before and after work.
-It publishes verified new component sets beside the explicit source only after
-a successful cqlsh session and flush.
+Sources for one logical table may span Cassandra data directories; an explicit
+`--output-dir` selects the publication target. It publishes verified new
+component sets only after a successful cqlsh session and flush.
 
 The worker never changes the installed Cassandra node, its process, or its
 live data directory. System-table mutations affect only the isolated worker's
@@ -41,3 +42,8 @@ private copy and emitted sibling SSTables.
 The built-in-metadata path is implemented in the 3.11, 4.0, 4.1, and 5.0
 adapters. The same release-matched Cassandra installation that reads the input
 provides the system-table schema used for validation.
+
+SSTable Tools v1.0.5 is the minimum supported release for mutating
+`system.local`, because it added the sandbox JVM overrides that ignore
+datacenter and rack differences between imported topology cells and the
+isolated worker.

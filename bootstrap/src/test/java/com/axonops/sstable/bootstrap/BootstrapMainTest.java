@@ -69,6 +69,8 @@ public class BootstrapMainTest {
         Assert.assertTrue(createOutput.toString("UTF-8")
                 .contains("workspace.state=VALIDATED"));
         Assert.assertTrue(Files.isRegularFile(workspace.resolve("manifest.json")));
+        Assert.assertFalse(WorkspaceRepository.open(workspace).load().outputIdentity()
+                .containsKey("sstable.format"));
 
         ByteArrayOutputStream statusOutput = new ByteArrayOutputStream();
         int statusExitCode = BootstrapMain.run(new String[]{
@@ -89,6 +91,21 @@ public class BootstrapMainTest {
         Assert.assertEquals(0, secondCreateExitCode);
         Assert.assertTrue(secondCreate.toString("UTF-8")
                 .contains("workspace.state=VALIDATED"));
+    }
+
+    @Test
+    public void createRecordsOutputFormatOnlyWhenExplicitlyAsserted() throws Exception {
+        Path source = createSstableSource("asserted-format-source", "da-1-bti");
+        Path workspace = temporary.newFolder("asserted-format-workspace").toPath();
+
+        int exitCode = BootstrapMain.run(new String[]{
+                "workspace", "create", workspace.toString(),
+                "--sstables", source.toString(), "--output-format", "bti"
+        }, discard(), System.err);
+
+        Assert.assertEquals(0, exitCode);
+        Assert.assertEquals("bti", WorkspaceRepository.open(workspace).load()
+                .outputIdentity().get("sstable.format"));
     }
 
     @Test

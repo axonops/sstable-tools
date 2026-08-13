@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+temporary=$(mktemp -d)
+trap 'rm -rf -- "$temporary"' EXIT
+fake_gh="$temporary/gh"
+calls="$temporary/calls"
+
+cat >"$fake_gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$FAKE_GH_CALLS"
+if [[ "$1 $2" == 'run list' ]]; then
+  if [[ "$*" == *'databaseId,conclusion'* ]]; then
+    if [[ "$FAKE_GH_MODE" == reuse ]]; then
+      printf '101\n'
+    fi
+  elif [[ ! -f "$FAKE_GH_CALLS.dispatched" ]]; then
+    printf '11\n'
+  else
+    printf '22\n11\n'
+  fi
+elif [[ "$1 $2" == 'workflow run' ]]; then
+  : >"$FAKE_GH_CALLS.dispatched"
+elif [[ "$1 $2" == 'run watch' ]]; then
+  [[ "$3" == 22 && "$4" == --exit-status ]]
+  [[ "$FAKE_GH_MODE" != watch_fail ]]
+fi
+SH
+chmod 0755 "$fake_gh"
+
+sha=0123456789abcdef0123456789abcdef01234567
+FAKE_GH_CALLS="$calls" FAKE_GH_MODE=reuse GH_COMMAND="$fake_gh" \
+  "$script_dir/release-ci-gate" --ref v1.2.3 --sha "$sha"
+if grep -q '^workflow run ' "$calls"; then
+  printf 'Successful CI run was dispatched again\n' >&2
+  exit 1
+fi
+
+: >"$calls"
+FAKE_GH_CALLS="$calls" FAKE_GH_MODE=dispatch GH_COMMAND="$fake_gh" \
+  "$script_dir/release-ci-gate" --ref v1.2.3 --sha "$sha"
+grep -Fxq 'workflow run ci.yml --ref v1.2.3' "$calls"
+grep -Fxq 'run watch 22 --exit-status' "$calls"
+
+failed_calls="$temporary/failed-calls"
+if FAKE_GH_CALLS="$failed_calls" FAKE_GH_MODE=watch_fail GH_COMMAND="$fake_gh" \
+    "$script_dir/release-ci-gate" --ref v1.2.3 --sha "$sha"; then
+  printf 'Failed CI run did not block release publication\n' >&2
+  exit 1
+fi
+
+printf 'Release CI gate orchestration tests passed.\n'

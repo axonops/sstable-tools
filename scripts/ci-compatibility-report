@@ -39,7 +39,10 @@ for (const manifest of manifests) {
       || sstable.components.some((component) => !/^[a-f0-9]{64}$/.test(component.sha256))) {
     throw new Error(`invalid component hashes for ${producer.releaseLine}`);
   }
-  if (!schema.includes('CREATE TABLE ci_source.events') || sourceMutationScript.length !== 2 || expectedLogicalRows.length !== 1) {
+  if (!schema.includes('CREATE TYPE ci_source.contact')
+      || !schema.includes('CREATE TABLE ci_source.events')
+      || sourceMutationScript.length !== 5
+      || expectedLogicalRows.length !== 3) {
     throw new Error(`incomplete CQL contract provenance for ${producer.releaseLine}`);
   }
 }
@@ -57,20 +60,29 @@ console.log('\nEach row is generated from a matching stopped Cassandra node. The
 console.log('It does not use sstableloader, clean-node loading, streaming, bulk loading, or cluster import.');
 NODE
 
-emitted=$(find "$provenance_dir" -name emitted-format-provenance.json -print -quit)
-[[ -n "$emitted" ]] || { printf 'Missing Cassandra 5.0 emitted-format provenance\n' >&2; exit 1; }
-node - "$emitted" <<'NODE'
+configured=$(find "$provenance_dir" -name configured-output-provenance.json -print -quit)
+[[ -n "$configured" ]] || { printf 'Missing Cassandra 5.0 configured-output provenance\n' >&2; exit 1; }
+node - "$configured" <<'NODE'
 const crypto = require('crypto');
 const fs = require('fs');
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const formats = manifest.transitions.map((entry) => `${entry.formatVersion} ${entry.format}`).sort().join(', ');
-if (manifest.cassandraVersion !== '5.0.8' || formats !== 'da bti, oa big' || manifest.transitions.some((entry) => !entry.components.length)) throw new Error('invalid Cassandra 5.0 emitted-format provenance');
-console.log('\n### Cassandra 5.0 Emitted Formats\n');
-console.log('| Output format | Components | SHA-256 aggregate |');
-console.log('|---|---:|---|');
-for (const transition of manifest.transitions.sort((left, right) => left.formatVersion.localeCompare(right.formatVersion))) {
-  const aggregate = crypto.createHash('sha256').update(transition.components.map((component) => component.sha256).join('')).digest('hex').slice(0, 12);
-  console.log(`| ${transition.formatVersion} ${transition.format} | ${transition.components.length} | ${aggregate} |`);
+const expected = [
+  'CASSANDRA_4/big/nb',
+  'NONE/big/oa',
+  'NONE/bti/da',
+  'UPGRADING/big/oa',
+  'UPGRADING/bti/da',
+];
+const outputs = manifest.configuredOutputs || [];
+const actual = outputs.map((entry) => `${entry.storageCompatibilityMode}/${entry.selectedFormat}/${entry.formatVersion}`).sort();
+if (manifest.cassandraVersion !== '5.0.8' || actual.join(',') !== expected.sort().join(',')
+    || outputs.some((entry) => !entry.components.length)) throw new Error('invalid Cassandra 5.0 configured-output provenance');
+console.log('\n### Cassandra 5.0 Configured Outputs\n');
+console.log('| Compatibility mode | Selected format | Emitted format | Components | SHA-256 aggregate |');
+console.log('|---|---|---|---:|---|');
+for (const output of outputs.sort((left, right) => `${left.storageCompatibilityMode}/${left.selectedFormat}`.localeCompare(`${right.storageCompatibilityMode}/${right.selectedFormat}`))) {
+  const aggregate = crypto.createHash('sha256').update(output.components.map((component) => component.sha256).join('')).digest('hex').slice(0, 12);
+  console.log(`| ${output.storageCompatibilityMode} | ${output.selectedFormat} | ${output.formatVersion} ${output.selectedFormat} | ${output.components.length} | ${aggregate} |`);
 }
 NODE
 

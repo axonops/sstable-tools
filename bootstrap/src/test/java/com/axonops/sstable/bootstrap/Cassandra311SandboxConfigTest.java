@@ -42,6 +42,30 @@ public class Cassandra311SandboxConfigTest {
         Assert.assertTrue(yaml.contains("uuid_sstable_identifiers_enabled: true\n"));
         Assert.assertTrue(yaml.contains("sstable:\n  selected_format: bti\n"));
     }
+
+    @Test
+    public void writesResolvedCassandra50StorageCompatibilityMode() throws Exception {
+        Path source = temporary.newFolder("compatibility-source").toPath();
+        Files.write(source.resolve("nb-1-big-TOC.txt"), Arrays.asList(
+                "TOC.txt", "Data.db", "Statistics.db"), StandardCharsets.UTF_8);
+        Files.write(source.resolve("nb-1-big-Data.db"), new byte[]{1});
+        Files.write(source.resolve("nb-1-big-Statistics.db"), new byte[]{2});
+        Path root = temporary.newFolder("compatibility-workspace").toPath();
+        WorkspaceRepository repository = WorkspaceRepository.createAt(root);
+        WorkspaceManifest manifest = WorkspaceManifest.create(SourceInventory.capture(
+                Collections.singletonList(source)));
+        try (WorkspaceLock lock = repository.acquire()) {
+            repository.initialize(lock, manifest);
+            Cassandra311SandboxConfig.writeImport(repository, lock, manifest.workspaceId(),
+                    19042, "5.0", "big", false,
+                    Cassandra50StorageCompatibility.CASSANDRA_4);
+        }
+
+        String yaml = new String(Files.readAllBytes(root.resolve(
+                Cassandra311SandboxConfig.CONFIG_PATH)), StandardCharsets.UTF_8);
+        Assert.assertTrue(yaml.contains("storage_compatibility_mode: CASSANDRA_4\n"));
+        Assert.assertTrue(yaml.contains("sstable:\n  selected_format: big\n"));
+    }
     private static final String TOKEN =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     private static final String PASSWORD =
