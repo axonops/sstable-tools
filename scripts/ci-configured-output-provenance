@@ -22,6 +22,7 @@ function record(mode, format, version, sourceDir, publicationLog) {
 const configuredOutputs = [
   record('CASSANDRA_4', 'big', 'nb', dir, path.join(root, 'direct-cqlsh-update.log')),
   record('UPGRADING', 'big', 'oa', path.join(parent, 'cassandra-50-system-local-upgrading-big', 'source-data'), path.join(parent, 'cassandra-50-system-local-upgrading-big', 'direct-update.log')),
+  record('UPGRADING', 'bti', 'da', path.join(parent, 'cassandra-50-system-local-upgrading-bti', 'source-data'), path.join(parent, 'cassandra-50-system-local-upgrading-bti', 'direct-update.log')),
   record('NONE', 'big', 'oa', path.join(parent, 'cassandra-50-system-local-none-big', 'source-data'), path.join(parent, 'cassandra-50-system-local-none-big', 'direct-update.log')),
   record('NONE', 'bti', 'da', path.join(parent, 'cassandra-50-system-local-none-bti', 'source-data'), path.join(parent, 'cassandra-50-system-local-none-bti', 'direct-update.log')),
 ];

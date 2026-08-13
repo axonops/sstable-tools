@@ -39,7 +39,10 @@ for (const manifest of manifests) {
       || sstable.components.some((component) => !/^[a-f0-9]{64}$/.test(component.sha256))) {
     throw new Error(`invalid component hashes for ${producer.releaseLine}`);
   }
-  if (!schema.includes('CREATE TABLE ci_source.events') || sourceMutationScript.length !== 2 || expectedLogicalRows.length !== 1) {
+  if (!schema.includes('CREATE TYPE ci_source.contact')
+      || !schema.includes('CREATE TABLE ci_source.events')
+      || sourceMutationScript.length !== 5
+      || expectedLogicalRows.length !== 3) {
     throw new Error(`incomplete CQL contract provenance for ${producer.releaseLine}`);
   }
 }
@@ -68,6 +71,7 @@ const expected = [
   'NONE/big/oa',
   'NONE/bti/da',
   'UPGRADING/big/oa',
+  'UPGRADING/bti/da',
 ];
 const outputs = manifest.configuredOutputs || [];
 const actual = outputs.map((entry) => `${entry.storageCompatibilityMode}/${entry.selectedFormat}/${entry.formatVersion}`).sort();

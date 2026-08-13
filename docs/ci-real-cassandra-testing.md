@@ -12,9 +12,11 @@ The `stopped-cqlsh-source` GitHub Actions matrix runs against Cassandra 3.11.19,
 4.0.18, 4.1.11, and 5.0.8. Each matrix entry performs this sequence:
 
 1. Start the matching official Cassandra Docker image.
-2. Use that image's stock `cqlsh` to create `ci_source.events`.
-3. Execute stock-CQL `INSERT`, `UPDATE`, and `SELECT`, asserting the changed
-   values appear in `cqlsh` output.
+2. Use that image's stock `cqlsh` to create a UDT and `ci_source.events` with
+   scalar, set, map, tuple, and frozen-UDT columns.
+3. Execute stock-CQL `INSERT`, `UPDATE`, `DELETE`, TTL, and `SELECT`
+   operations. The assertions cover live cells, a deleted cell, an expiring
+   row, collections, a tuple, and a UDT.
 4. Run `nodetool flush` for the table.
 5. Stop the container and assert it is no longer running.
 6. Copy only the completed table components from the stopped container.
@@ -26,8 +28,9 @@ The `stopped-cqlsh-source` GitHub Actions matrix runs against Cassandra 3.11.19,
 
 Each successful source job also publishes a `fixture-provenance.json` artifact.
 It records the exact producer patch and image, partitioner, detected SSTable
-descriptor format, schema bundle, source CQL mutation sequence, expected row,
-and SHA-256 for every copied component. The compatibility-report job downloads
+descriptor format, compression selection, schema bundle, source CQL mutation
+sequence, expected rows, and SHA-256 for every copied component. The
+compatibility-report job downloads
 all four artifacts and refuses to publish its matrix unless it has one complete
 record for each supported release line.
 
@@ -44,7 +47,7 @@ Only after shutdown does it copy the table into a workspace. SSTable Tools then
 executes `create`, `import`, `start`, stock-cqlsh `SELECT`/`INSERT`/`UPDATE`,
 `flush`, delta `export`, and `stop`.
 
-The 4.0.18, 4.1.11, and 5.0.8 jobs execute the same stopped-source import
+The 4.0.18, 4.1.11, 5.0.4, and 5.0.8 jobs execute the same stopped-source import
 sequence and then start guarded isolated sandboxes. They invoke the installed
 distribution's stock `cqlsh` for `INSERT`, `UPDATE`, and `SELECT`, flush,
 export the delta, and stop. The sandbox is loopback-only, disables gossip and
@@ -59,20 +62,36 @@ interface, verifies the original component hashes, and reopens the combined
 older-format migration behavior from the current 3.11.19 producer format
 (`me`).
 
-The Cassandra 5.0.8 job configures the source node and selected installation
+The Cassandra 5.0 jobs configure the source node and selected installation
 identically; it does not exercise format conversion. The generic direct
 workflow runs as `CASSANDRA_4` plus Big and verifies `nb` input and `nb`
-output.
+output. Cassandra 5.0.8 additionally imports an uncompressed Big table.
 
 The same job runs the real two-`data_file_directories` `system.local` scenario
-four times: `CASSANDRA_4/big` produces `nb/big`, `UPGRADING/big` and
-`NONE/big` produce `oa/big`, and `NONE/bti` produces `da/bti`. Each run places
-source and generated SSTables in two actual Cassandra data roots, restarts the
-stock 5.0.8 node with the same YAML settings, and verifies the combined row
-through stock `cqlsh`.
+five times: `CASSANDRA_4/big` produces `nb/big`, `UPGRADING/big` and
+`NONE/big` produce `oa/big`, and `UPGRADING/bti` and `NONE/bti` produce
+`da/bti`. Each run places source and generated SSTables in two actual Cassandra
+data roots, restarts the stock 5.0.8 node with the same YAML settings, and
+verifies the combined row through stock `cqlsh`. The BTI path also removes
+`Partitions.db` and `Rows.db` in separate negative cases, and repeats the
+multi-directory read-only import three times to exercise the ordering barrier.
 
-A separate `patch-line-floor` matrix downloads Cassandra 4.0.0 and 4.1.0,
-removes their installation `cassandra.yaml`, and runs runtime preflight. The
-adapter metadata unit tests accept every released patch from 4.0.0 through
-4.0.18 and from 4.1.0 through 4.1.11 while rejecting versions outside those
-ranges.
+Real SSTable producer/import coverage includes 3.11.0 and 3.11.19, 4.0.0 and
+4.0.18, 4.1.0 and 4.1.11, and 5.0.4 and 5.0.8. The 4.0.0 and 4.1.0 jobs use
+downloaded Apache distributions, run runtime preflight, create a real table
+with the matching official image, and import its stopped SSTable. Cassandra
+3.11.0 is an older-format producer imported by the supported 3.11.19 runtime;
+5.0.4 is both the minimum supported runtime and a real producer.
+
+A separate `patch-line-linkage` matrix resolves Cassandra's real Maven runtime
+for every declared patch from 4.0.0 through 4.0.18, 4.1.0 through 4.1.11, and
+5.0.4 through 5.0.8, then launches the thin adapter and requires an exact
+runtime-preflight version response. Cassandra 4.0 is checked on both Java 8
+and Java 11. This linkage matrix complements, rather than replaces, the
+full-node endpoint scenarios.
+
+The release-package job installs the generated dependency-free DEB and RPM in
+clean Java 17 containers and invokes the installed universal launcher. Release
+publication reuses a successful full CI run for the exact commit when one
+exists; otherwise it dispatches `ci.yml` for the release ref and waits for it
+to pass before building or publishing artifacts.

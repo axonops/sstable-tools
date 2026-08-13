@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s <release-directory>\n' "$0" >&2
+  exit 64
+}
+
+[[ $# -eq 1 && -d "$1" ]] || usage
+release_dir=$(cd "$1" && pwd -P)
+
+mapfile -t debs < <(find "$release_dir" -maxdepth 1 -type f -name 'sstable-tools_*.deb')
+mapfile -t rpms < <(find "$release_dir" -maxdepth 1 -type f -name 'sstable-tools-*.rpm')
+[[ ${#debs[@]} -eq 1 && ${#rpms[@]} -eq 1 ]] || {
+  printf 'Expected one DEB and one RPM in %s\n' "$release_dir" >&2
+  exit 1
+}
+
+docker pull eclipse-temurin:17-jre-jammy
+docker run --rm -v "$release_dir:/release:ro" eclipse-temurin:17-jre-jammy \
+  sh -ceu '
+    package=$(find /release -maxdepth 1 -type f -name "sstable-tools_*.deb")
+    dpkg -i "$package"
+    test -x /usr/bin/sstable-tools
+    test -f /usr/share/sstable-tools/sstable-tools-cassandra-5.0.jar
+    test -z "$(dpkg-query -W -f="\${Depends}\${Pre-Depends}" sstable-tools)"
+    mkdir -p /tmp/cassandra/lib
+    : >/tmp/cassandra/lib/apache-cassandra-5.0.8.jar
+    /usr/bin/sstable-tools --cassandra-lib-dir /tmp/cassandra/lib --version \
+      | grep -F "Cassandra 5.0 adapter"
+  '
+
+docker pull amazoncorretto:17-al2023
+docker run --rm -v "$release_dir:/release:ro" amazoncorretto:17-al2023 \
+  sh -ceu '
+    package=$(find /release -maxdepth 1 -type f -name "sstable-tools-*.rpm")
+    rpm -i "$package"
+    test -x /usr/bin/sstable-tools
+    test -f /usr/share/sstable-tools/sstable-tools-cassandra-5.0.jar
+    test -z "$(rpm -q --requires sstable-tools)"
+    mkdir -p /tmp/cassandra/lib
+    : >/tmp/cassandra/lib/apache-cassandra-5.0.8.jar
+    /usr/bin/sstable-tools --cassandra-lib-dir /tmp/cassandra/lib --version \
+      | grep -F "Cassandra 5.0 adapter"
+  '
+
+printf 'Installed and invoked the DEB and RPM in clean Java 17 containers.\n'

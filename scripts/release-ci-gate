@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s --ref <git-ref> --sha <commit-sha> [--workflow <workflow>]\n' "$0" >&2
+  exit 64
+}
+
+ref=''
+sha=''
+workflow=ci.yml
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ref) ref=${2:-}; shift 2 ;;
+    --sha) sha=${2:-}; shift 2 ;;
+    --workflow) workflow=${2:-}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ -n "$ref" && "$sha" =~ ^[a-fA-F0-9]{40}$ && -n "$workflow" ]] || usage
+gh_command=${GH_COMMAND:-gh}
+command -v "$gh_command" >/dev/null 2>&1 || {
+  printf 'GitHub CLI is required for the release CI gate\n' >&2
+  exit 1
+}
+
+successful=$(
+  "$gh_command" run list --workflow "$workflow" --commit "$sha" --limit 50 \
+    --json databaseId,conclusion \
+    --jq '.[] | select(.conclusion == "success") | .databaseId' \
+    | sed -n '1p'
+)
+if [[ -n "$successful" ]]; then
+  printf 'Reusing successful %s run %s for commit %s.\n' \
+    "$workflow" "$successful" "$sha"
+  exit 0
+fi
+
+before=$(
+  "$gh_command" run list --workflow "$workflow" --commit "$sha" --limit 50 \
+    --json databaseId --jq '.[].databaseId'
+)
+"$gh_command" workflow run "$workflow" --ref "$ref"
+
+run_id=''
+for _ in $(seq 1 60); do
+  candidates=$(
+    "$gh_command" run list --workflow "$workflow" --commit "$sha" --limit 50 \
+      --json databaseId --jq '.[].databaseId'
+  )
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if ! grep -Fxq "$candidate" <<<"$before"; then
+      run_id=$candidate
+      break
+    fi
+  done <<<"$candidates"
+  [[ -z "$run_id" ]] || break
+  sleep 2
+done
+
+[[ -n "$run_id" ]] || {
+  printf 'Timed out locating the dispatched %s run for commit %s\n' \
+    "$workflow" "$sha" >&2
+  exit 1
+}
+
+printf 'Waiting for required %s run %s for commit %s.\n' \
+  "$workflow" "$run_id" "$sha"
+"$gh_command" run watch "$run_id" --exit-status

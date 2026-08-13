@@ -144,6 +144,23 @@ grep -q 'direct-row' "$output_root/direct-cqlsh-select.log"
 grep -q 'updated' "$output_root/direct-cqlsh-select.log"
 grep -q 'ready' "$output_root/direct-cqlsh-select.log"
 grep -q 'published.sstables=none' "$output_root/direct-cqlsh-select.log"
+
+java -jar "$tool_jar" --tmp-dir "$tmp_parent" --cassandra-home "$cassandra_home" \
+  --java-home "$java_home" "${source_args[@]}" --schema "$schema" \
+  "${format_args[@]}" cqlsh \
+  --execute 'SELECT event_id, payload, state, tags, attrs, point, contact FROM ci_source.events;' \
+  | tee "$output_root/direct-cqlsh-source-shapes.log"
+
+grep -q 'source-row' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'source@example.test' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'ttl-row' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'expires-later' "$output_root/direct-cqlsh-source-shapes.log"
+grep -q 'tombstone-row' "$output_root/direct-cqlsh-source-shapes.log"
+if grep -q 'delete-me' "$output_root/direct-cqlsh-source-shapes.log"; then
+  printf 'Deleted source value was visible through direct cqlsh\n' >&2
+  exit 1
+fi
+grep -q 'published.sstables=none' "$output_root/direct-cqlsh-source-shapes.log"
 [[ ! -d "$tmp_parent" || -z "$(find "$tmp_parent" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print -quit)" ]] || {
   printf 'Direct cqlsh left a successful private workspace behind\n' >&2
   exit 1

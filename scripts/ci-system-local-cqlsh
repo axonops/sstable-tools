@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --image <image> --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--storage-compatibility-mode CASSANDRA_4|UPGRADING|NONE --sstable-format big|bti]\n' "$0" >&2
+  printf 'Usage: %s --image <image> --tool-jar <path> --cassandra-home <path> --java-home <path> --output-root <path> [--storage-compatibility-mode CASSANDRA_4|UPGRADING|NONE --sstable-format big|bti] [--repeat-imports <count>]\n' "$0" >&2
   exit 64
 }
 
@@ -13,6 +13,7 @@ java_home=''
 output_root=''
 storage_compatibility_mode=''
 sstable_format=''
+repeat_imports=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +24,7 @@ while [[ $# -gt 0 ]]; do
     --output-root) output_root=${2:-}; shift 2 ;;
     --storage-compatibility-mode) storage_compatibility_mode=${2:-}; shift 2 ;;
     --sstable-format) sstable_format=${2:-}; shift 2 ;;
+    --repeat-imports) repeat_imports=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -51,6 +53,10 @@ if [[ "$storage_compatibility_mode" == CASSANDRA_4 && "$sstable_format" == bti ]
   printf 'CASSANDRA_4 mode cannot use BTI\n' >&2
   exit 64
 fi
+[[ "$repeat_imports" =~ ^[0-9]+$ && "$repeat_imports" -le 10 ]] || {
+  printf 'Repeat import count must be between 0 and 10\n' >&2
+  exit 64
+}
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
@@ -178,6 +184,35 @@ if [[ -n "$expected_version" ]]; then
     }
 fi
 
+if [[ "$sstable_format" == bti ]]; then
+  expect_missing_bti_component() {
+    local component=$1
+    local rejection="$output_root/missing-${component%.db}"
+    mkdir -p "$rejection"
+    cp "$source_dir"/* "$rejection/"
+    rm "$rejection/$expected_version-"*"-bti-$component"
+    sed -i "/^${component//./\.}$/d" \
+      "$rejection/$expected_version-"*'-bti-TOC.txt'
+
+    set +e
+    java -jar "$tool_jar" --cassandra-home "$cassandra_home" \
+      --java-home "$java_home" --sstables "$rejection" --schema "$schema" cqlsh \
+      --execute 'SELECT cluster_name FROM system.local;' \
+      >"$output_root/missing-${component%.db}.log" 2>&1
+    local exit_code=$?
+    set -e
+    [[ $exit_code -ne 0 ]] || {
+      printf 'BTI SSTable missing %s was accepted\n' "$component" >&2
+      exit 1
+    }
+    grep -Fq "missing required component $component" \
+      "$output_root/missing-${component%.db}.log"
+  }
+
+  expect_missing_bti_component Partitions.db
+  expect_missing_bti_component Rows.db
+fi
+
 first_data_center='sstable-tools-dc'
 java -jar "$tool_jar" --cassandra-home "$cassandra_home" --java-home "$java_home" \
   --sstables "$source_dir" --output-dir "$secondary_source_dir" \
@@ -245,6 +280,17 @@ grep -q 'published.sstables=none' "$output_root/direct-select.log"
   cd "$output_root"
   sha256sum --check "$output_root/source-components.sha256"
 )
+
+for attempt in $(seq 1 "$repeat_imports"); do
+  java -jar "$tool_jar" --cassandra-home "$cassandra_home" --java-home "$java_home" \
+    --sstables "$source_dir" --sstables "$secondary_source_dir" \
+    --output-dir "$source_dir" --schema "$schema" cqlsh \
+    --execute 'SELECT cluster_name, release_version, data_center FROM system.local;' \
+    >"$output_root/repeated-import-$attempt.log"
+  grep -Fq "$cluster_name" "$output_root/repeated-import-$attempt.log"
+  grep -Fq "$first_data_center" "$output_root/repeated-import-$attempt.log"
+  grep -q 'published.sstables=none' "$output_root/repeated-import-$attempt.log"
+done
 
 find "$source_dir" "$secondary_source_dir" -maxdepth 1 -type f \
   -name '*-TOC.txt' -printf '%f\n' \
