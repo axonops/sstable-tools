@@ -15,33 +15,41 @@ mapfile -t rpms < <(find "$release_dir" -maxdepth 1 -type f -name 'sstable-tools
   printf 'Expected one DEB and one RPM in %s\n' "$release_dir" >&2
   exit 1
 }
+deb_name=${debs[0]##*/}
+rpm_name=${rpms[0]##*/}
 
 docker pull eclipse-temurin:17-jre-jammy
 docker run --rm -v "$release_dir:/release:ro" eclipse-temurin:17-jre-jammy \
   sh -ceu '
-    package=$(find /release -maxdepth 1 -type f -name "sstable-tools_*.deb")
+    package="/release/$1"
     dpkg -i "$package"
     test -x /usr/bin/sstable-tools
     test -f /usr/share/sstable-tools/sstable-tools-cassandra-5.0.jar
     test -z "$(dpkg-query -W -f="\${Depends}\${Pre-Depends}" sstable-tools)"
     mkdir -p /tmp/cassandra/lib
     : >/tmp/cassandra/lib/apache-cassandra-5.0.8.jar
-    /usr/bin/sstable-tools --cassandra-lib-dir /tmp/cassandra/lib --version \
-      | grep -F "Cassandra 5.0 adapter"
-  '
+    version=$(/usr/bin/sstable-tools --cassandra-lib-dir /tmp/cassandra/lib --version)
+    case "$version" in
+      *"Cassandra 5.0 adapter"*) ;;
+      *) printf "Unexpected installed launcher version: %s\n" "$version" >&2; exit 1 ;;
+    esac
+  ' sh "$deb_name"
 
 docker pull amazoncorretto:17-al2023
 docker run --rm -v "$release_dir:/release:ro" amazoncorretto:17-al2023 \
   sh -ceu '
-    package=$(find /release -maxdepth 1 -type f -name "sstable-tools-*.rpm")
+    package="/release/$1"
     rpm -i "$package"
     test -x /usr/bin/sstable-tools
     test -f /usr/share/sstable-tools/sstable-tools-cassandra-5.0.jar
     test -z "$(rpm -q --requires sstable-tools)"
     mkdir -p /tmp/cassandra/lib
     : >/tmp/cassandra/lib/apache-cassandra-5.0.8.jar
-    /usr/bin/sstable-tools --cassandra-lib-dir /tmp/cassandra/lib --version \
-      | grep -F "Cassandra 5.0 adapter"
-  '
+    version=$(/usr/bin/sstable-tools --cassandra-lib-dir /tmp/cassandra/lib --version)
+    case "$version" in
+      *"Cassandra 5.0 adapter"*) ;;
+      *) printf "Unexpected installed launcher version: %s\n" "$version" >&2; exit 1 ;;
+    esac
+  ' sh "$rpm_name"
 
 printf 'Installed and invoked the DEB and RPM in clean Java 17 containers.\n'
