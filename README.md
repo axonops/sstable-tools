@@ -6,6 +6,112 @@ SSTable Tools queries and mutates explicitly selected, stopped Cassandra
 SSTables with the matching installed Cassandra release and its stock `cqlsh`.
 It is under active development and is not yet an operator-ready production tool.
 
+## Quick Start
+
+Install either Linux package from a release, or unpack the standalone archive:
+
+```shell
+# Debian or Ubuntu
+sudo dpkg -i sstable-tools_1.2.3-1_all.deb
+
+# RHEL, Rocky Linux, AlmaLinux, or another RPM-based distribution
+sudo rpm -i sstable-tools-1.2.3-1.noarch.rpm
+
+# Standalone archive
+tar -xzf sstable-tools-1.2.3.tar.gz
+```
+
+The packages deliberately do not declare a Java or Cassandra package
+dependency. The machine must already have a Java runtime supported by the
+selected Cassandra release. The packaged command is `/usr/bin/sstable-tools`;
+the archive contains `./sstable-tools`.
+
+Point the launcher at Cassandra once. Packaged Cassandra normally uses
+`/usr/share/cassandra`; a tarball installation normally uses its `lib`
+directory:
+
+```shell
+export CASSANDRA_LIB_DIR=/usr/share/cassandra
+# Or: export CASSANDRA_LIB_DIR=/opt/apache-cassandra-5.0.8/lib
+
+sstable-tools --version
+sstable-tools runtime preflight
+```
+
+Prepare these inputs before opening an SSTable:
+
+- A stopped table directory, completed snapshot, or backup copied outside the
+  live Cassandra data directories.
+- A CQL schema bundle containing the exact keyspace, table, table ID, primary
+  key, columns, and referenced UDTs for those SSTables.
+- Every SSTable that contributes to the logical table. Cassandra may spread
+  one table across multiple `data_file_directories`.
+
+Query every SSTable in one complete table directory without publishing files:
+
+```shell
+TABLE_DIR=/archive/acme/users-7ad54392bcdd35a684174e047860b377
+SCHEMA=/archive/acme-users.cql
+
+sstable-tools \
+  --output-dir "$TABLE_DIR" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "SELECT id, name FROM acme.users WHERE id = 1;"
+```
+
+Update that table by supplying a timestamp in Unix microseconds:
+
+```shell
+NOW_MICROS=$(date +%s%6N)
+
+sstable-tools \
+  --output-dir "$TABLE_DIR" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "UPDATE acme.users USING TIMESTAMP $NOW_MICROS SET name = 'Grace' WHERE id = 1;"
+```
+
+Use the current clock only when it is ahead of the source timestamps. If the
+source contains future-dated cells, choose a value above the reported source
+maximum; see [Write timestamps](#write-timestamps).
+
+The update never modifies an existing SSTable. It publishes one new verified
+component set beside the originals and reports it as
+`published.sstables=<descriptor>`. Running the `SELECT` command again with the
+same complete `--output-dir` reads the originals and the new delta together.
+
+For a table split across two Cassandra data directories, select both complete
+table directories and name exactly one publication directory:
+
+```shell
+PRIMARY=/data/acme/users-7ad54392bcdd35a684174e047860b377
+SECONDARY=/log/data/acme/users-7ad54392bcdd35a684174e047860b377
+NOW_MICROS=$(date +%s%6N)
+
+sstable-tools \
+  --sstables "$PRIMARY" \
+  --sstables "$SECONDARY" \
+  --output-dir "$PRIMARY" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "UPDATE acme.users USING TIMESTAMP $NOW_MICROS SET name = 'Grace' WHERE id = 1;"
+
+sstable-tools \
+  --sstables "$PRIMARY" \
+  --sstables "$SECONDARY" \
+  --output-dir "$PRIMARY" \
+  --schema "$SCHEMA" \
+  cqlsh --execute \
+  "SELECT id, name FROM acme.users WHERE id = 1;"
+```
+
+The second command is the required read-back pattern: it includes the source
+SSTables from both directories plus the delta published into `PRIMARY`. For an
+empty destination, use the [first-SSTable example](#create-the-first-sstable-in-an-output-directory).
+For `system.local`, including a table spread across multiple directories, use
+the [system-table example](#query-or-update-a-system-table).
+
 ## Launcher and Automatic Adapter Selection
 
 Use `sstable-tools` from the DEB/RPM, or `./sstable-tools` from the standalone
@@ -451,9 +557,10 @@ All release adapters currently require
 `org.apache.cassandra.dht.Murmur3Partitioner`.
 
 The CI matrix creates stopped SSTables with stock Cassandra `cqlsh`, then runs
-the matching thin JAR and stock `cqlsh` direct workflow. It verifies `INSERT`,
-`UPDATE`, `SELECT`, flush, sibling publication, direct reopen, and unchanged
-source component hashes.
+the matching thin JAR and stock `cqlsh` direct workflow. Its source tables
+exercise scalar values, sets, maps, tuples, frozen UDTs, TTLs, and deleted
+cells. It verifies `INSERT`, `UPDATE`, `DELETE`, `SELECT`, flush, sibling
+publication, direct reopen, and unchanged source component hashes.
 
 | Artifact | Supported Cassandra patches | Java runtime | Direct output |
 |---|---:|---:|---|
@@ -464,8 +571,37 @@ source component hashes.
 
 The 4.0 adapter compiles against the first patch in its release line. The 4.1
 adapter carries both native query-handler ABIs used across the 4.1 patch line.
-CI preflights the first patch and runs the full stopped-SSTable and stock-cqlsh
-workflow on the latest supported patch.
+CI resolves Cassandra's real Maven runtime and starts the adapter against every
+declared 4.0.x, 4.1.x, and 5.0.x patch. Cassandra 4.0 is checked on both Java 8
+and Java 11.
+
+Real Cassandra producer/import coverage includes 3.11.0 and 3.11.19, 4.0.0
+and 4.0.18, 4.1.0 and 4.1.11, and 5.0.4 and 5.0.8. Cassandra 3.11.0 is an
+older-format producer imported by the supported 3.11.19 runtime; it is not an
+additional supported runtime. The latest patch in each release line runs the
+full stopped-SSTable and stock-cqlsh workflow, and Cassandra 5.0.4 also runs
+the direct workflow as the minimum supported 5.0 runtime.
+
+The Cassandra 5.0.8 acceptance job uses real two-`data_file_directories`
+`system.local` SSTables and tests each supported YAML-driven output:
+
+| `storage_compatibility_mode` | `sstable.selected_format` | Required output |
+|---|---|---|
+| `CASSANDRA_4` | `big` | `nb` Big |
+| `UPGRADING` | `big` | `oa` Big |
+| `NONE` | `big` | `oa` Big |
+| `UPGRADING` | `bti` | `da` BTI |
+| `NONE` | `bti` | `da` BTI |
+
+Those tests reopen the combined table through stock Cassandra after publishing
+into one of the two data directories. The BTI path additionally rejects sets
+missing `Partitions.db` or `Rows.db`, repeats multi-directory imports to catch
+ordering races, and the Big path includes an uncompressed table.
+
+Release-package CI installs the dependency-free DEB and RPM into separate clean
+Java 17 containers and invokes the installed universal launcher. See
+[Real Cassandra CI coverage](docs/ci-real-cassandra-testing.md) for the full
+test topology and the distinction between full-node and linkage coverage.
 
 The direct workflow intentionally has no `sstableloader`, streaming, clean-node
 import, or broad filesystem discovery.
@@ -550,13 +686,15 @@ git tag -a "v$RELEASE_VERSION" -m "SSTable Tools $RELEASE_VERSION"
 git push origin "v$RELEASE_VERSION"
 ```
 
-The [Release workflow](.github/workflows/release.yml) validates the tag, builds
-and tests every adapter with that exact Maven revision, rejects mismatched
-embedded JAR versions, creates and extracts both Linux packages, verifies their
-payloads and checksums, runs the release security gate, and publishes the
-resulting directory as a workflow artifact and GitHub Release. After the
-security gate passes, it also publishes the DEB and RPM to the configured
-Google Artifact Registry Apt and Yum repositories.
+The [Release workflow](.github/workflows/release.yml) first requires a
+successful full [CI workflow](.github/workflows/ci.yml) for the exact release
+commit. It reuses matching evidence when available; otherwise it dispatches CI
+for the release ref and waits for it to pass. Only then does it build and test
+every adapter with that exact Maven revision, reject mismatched embedded JAR
+versions, create and verify both Linux packages, run the release security gate,
+and publish the resulting directory as a workflow artifact and GitHub Release.
+After the security gate passes, it also publishes the DEB and RPM to the
+configured Google Artifact Registry Apt and Yum repositories.
 
 The security gate scans the built release with ClamAV, analyzes Java source with
 CodeQL `security-extended`, checks source secrets and configuration with Trivy,
